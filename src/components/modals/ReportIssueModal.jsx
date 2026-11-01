@@ -140,6 +140,7 @@ export default function ReportIssueModal({ isOpen, onClose, onTicketCreated }) {
                 masterJoined: ai.masterJoined || serverResult.clustered || undefined,
                 clusterFormed: ai.clusterFormed || undefined,
                 aiFallback: serverResult.aiFallback || undefined,
+                aiCategory: ai.aiCategory || serverResult.aiCategory || undefined, // Fix 4
                 sla: ai.sla || (ai.sla_hours ? `SLA: ${ai.sla_hours}h Target` : 'SLA: 4h Standard'),
                 sla_hours: ai.sla_hours || 4,
                 createdAt: ai.createdAt || new Date().toISOString(),

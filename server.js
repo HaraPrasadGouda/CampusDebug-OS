@@ -902,6 +902,12 @@ app.post('/api/parse-ticket', authenticateUser, async (req, res) => {
             // Validate/sanitize AI output — bad fields fall back deterministically
             const CANON_CATEGORIES = ['Electrical', 'Plumbing', 'Wi-Fi / LAN', 'Furniture', 'Cleanliness'];
             if (!parsedAI || typeof parsedAI !== 'object') parsedAI = {};
+            // Fix 4 (AI category): remember the category ONLY when the model
+            // itself returned a valid one (not when it is re-derived from
+            // keywords below) — this is what the ticket chip shows as "AI".
+            const aiOwnCategory = (typeof parsedAI.category === 'string'
+                && !parsedAI.category.includes('|')
+                && CANON_CATEGORIES.includes(parsedAI.category.trim())) ? parsedAI.category.trim() : null;
             // Qwen occasionally echoes the prompt's enum verbatim ("Electrical|Plumbing|…")
             // or invents labels. Any non-canonical category is discarded and re-derived
             // deterministically from the STUDENT'S OWN complaint text — never from the AI.
@@ -920,6 +926,7 @@ app.post('/api/parse-ticket', authenticateUser, async (req, res) => {
             if (!Array.isArray(parsedAI.keywords)) parsedAI.keywords = textKeywords(complaintText).slice(0, 8);
             else parsedAI.keywords = parsedAI.keywords.filter(k => typeof k === 'string' && k.trim()).slice(0, 8);
             parsedAI.location = fullLocationPre;  // always authoritative: form fields
+            parsedAI._aiCategory = aiOwnCategory;
             console.log(`🤖 Ollama AI Parsing successful (location fixed to form input ${fullLocationPre}):`, parsedAI);
         } catch (ollamaErr) {
             console.warn('⚠️ Ollama unavailable, using deterministic fallback parser:', ollamaErr.message);
@@ -937,6 +944,10 @@ app.post('/api/parse-ticket', authenticateUser, async (req, res) => {
         }
 
         const category = normalizeCategory(req.body.category || parsedAI.category || complaintText);
+        // Fix 4: the student's pick still routes the ticket (unchanged); the AI's
+        // own category is kept beside it so staff and the student can see it.
+        // null when the AI was unavailable or gave no valid category.
+        const aiCategory = parsedAI._aiCategory || null;
         const cleanBlock = hostelBlock.replace(/^Hostel\s*/i, '');
         const cleanFloor = floor.trim();
         const fullLocation = `Hostel ${cleanBlock}, ${cleanFloor}, Room ${room}`;
@@ -1084,6 +1095,7 @@ app.post('/api/parse-ticket', authenticateUser, async (req, res) => {
             urgency: urgencyLevel,
             severity: severityLabel,
             keywords: aiKeywords,
+            aiCategory: aiCategory || undefined,
             status: 'ASSIGNED',
             statusLabel: isCritical
                 ? `CRITICAL — Routed to ${tech.name} (Warden Alerted)`
@@ -1108,7 +1120,10 @@ app.post('/api/parse-ticket', authenticateUser, async (req, res) => {
         ticketLedgerDB[String(newTicket.id)] = {
             assignedTo: tech.name, assignedTechId: tech.id,
             statusLabel: newTicket.statusLabel, notes: '',
-            createdAt: newTicket.createdAt
+            createdAt: newTicket.createdAt,
+            // Fix 4: no tickets column for it (no schema change) — kept in the
+            // routing ledger like the technician notes, merged in by enrichTicketRow.
+            ...(aiCategory ? { aiCategory } : {})
         };
         saveLedger();
 
@@ -1143,6 +1158,7 @@ app.post('/api/parse-ticket', authenticateUser, async (req, res) => {
             urgency: urgencyLevel,
             severity: severityLabel,
             aiFallback: !!parsedAI._fallback,
+            aiCategory,
             warning: ticketErrWarn || undefined
         });
 
@@ -6485,6 +6501,7 @@ function enrichTicketRow(row) {
           : (mem?.statusLabel || (led ? led.statusLabel : null) || base.statusLabel || TICKET_STATUS_LABELS[status] || status),
         studentConfirmed: !!(led && led.studentConfirmed) || mem?.studentConfirmed === true,
         assignedTo: assigned,
+        aiCategory: base.aiCategory || base.ai_category || (led ? led.aiCategory : null) || (mem ? mem.aiCategory : null) || null, // Fix 4
         assignedTechId: base.assignedTechId || base.assigned_technician_id || (led ? led.assignedTechId : null) || (mem ? mem.assignedTechId : null) || null,
         masterId: base.master_incident_id || base.masterId || (mem ? mem.masterId : null) || null,
         slaHoursLeft: sla.slaHoursLeft,

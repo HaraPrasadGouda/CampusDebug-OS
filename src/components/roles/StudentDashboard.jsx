@@ -33,6 +33,7 @@ import {
   ChevronUp,
   Lock
 } from 'lucide-react';
+import AiCategoryChip from '../AiCategoryChip';
 import { getTodayMenuKey, getTodayMenu, isFeastDay, getTodayDayLabel, getMealStatus, fmtDuration, MEAL_ORDER } from '../../data/messMenu';
 
 export default function StudentDashboard({
@@ -611,6 +612,7 @@ export default function StudentDashboard({
                                     <Layers className="w-3 h-3" /> Clustered — one fix serves all matches
                                   </span>
                                 )}
+                                {!isDoc && <AiCategoryChip ticket={act} />}
                                 {act.aiFallback && (
                                   <span className="text-[10px] text-slate-500 italic">AI offline — deterministic classification</span>
                                 )}
@@ -1050,6 +1052,7 @@ export default function StudentDashboard({
                 <span className="px-2 py-1 rounded-lg text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
                   {ticketDetail.category || 'Issue'}
                 </span>
+                {!isDocDetail && <AiCategoryChip ticket={ticketDetail} className="py-1 rounded-lg font-bold" />}
                 <span className="px-2 py-1 rounded-lg text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
                   Urgency: {ticketDetail.urgency || 'MEDIUM'}
                 </span>
