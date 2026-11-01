@@ -246,6 +246,22 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
       rejectedAt: new Date().toISOString()
     };
     await saveLocal('gate_passes', rejectedPass);
+
+    // Fix 3 (lost rejection): tell the server right away, exactly like the
+    // approve button does. Before, the rejection only went to the outbox,
+    // which had no route for it — the server copy stayed PENDING, the pass
+    // came back into this queue on the next refresh and the student never
+    // saw "Rejected".
+    try {
+      await fetch('/api/create-pass', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ passData: rejectedPass })
+      });
+    } catch (netErr) {
+      console.warn('Warden reject sync failed, saved locally:', netErr);
+    }
+
     await queueOfflineAction('WARDEN_REJECT_PASS', rejectedPass);
 
     if (typeof window !== 'undefined') {

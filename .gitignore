@@ -33,3 +33,6 @@ data/gate_passes.json
 teachers_fresh_50.csv
 data/push_subscriptions.json
 data/activated_students.json
+# Runtime stores added by Fix 3 (student feedback / read receipts)
+data/mess_feedback.json
+data/notice_acks.json

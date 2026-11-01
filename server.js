@@ -6500,7 +6500,13 @@ function enrichTicketRow(row) {
 function safeTicketStatus(status) {
     const s = String(status || '').toUpperCase();
     if (['PENDING', 'ASSIGNED', 'RESOLVED', 'ESCALATED_TO_DEAN'].includes(s)) return s;
-    return 'RESOLVED'; // IN_PROGRESS / CLOSED / REPORTED degrade to the final state they imply
+    // Fix 3 (early RESOLVED): work that is still under way must NOT be written
+    // as RESOLVED. IN_PROGRESS stays ASSIGNED in the DB (the same thing the
+    // standalone-ticket ACCEPT/START path already does); the "Technician
+    // Working" label lives in the in-memory mirror + ledger as before.
+    if (s === 'IN_PROGRESS') return 'ASSIGNED';
+    if (s === 'REPORTED' || s === 'UNASSIGNED') return 'PENDING';
+    return 'RESOLVED'; // CLOSED degrades to the final state it implies
 }
 function safeMasterStatus(status) {
     const s = String(status || '').toUpperCase();
@@ -6905,6 +6911,82 @@ app.post('/api/warden/reassign', authenticateUser, requireRole('WARDEN', 'ADMIN'
     } catch (err) {
         return res.status(500).json({ success: false, error: err.message });
     }
+});
+
+// ----------------------------------------------------
+// Fix 3 (lost actions): mess feedback + notice read receipts.
+// The app queued MESS_FEEDBACK and ACKNOWLEDGE_NOTICE in its offline outbox,
+// but no server route existed for them: the outbox POSTed to "/undefined",
+// the app-shell fallback below answered 200, and the item was deleted as
+// "synced". These two small routes give them a home in the same kind of
+// JSON file store the server already uses (data/notices.json etc.).
+// No database table / schema change. Identity always comes from the login.
+// ----------------------------------------------------
+const MESS_FEEDBACK_FILE = path.join(__dirname, 'data', 'mess_feedback.json');
+const NOTICE_ACKS_FILE = path.join(__dirname, 'data', 'notice_acks.json');
+function readJsonStore(file, fallback) {
+    try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return fallback; }
+}
+function writeJsonStore(file, data) {
+    try {
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, JSON.stringify(data), 'utf8');
+        return true;
+    } catch (e) {
+        console.warn('JSON store write failed:', file, e.message);
+        return false;
+    }
+}
+
+app.post('/api/mess-feedback', authenticateUser, (req, res) => {
+    const fb = req.body || {};
+    const rating = Number(fb.rating);
+    if (!fb.id || !Number.isFinite(rating)) {
+        return res.status(400).json({ success: false, error: 'id and rating are required' });
+    }
+    const list = readJsonStore(MESS_FEEDBACK_FILE, []);
+    const row = {
+        id: String(fb.id).slice(0, 40),
+        roll: req.user?.rollNumber || null,
+        name: req.user?.profile?.full_name || req.user?.name || null,
+        meal: fb.meal ? String(fb.meal).slice(0, 40) : null,
+        rating,
+        tags: Array.isArray(fb.tags) ? fb.tags.map(t => String(t).slice(0, 60)).slice(0, 12) : [],
+        comment: fb.comment ? String(fb.comment).slice(0, 1000) : '',
+        aiTelemetry: fb.aiTelemetry || null,
+        createdAt: fb.createdAt || new Date().toISOString(),
+        receivedAt: new Date().toISOString()
+    };
+    // Same id twice (outbox replay) = one row.
+    const idx = list.findIndex(r => r.id === row.id && r.roll === row.roll);
+    if (idx >= 0) list[idx] = { ...list[idx], ...row }; else list.push(row);
+    if (!writeJsonStore(MESS_FEEDBACK_FILE, list.slice(-1000))) {
+        return res.status(500).json({ success: false, error: 'could not save feedback' });
+    }
+    console.log(`🍽️ [MESS FEEDBACK] ${row.id} ${row.meal || ''} ${row.rating}★ from ${row.roll || 'unknown'}`);
+    return res.json({ success: true, id: row.id });
+});
+
+app.get('/api/mess-feedback', authenticateUser, requireRole('WARDEN', 'ADMIN', 'DEAN'), (req, res) => {
+    const list = readJsonStore(MESS_FEEDBACK_FILE, []);
+    return res.json({ success: true, feedback: list.slice(-100).reverse() });
+});
+
+app.post('/api/notices/ack', authenticateUser, (req, res) => {
+    const { noticeId, isRead } = req.body || {};
+    const roll = req.user?.rollNumber || req.user?.id || null;
+    if (!noticeId || !roll) {
+        return res.status(400).json({ success: false, error: 'noticeId required' });
+    }
+    const acks = readJsonStore(NOTICE_ACKS_FILE, {});
+    const key = String(noticeId).slice(0, 80);
+    acks[key] = acks[key] || {};
+    if (isRead === false) delete acks[key][roll];
+    else acks[key][roll] = new Date().toISOString();
+    if (!writeJsonStore(NOTICE_ACKS_FILE, acks)) {
+        return res.status(500).json({ success: false, error: 'could not save read receipt' });
+    }
+    return res.json({ success: true, noticeId: key, isRead: isRead !== false, readCount: Object.keys(acks[key]).length });
 });
 
 // Production Unified App Shell Fallback Route
