@@ -28,6 +28,7 @@ import { initDB, getAllLocal, saveLocal, deleteLocal } from './utils/db';
 import { flushOutbox, getPendingSyncCount, initSyncEngine } from './utils/syncEngine';
 import { getStoredProfile, clearStoredSession, getAccessToken } from './utils/authClient';
 import { startNotificationPolling, stopNotificationPolling } from './utils/notify';
+import { pickTodaysLeave, isLeaveLive } from './utils/dayScholarLeave';
 
 // Feed demographics start EMPTY — the feed only ever shows items the user
 // actually created (persisted in IndexedDB / server). No pre-seeded demos.
@@ -94,6 +95,53 @@ export default function App() {
   // Mirror of activePass for polling callbacks (avoids stale-closure reads)
   const activePassRef = useRef(activePass);
   useEffect(() => { activePassRef.current = activePass; }, [activePass]);
+
+  // DAY-SCHOLAR ACTIVE PASS: a day scholar's gate exit is a mentor-approved
+  // LEAVE (leave_requests), not a warden gate pass (gate_passes). The
+  // dashboard's Active Gate Pass card used to read gate_passes only, so for
+  // a day scholar it never moved PENDING → APPROVED → OUT. Keep today's leave
+  // in App state and refresh it the same way the hosteller pass is kept live:
+  // every 3 s while it can still change on another device (mentor decides /
+  // guard scans), every 30 s otherwise, and at once on any leave event.
+  const isDayScholarStudent = currentRole === 'Student'
+    && String(session?.residentType || '').trim().toLowerCase() === 'dayscholar';
+  const [dayLeave, setDayLeave] = useState(null);
+  const dayLeaveRef = useRef(null);
+  useEffect(() => { dayLeaveRef.current = dayLeave; }, [dayLeave]);
+  useEffect(() => {
+    if (!isDayScholarStudent) { setDayLeave(null); return undefined; }
+    let alive = true;
+    let ticks = 0;
+    const pullLeave = async () => {
+      if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+      try {
+        const res = await fetch('/api/leave-requests/mine');
+        if (!res.ok) return;
+        const j = await res.json();
+        if (!alive || !j?.success) return;
+        setDayLeave(pickTodaysLeave(j.leaves || []).activeLeave);
+        // Same snapshot to an open Leave modal, so both views agree.
+        window.dispatchEvent(new CustomEvent('campus_leave_state', { detail: j }));
+      } catch { /* offline or server unreachable — keep the last state */ }
+    };
+    pullLeave();
+    const iv = setInterval(() => {
+      ticks += 1;
+      if (isLeaveLive(dayLeaveRef.current) || ticks % 10 === 0) pullLeave();
+    }, 3000);
+    const onLeaveUpdated = () => pullLeave();
+    const onVisible = () => { if (document.visibilityState === 'visible') pullLeave(); };
+    window.addEventListener('campus_leave_updated', onLeaveUpdated);
+    window.addEventListener('focus', onLeaveUpdated);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      alive = false;
+      clearInterval(iv);
+      window.removeEventListener('campus_leave_updated', onLeaveUpdated);
+      window.removeEventListener('focus', onLeaveUpdated);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [isDayScholarStudent, session?.identity]);
 
   // Mirror of the signed-in roll — loadLocalData must never show another
   // identity's passes in "My Pass"/activity feed (role switching on the
@@ -776,6 +824,7 @@ export default function App() {
             <StudentDashboard
               activities={recentActivities}
               activePass={activePass}
+              dayLeave={dayLeave}
               onOpenModal={(modalType) => {
                 // DAY-SCHOLAR GUARD: hostel repair tickets require a resident
                 // on-site to confirm the fix when the technician arrives — an

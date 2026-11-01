@@ -38,6 +38,7 @@ import { getTodayMenuKey, getTodayMenu, isFeastDay, getTodayDayLabel, getMealSta
 export default function StudentDashboard({
   activities = [],
   activePass,
+  dayLeave = null,
   onOpenModal,
   onViewPassQR,
   searchQuery = '',
@@ -162,11 +163,16 @@ export default function StudentDashboard({
   // Guarantee newest-first ordering in the feed regardless of merge order
   const sortedActivities = [...filteredActivities].sort((a, b) => activityTimeMs(b) - activityTimeMs(a));
 
-  const isPassApproved = activePass && activePass.status === 'APPROVED';
-  const isPassPending = activePass && activePass.status === 'PENDING';
-  const isPassRejected = activePass && activePass.status === 'REJECTED';
-  const isPassUsed = activePass && activePass.status === 'USED';
-  const isPassReturned = activePass && activePass.status === 'RETURNED';
+  // Day scholars never use the hosteller gate-pass round trip (exit + return):
+  // their card follows the mentor leave below (one exit scan, final), so a
+  // stray warden gate pass is not shown on their Active Gate Pass card.
+  const isDayScholarCard = String(session?.residentType || '').toLowerCase() === 'dayscholar';
+  const cardPass = isDayScholarCard ? null : activePass;
+  const isPassApproved = cardPass && cardPass.status === 'APPROVED';
+  const isPassPending = cardPass && cardPass.status === 'PENDING';
+  const isPassRejected = cardPass && cardPass.status === 'REJECTED';
+  const isPassUsed = cardPass && cardPass.status === 'USED';
+  const isPassReturned = cardPass && cardPass.status === 'RETURNED';
 
   // Today's mess menu (picked by actual weekday)
   const todayMenuKey = getTodayMenuKey();
@@ -176,6 +182,34 @@ export default function StudentDashboard({
   // section collapses to just the lunch slot (menu, live status, RSVP).
   const isDayScholar = String(session?.residentType || '').toLowerCase() === 'dayscholar';
   const dayScholarMealOrder = ['lunch'];
+
+  // Day scholars: the Active Gate Pass card follows TODAY's mentor leave
+  // (leave_requests — PENDING → APPROVED → OUT), kept live by App.jsx.
+  // No leave today → the card behaves exactly as before.
+  const fmtHM = (iso) => (iso ? new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '');
+  const leaveCard = (isDayScholar && dayLeave) ? (() => {
+    // Same tag styles as the hosteller card at the matching step:
+    // PENDING (amber, pulsing) → APPROVED (green) → scanned OUT (grey, like
+    // USED). Leave is one-way, so OUT is final — there is no RETURNED step.
+    const st = String(dayLeave.status || '').toUpperCase();
+    if (st === 'APPROVED') return {
+      badge: 'APPROVED', badgeCls: 'bg-emerald-100 text-emerald-800 border-emerald-300', icon: 'dot', dotCls: 'bg-emerald-600',
+      footer: 'Mentor Approved — Show QR at Gate', footerDot: 'bg-amber-500', action: 'View QR →'
+    };
+    if (st === 'OUT') return {
+      badge: 'Out of Campus (Leave)', badgeCls: 'bg-slate-200 text-slate-700 border-slate-400', icon: 'x',
+      footer: `Exited${dayLeave.scanned_at ? ` at ${fmtHM(dayLeave.scanned_at)}` : ''} — Back Next Working Day`, footerDot: 'bg-slate-400', action: 'View →'
+    };
+    if (st === 'REJECTED' || st === 'EXPIRED') return {
+      badge: st, badgeCls: 'bg-amber-100 text-amber-800 border-amber-300', icon: 'dot', dotCls: 'bg-amber-600',
+      footer: st === 'REJECTED' ? 'Rejected — tap to request again' : 'Expired at 16:30 Gate Close — tap to request again',
+      footerDot: 'bg-amber-500', action: 'Request →'
+    };
+    return {
+      badge: 'PENDING', badgeCls: 'bg-amber-100 text-amber-800 border-amber-300', icon: 'dot', dotCls: 'bg-amber-600 animate-pulse',
+      footer: 'Awaiting Mentor Sign-off', footerDot: 'bg-amber-500', action: 'View QR →'
+    };
+  })() : null;
   const mealOrder = isDayScholar ? dayScholarMealOrder : MEAL_ORDER;
   // Live meal-slot engine: what's being served right now / what's next
   const mealStatus = getMealStatus(new Date(), mealOrder);
@@ -371,7 +405,9 @@ export default function StudentDashboard({
 
         {/* Card 3: Active Gate Pass */}
         <div 
-          onClick={() => activePass ? onViewPassQR(activePass) : onOpenModal('gate_pass')}
+          onClick={() => isDayScholar
+            ? onOpenModal('leave')
+            : cardPass ? onViewPassQR(cardPass) : onOpenModal('gate_pass')}
           className="col-span-2 md:col-span-1 rounded-2xl sm:rounded-3xl p-4 sm:p-5 bg-gradient-to-br from-[#fffbeb] to-[#fef6d8] border-2 border-[#fde68a] shadow-[0_6px_20px_rgba(245,158,11,0.08)] flex flex-col justify-between hover:shadow-xl hover:-translate-y-1 transition-all duration-300 cursor-pointer group"
         >
           <div>
@@ -383,6 +419,13 @@ export default function StudentDashboard({
                 <span className="text-sm font-bold text-slate-800 tracking-tight">Active Gate Pass</span>
               </div>
               <div className="flex items-center gap-1.5">
+                {leaveCard ? (
+                <span data-testid="pass-card-badge" className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1.5 border ${leaveCard.badgeCls}`}>
+                  {leaveCard.icon === 'x' ? <XCircle className="w-3 h-3 shrink-0" />
+                    : <span className={`w-1.5 h-1.5 rounded-full ${leaveCard.dotCls}`}></span>}
+                  <span>{leaveCard.badge}</span>
+                </span>
+                ) : (
                 <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1.5 border ${
                   isPassApproved
                     ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
@@ -392,7 +435,7 @@ export default function StudentDashboard({
                         ? 'bg-slate-200 text-slate-700 border-slate-400'
                         : 'bg-amber-100 text-amber-800 border-amber-300'
                 }`}>
-                  {!activePass ? (
+                  {!cardPass ? (
                     <>
                       <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
                       <span>No Pass</span>
@@ -410,29 +453,34 @@ export default function StudentDashboard({
                   ) : (
                     <>
                       <span className={`w-1.5 h-1.5 rounded-full ${isPassApproved ? 'bg-emerald-600' : 'bg-amber-600 animate-pulse'}`}></span>
-                      <span>{activePass.status || 'Pending'}</span>
+                      <span>{cardPass.status || 'Pending'}</span>
                     </>
                   )}
                 </span>
+                )}
               </div>
             </div>
 
             <div className="mt-3">
               <div className="text-xl sm:text-3xl font-extrabold text-slate-900 font-mono tracking-tight group-hover:text-amber-900 transition-colors">
-                {activePass ? activePass.id : 'No Active Pass'}
+                {leaveCard ? 'Day-Scholar Leave' : cardPass ? cardPass.id : 'No Active Pass'}
               </div>
               <p className="text-xs text-slate-600 font-medium mt-0.5 truncate">
-                {activePass ? `${activePass.destination || 'Campus'} • ${activePass.passType || 'Day Pass'}` : 'No pass is currently active for your account'}
+                {leaveCard
+                  ? `${dayLeave.reason || 'Leave'} • One-way exit`
+                  : cardPass ? `${cardPass.destination || 'Campus'} • ${cardPass.passType || 'Day Pass'}` : 'No pass is currently active for your account'}
               </p>
             </div>
           </div>
 
           <div className="mt-4 pt-3 flex items-center justify-between border-t border-amber-200/80">
             <div className="flex items-center gap-1.5 text-xs text-amber-950 font-semibold">
-              <span className={`w-2 h-2 rounded-full ${!activePass ? 'bg-slate-300' : isPassUsed ? 'bg-slate-400' : isPassReturned ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
-              <span>
-                {!activePass
-                  ? 'Tap to request a new gate pass'
+              <span className={`w-2 h-2 rounded-full ${leaveCard ? leaveCard.footerDot : !cardPass ? 'bg-slate-300' : isPassUsed ? 'bg-slate-400' : isPassReturned ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
+              <span data-testid="pass-card-footer">
+                {leaveCard
+                  ? leaveCard.footer
+                  : !cardPass
+                  ? (isDayScholar ? 'Tap to request leave from your mentor' : 'Tap to request a new gate pass')
                   : isPassReturned
                     ? (isDayScholar ? 'Visit Complete — Pass Closed' : 'Round Trip Complete — Pass Closed')
                     : isPassUsed
@@ -445,7 +493,7 @@ export default function StudentDashboard({
               </span>
             </div>
             <span className="text-xs font-bold text-amber-800 group-hover:translate-x-1 transition-transform">
-              {activePass ? 'View QR →' : 'Request →'}
+              {leaveCard ? leaveCard.action : cardPass ? 'View QR →' : 'Request →'}
             </span>
           </div>
         </div>

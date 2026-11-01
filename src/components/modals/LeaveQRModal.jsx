@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { QRCodeSVG } from 'qrcode.react';
 import { Compass, Clock, Send, QrCode, RefreshCw, CheckCircle2, XCircle, LogOut } from 'lucide-react';
 import { generateSignedCommuteToken } from '../../utils/crypto';
 import { getStoredProfile, getAccessToken } from '../../utils/authClient';
+import { pickTodaysLeave } from '../../utils/dayScholarLeave';
+import ScannableQR from '../ScannableQR';
 
 /**
  * DAY-SCHOLAR LEAVE (Phase 1) — replaces the old IN/OUT commute alternation.
@@ -52,21 +53,27 @@ export default function LeaveQRModal({ isOpen, onClose, onToast }) {
     })();
     load(true);
     const poll = setInterval(() => load(false), 8000);
-    return () => { alive = false; clearInterval(poll); };
+    // The dashboard polls the same endpoint (fast while a leave is live) and
+    // broadcasts each fresh snapshot — adopt it so the modal and the Active
+    // Gate Pass card always show the same state at the same moment.
+    const onLeaveState = (e) => {
+      const j = e?.detail;
+      if (!alive || !j?.success) return;
+      setState({ phase: 'READY', leaves: j.leaves || [], outToday: j.outToday, hasLiveRequest: j.hasLiveRequest });
+    };
+    window.addEventListener('campus_leave_state', onLeaveState);
+    return () => { alive = false; clearInterval(poll); window.removeEventListener('campus_leave_state', onLeaveState); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
   if (!isOpen) return null;
 
+  const me = getStoredProfile() || {};
+  const qrCaption = [me.fullName, me.rollNumber].filter(Boolean).join(' • ');
+
   const leaves = state.leaves || [];
-  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
-  const todays = leaves.filter(l => l.created_at && new Date(l.created_at) >= todayStart);
-  const pending = todays.find(l => l.status === 'PENDING');
-  const live = todays.find(l => l.status === 'APPROVED' && !l.scanned_at);
-  const out = todays.find(l => l.status === 'OUT');
-  const decided = todays.find(l => l.status === 'REJECTED' || l.status === 'EXPIRED');
+  const { todays, pending, live, out, decided } = pickTodaysLeave(leaves);
   const anyStatus = pending?.status || live?.status || out?.status || decided?.status || null;
-  const activeLeave = pending || live || out || decided;
 
   const submit = async () => {
     const clean = reason.trim();
@@ -85,6 +92,8 @@ export default function LeaveQRModal({ isOpen, onClose, onToast }) {
         setReason('');
         if (onToast) onToast('Leave request sent to your mentor — approval happens in the app, never automatic.', 'success');
         await load(false);
+        // Dashboard card flips to PENDING right away (no wait for its next poll).
+        window.dispatchEvent(new CustomEvent('campus_leave_updated', { detail: { leave: j.leave } }));
       } else {
         setError(j?.error || 'Request was not accepted.');
       }
@@ -152,8 +161,10 @@ export default function LeaveQRModal({ isOpen, onClose, onToast }) {
             <>
               {statusChip()}
 
-              {/* Apply — hidden while a live request exists or already OUT */}
-              {!anyStatus && (
+              {/* Apply — hidden while a live request exists or already OUT
+                  (after a REJECTED/EXPIRED request the student may apply again;
+                  the server enforces the same rule). */}
+              {!(pending || live || out) && (
                 <div className="rounded-2xl border border-blue-200 bg-blue-50/50 p-4 space-y-3">
                   <p className="text-sm font-extrabold text-blue-900">Request leave from your mentor</p>
                   <ul className="text-[11px] text-blue-800 leading-relaxed list-disc pl-4">
@@ -182,18 +193,26 @@ export default function LeaveQRModal({ isOpen, onClose, onToast }) {
               )}
 
               {/* Campus QR (permanent credential) — ACTIVE only on approval.
-                  Compact horizontal card: QR left, status right. */}
+                  APPROVED: big, full-width, gate-scannable QR (tap = fullscreen).
+                  Otherwise: compact locked card, QR left, status right. */}
+              {live && tokenStage === 'READY' ? (
+                <div className="rounded-2xl border-2 p-3.5 space-y-3 text-center from-emerald-50 to-teal-50 border-emerald-200 bg-gradient-to-br">
+                  <div>
+                    <p className="text-xs font-extrabold text-emerald-800">🟢 QR is LIVE at the gate</p>
+                    <p className="text-[11px] text-slate-600 leading-snug mt-1">One scan at the gate records your exit — show it now.</p>
+                  </div>
+                  <ScannableQR value={token} caption={qrCaption} />
+                </div>
+              ) : (
               <div className={`rounded-2xl border-2 p-3.5 flex items-center gap-4 text-left ${live ? 'from-emerald-50 to-teal-50 border-emerald-200 bg-gradient-to-br' : 'border-slate-200 bg-slate-50'}`}>
                 <div className="bg-white p-2.5 rounded-xl shadow-sm border border-slate-200/70 relative shrink-0">
-                  {tokenStage === 'READY' ? (
-                    <>
-                      <QRCodeSVG value={token} size={104} level="M" includeMargin={false} />
-                      {!live && (
-                        <div className="absolute inset-0 bg-white/70 rounded-xl flex items-center justify-center">
-                          <QrCode className="w-7 h-7 text-slate-400" />
-                        </div>
-                      )}
-                    </>
+                  {!live ? (
+                    /* Locked (no approved leave yet, or already scanned OUT):
+                       no QR is drawn at all — nothing to photograph or re-use.
+                       The APPROVED state renders the big ScannableQR above. */
+                    <div className="w-[104px] h-[104px] flex items-center justify-center">
+                      <QrCode className="w-7 h-7 text-slate-400" />
+                    </div>
                   ) : (
                     <div className="w-[104px] h-[104px] flex items-center justify-center text-slate-400 text-[10px] font-mono text-center px-2">
                       {tokenStage === 'ERROR' ? 'Signing unavailable on this device' : 'Signing ID…'}
@@ -211,6 +230,7 @@ export default function LeaveQRModal({ isOpen, onClose, onToast }) {
                   </p>
                 </div>
               </div>
+              )}
 
               {/* History of today's decisions */}
               {todays.length > 0 && (

@@ -1,5 +1,5 @@
 import React from 'react';
-import { QRCodeSVG } from 'qrcode.react';
+import ScannableQR from '../ScannableQR';
 import {
   QrCode,
   X,
@@ -36,6 +36,7 @@ export default function ViewPassQRModal({ isOpen, onClose, pass }) {
   // Return leg: after EXIT the pass stays scannable for the REST OF THE DAY —
   // the guard scans the same QR a second time to register the RETURN.
   const canShowReturnQR = isUsed && !!pass.token;
+  const qrCaption = [pass.id, pass.name && `${pass.name}${pass.rollNo ? ` (${pass.rollNo})` : ''}`].filter(Boolean).join(' • ');
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/40 backdrop-blur-xs animate-in fade-in duration-200 overflow-y-auto">
@@ -152,14 +153,9 @@ export default function ViewPassQRModal({ isOpen, onClose, pass }) {
                 <span>ACTIVE & CRYPTO-VERIFIED</span>
               </div>
 
-              {/* QR Code Canvas */}
-              <div className="p-3.5 bg-white rounded-xl shadow-md border border-slate-200">
-                <QRCodeSVG
-                  value={pass.token || pass.id}
-                  size={180}
-                  level="M"
-                  includeMargin={false}
-                />
+              {/* QR Code — big, quiet-zoned, tap = fullscreen (shared with day scholars) */}
+              <div className="w-full">
+                <ScannableQR value={pass.token || pass.id} caption={qrCaption} />
               </div>
 
               <div className="mt-4 font-mono">
@@ -213,14 +209,9 @@ export default function ViewPassQRModal({ isOpen, onClose, pass }) {
                 <span>EXIT REGISTERED — SHOW AGAIN TO RETURN</span>
               </div>
 
-              {/* QR Code Canvas */}
-              <div className="p-3.5 bg-white rounded-xl shadow-md border border-blue-200">
-                <QRCodeSVG
-                  value={pass.token || pass.id}
-                  size={180}
-                  level="M"
-                  includeMargin={false}
-                />
+              {/* QR Code — big, quiet-zoned, tap = fullscreen (shared with day scholars) */}
+              <div className="w-full">
+                <ScannableQR value={pass.token || pass.id} caption={qrCaption} />
               </div>
 
               <div className="mt-4 font-mono">
