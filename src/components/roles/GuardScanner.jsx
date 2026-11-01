@@ -19,7 +19,8 @@ import {
   LogIn,
   Users
 } from 'lucide-react';
-import { verifySignedPassToken } from '../../utils/crypto';
+import { verifySignedPassToken, leaveQrFreshness } from '../../utils/crypto';
+import { noteServerDate, serverNow } from '../../utils/serverClock';
 import { getAllLocal, saveLocal, queueOfflineAction } from '../../utils/db';
 import { getAccessToken } from '../../utils/authClient';
 
@@ -186,6 +187,7 @@ export default function GuardScanner({ searchQuery = '' }) {
       try {
         const tok = getAccessToken();
         const r = await fetch('/api/pass-scans?limit=60', tok ? { headers: { Authorization: `Bearer ${tok}` } } : undefined);
+        noteServerDate(r);
         const j = await r.json();
         if (alive && j?.success && Array.isArray(j.scans)) {
           mergeLogs(buildFromServer(j.scans));
@@ -231,11 +233,36 @@ export default function GuardScanner({ searchQuery = '' }) {
     if (verification.valid && verification.payload) {
       const passId = verification.payload.passId || '';
 
-      // DAY-SCHOLAR LEAVE branch: a windowless campus-ID token never touches
-      // the pass state machine — the SERVER checks for a mentor-APPROVED,
-      // not-yet-scanned leave and records the ONE-WAY OUT (parent SMS +
-      // student notification fire here at the gate, never before).
+      // Old permanent campus-ID QR (no time, no leave id): a screenshot of it
+      // could be re-used, so it no longer opens the gate for a leave.
       if (verification.payload.kind === 'COMMUTE') {
+        setScanResult({
+          valid: false,
+          reasonKind: 'state',
+          message: 'Old campus-ID QR — not valid for leave exit any more. Ask the student to open the app and show the live leave QR (it changes every few seconds).',
+          payload: verification.payload
+        });
+        playAudioFeedback(false);
+        return;
+      }
+
+      // DAY-SCHOLAR LEAVE branch: a rotating per-leave token never touches
+      // the pass state machine — the SERVER checks the leave id is this
+      // student's mentor-APPROVED, not-yet-scanned leave and that the QR is
+      // fresh, then records the ONE-WAY OUT (parent SMS + student
+      // notification fire here at the gate, never before).
+      if (verification.payload.kind === 'LEAVE') {
+        const { fresh } = leaveQrFreshness(verification.payload, serverNow());
+        if (!fresh) {
+          setScanResult({
+            valid: false,
+            isExpired: true,
+            message: 'QR expired — ask the student to show the live QR in the app (screenshots or old photos are not accepted). Nothing recorded.',
+            payload: verification.payload
+          });
+          playAudioFeedback(false);
+          return;
+        }
         try {
           const tok = getAccessToken();
           const r = await fetch('/api/leave-scan', {
@@ -244,10 +271,13 @@ export default function GuardScanner({ searchQuery = '' }) {
             body: JSON.stringify({
               rollNo: verification.payload.rollNo,
               name: verification.payload.name,
+              leaveId: verification.payload.leaveId,
+              issuedAt: verification.payload.issuedAt,
               method: 'QR',
               scannedBy: 'Main Gate Guard'
             })
           });
+          noteServerDate(r);
           const j = await r.json();
           if (j?.success) {
             setGateLogs(prev => [{
@@ -265,12 +295,27 @@ export default function GuardScanner({ searchQuery = '' }) {
               valid: true,
               mode: 'leave',
               leave: { outAt: j.outAt, reason: j.leaveReason, parentSms: j.parentSms },
+              // Identity for the guard to read out — the server's directory
+              // row wins over what the student's phone put in the QR.
+              student: {
+                name: j.name || verification.payload.name,
+                rollNo: j.rollNo || verification.payload.rollNo,
+                department: j.department || verification.payload.department || '',
+                course: j.course || verification.payload.course || '',
+                section: j.section || verification.payload.section || ''
+              },
               payload: verification.payload
             });
             playAudioFeedback(true);
             window.dispatchEvent(new CustomEvent('campus_leave_updated', { detail: { rollNo: j.rollNo, outAt: j.outAt } }));
           } else {
-            setScanResult({ valid: false, message: j?.reason || j?.error || 'Gate leave-scan rejected', payload: verification.payload });
+            setScanResult({
+              valid: false,
+              reasonKind: j?.expired ? undefined : 'state',
+              isExpired: j?.expired || undefined,
+              message: j?.reason || j?.error || 'Gate leave-scan rejected',
+              payload: verification.payload
+            });
             playAudioFeedback(false);
           }
         } catch {
@@ -878,18 +923,39 @@ export default function GuardScanner({ searchQuery = '' }) {
                   <div className="w-12 h-12 rounded-xl bg-emerald-600 flex items-center justify-center text-white font-bold text-lg font-mono shadow-sm">
                     {scanResult.payload.name ? scanResult.payload.name.charAt(0) : 'S'}
                   </div>
-                  <div>
-                    <h4 className="text-base font-bold text-slate-900 leading-tight">
-                      {scanResult.payload.name}
+                  <div className="min-w-0">
+                    <h4 className={`${scanResult.mode === 'leave' ? 'text-lg sm:text-xl break-words' : 'text-base'} font-bold text-slate-900 leading-tight`}>
+                      {(scanResult.mode === 'leave' && scanResult.student?.name) || scanResult.payload.name}
                     </h4>
-                    <span className="text-xs font-mono text-emerald-700 font-semibold">
-                      Roll No: {scanResult.payload.rollNo}
+                    <span className={`${scanResult.mode === 'leave' ? 'text-sm' : 'text-xs'} font-mono text-emerald-700 font-semibold`}>
+                      Roll No: {(scanResult.mode === 'leave' && scanResult.student?.rollNo) || scanResult.payload.rollNo}
                     </span>
                     <span className="text-[11px] text-slate-500 block font-mono">
                       Pass ID: {scanResult.payload.passId}
                     </span>
                   </div>
                 </div>
+
+                {/* Day-scholar leave: branch / department / course for the
+                    guard to match the student (no photo by design). */}
+                {scanResult.mode === 'leave' && scanResult.student && (
+                  <div data-testid="leave-student-details" className="grid grid-cols-2 gap-2 pt-2 border-t border-emerald-200">
+                    <div className="col-span-2 bg-white p-2.5 rounded-lg border border-emerald-100 min-w-0">
+                      <span className="text-[10px] font-mono text-slate-500 block">Branch / Department</span>
+                      <span className="text-base font-extrabold text-slate-900 block leading-snug break-words">
+                        {scanResult.student.department || '—'}
+                      </span>
+                    </div>
+                    <div className="bg-white p-2.5 rounded-lg border border-emerald-100 min-w-0">
+                      <span className="text-[10px] font-mono text-slate-500 block">Course</span>
+                      <span className="text-sm font-bold text-slate-900 block break-words">{scanResult.student.course || '—'}</span>
+                    </div>
+                    <div className="bg-white p-2.5 rounded-lg border border-emerald-100 min-w-0">
+                      <span className="text-[10px] font-mono text-slate-500 block">Section</span>
+                      <span className="text-sm font-bold text-slate-900 block break-words">{scanResult.student.section || '—'}</span>
+                    </div>
+                  </div>
+                )}
 
                 {/* Destination & Expiry Grid — pass-only fields; leave IDs carry neither */}
                 {scanResult.mode !== 'leave' && (

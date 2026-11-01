@@ -29,6 +29,7 @@ import { flushOutbox, getPendingSyncCount, initSyncEngine } from './utils/syncEn
 import { getStoredProfile, clearStoredSession, getAccessToken } from './utils/authClient';
 import { startNotificationPolling, stopNotificationPolling } from './utils/notify';
 import { pickTodaysLeave, isLeaveLive } from './utils/dayScholarLeave';
+import { noteServerDate } from './utils/serverClock';
 
 // Feed demographics start EMPTY — the feed only ever shows items the user
 // actually created (persisted in IndexedDB / server). No pre-seeded demos.
@@ -116,6 +117,7 @@ export default function App() {
       if (typeof navigator !== 'undefined' && !navigator.onLine) return;
       try {
         const res = await fetch('/api/leave-requests/mine');
+        noteServerDate(res); // server clock for the rotating leave QR
         if (!res.ok) return;
         const j = await res.json();
         if (!alive || !j?.success) return;

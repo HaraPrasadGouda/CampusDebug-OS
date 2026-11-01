@@ -9,8 +9,10 @@ import { Maximize2 } from 'lucide-react';
  * white quiet zone, error-correction M, drawn as crisp vector SVG that
  * fills the card width (never a blurry upscaled bitmap).
  * Tap → fullscreen white view for scanning at the gate.
+ * Optional `hint` (e.g. the rotating leave QR's countdown) shows under the
+ * QR in both views; the fullscreen view follows `value` as it changes.
  */
-export default function ScannableQR({ value, caption }) {
+export default function ScannableQR({ value, caption, hint }) {
   const [full, setFull] = useState(false);
 
   useEffect(() => {
@@ -44,6 +46,7 @@ export default function ScannableQR({ value, caption }) {
           <Maximize2 className="w-3 h-3" /> Tap to enlarge
         </span>
       </button>
+      {hint && <p data-testid="scannable-qr-hint" className="mt-1.5 text-[11px] font-bold text-emerald-800 text-center">{hint}</p>}
 
       {full && typeof document !== 'undefined' && createPortal(
         <div
@@ -63,6 +66,7 @@ export default function ScannableQR({ value, caption }) {
             style={{ width: 'min(94vw, 80vh)', height: 'auto', display: 'block' }}
           />
           {caption && <p className="mt-3 text-sm font-extrabold text-slate-900 text-center">{caption}</p>}
+          {hint && <p className="mt-1 text-xs font-bold text-emerald-800 text-center">{hint}</p>}
           <p className="mt-1 text-xs font-bold text-slate-500">Tap anywhere to close</p>
         </div>,
         document.body

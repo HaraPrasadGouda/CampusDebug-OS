@@ -462,7 +462,7 @@ export default function StudentDashboard({
             </div>
 
             <div className="mt-3">
-              <div className="text-xl sm:text-3xl font-extrabold text-slate-900 font-mono tracking-tight group-hover:text-amber-900 transition-colors">
+              <div className={`${leaveCard ? 'text-xl sm:text-2xl' : 'text-xl sm:text-3xl'} font-extrabold text-slate-900 font-mono tracking-tight group-hover:text-amber-900 transition-colors`}>
                 {leaveCard ? 'Day-Scholar Leave' : cardPass ? cardPass.id : 'No Active Pass'}
               </div>
               <p className="text-xs text-slate-600 font-medium mt-0.5 truncate">
@@ -474,8 +474,8 @@ export default function StudentDashboard({
           </div>
 
           <div className="mt-4 pt-3 flex items-center justify-between border-t border-amber-200/80">
-            <div className="flex items-center gap-1.5 text-xs text-amber-950 font-semibold">
-              <span className={`w-2 h-2 rounded-full ${leaveCard ? leaveCard.footerDot : !cardPass ? 'bg-slate-300' : isPassUsed ? 'bg-slate-400' : isPassReturned ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
+            <div className="flex items-center gap-1.5 text-xs text-amber-950 font-semibold min-w-0">
+              <span className={`w-2 h-2 rounded-full shrink-0 ${leaveCard ? leaveCard.footerDot : !cardPass ? 'bg-slate-300' : isPassUsed ? 'bg-slate-400' : isPassReturned ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
               <span data-testid="pass-card-footer">
                 {leaveCard
                   ? leaveCard.footer
@@ -492,7 +492,7 @@ export default function StudentDashboard({
                           : 'Awaiting Sign-off'}
               </span>
             </div>
-            <span className="text-xs font-bold text-amber-800 group-hover:translate-x-1 transition-transform">
+            <span className="text-xs font-bold text-amber-800 group-hover:translate-x-1 transition-transform whitespace-nowrap shrink-0 pl-2">
               {leaveCard ? leaveCard.action : cardPass ? 'View QR →' : 'Request →'}
             </span>
           </div>

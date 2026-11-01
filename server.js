@@ -3953,6 +3953,12 @@ app.post('/api/leave-requests/:id/decide', authenticateUser, requireRole('TEACHE
 //   APPROVED leave  -> ONE-WAY OUT recorded, parent SMS, student push.
 //   no leave on file -> red "NOT APPROVED" — nothing is recorded at all.
 //   PENDING leave   -> clear "still pending with mentor" message.
+// Rotating per-leave QR (student app re-signs it every ~25 s): the gate takes
+// it only while fresh by SERVER time — a screenshot / forwarded photo of the
+// QR is refused within a minute. Same numbers as src/utils/crypto.js.
+const LEAVE_QR_MAX_AGE_MS = 60 * 1000;
+const LEAVE_QR_MAX_FUTURE_MS = 30 * 1000;
+
 app.post('/api/leave-scan', authenticateUser, requireRole('GUARD', 'WARDEN', 'ADMIN', 'DEAN'), async (req, res) => {
     try {
         if (!supabase) return res.status(503).json({ success: false, error: 'Leave register offline' });
@@ -3960,6 +3966,20 @@ app.post('/api/leave-scan', authenticateUser, requireRole('GUARD', 'WARDEN', 'AD
         const roll = String(req.body.rollNo || '').trim();
         if (!/^[A-Za-z0-9-]{4,20}$/.test(roll)) {
             return res.status(400).json({ success: false, error: 'Valid roll number required' });
+        }
+        // The live leave QR names its leave + issue time. A request without
+        // them is the old permanent campus-ID QR — no longer a leave exit.
+        const leaveId = String(req.body.leaveId || '').trim();
+        if (!leaveId) {
+            return res.status(400).json({ success: false, reason: 'Old campus-ID QR — not valid for leave exit any more. Ask the student to open the app and show the live leave QR. Nothing recorded.' });
+        }
+        if (!/^[A-Za-z0-9-]{1,64}$/.test(leaveId)) {
+            return res.status(400).json({ success: false, error: 'Invalid leave id in QR' });
+        }
+        const issuedMs = Date.parse(String(req.body.issuedAt || ''));
+        const qrAgeMs = Date.now() - issuedMs;
+        if (!Number.isFinite(issuedMs) || qrAgeMs > LEAVE_QR_MAX_AGE_MS || qrAgeMs < -LEAVE_QR_MAX_FUTURE_MS) {
+            return res.status(403).json({ success: false, expired: true, reason: 'QR expired — ask the student to show the live QR in the app (screenshots or old photos are not accepted). Nothing recorded.' });
         }
         const prof = await profileByRoll(roll);
         if (!prof) return res.status(404).json({ success: false, error: `${roll} is not in the college records` });
@@ -3974,12 +3994,22 @@ app.post('/api/leave-scan', authenticateUser, requireRole('GUARD', 'WARDEN', 'AD
             return res.status(409).json({ success: false, reason: `${prof.full_name} already LEFT campus on a leave today — one-way leave, no second scan. Back on the next working day.` });
         }
 
-        const { data: leave } = await supabase.from('leave_requests')
+        // The leave named in the QR — it must be THIS student's leave.
+        const { data: qrLeave } = await supabase.from('leave_requests')
             .select('*')
-            .eq('student_roll', prof.roll_number)
-            .eq('status', 'APPROVED')
-            .is('scanned_at', null)
-            .order('created_at', { ascending: false }).limit(1).maybeSingle();
+            .eq('id', leaveId)
+            .maybeSingle();
+        const isMine = !!qrLeave && String(qrLeave.student_roll || '').trim().toLowerCase() === String(prof.roll_number).trim().toLowerCase();
+        if (isMine && (qrLeave.status === 'OUT' || qrLeave.scanned_at)) {
+            return res.status(409).json({ success: false, reason: `${prof.full_name} — this leave QR was already used at the gate. One-way leave, no second scan. Nothing recorded.` });
+        }
+        if (isMine && qrLeave.status !== 'APPROVED' && qrLeave.status !== 'PENDING') {
+            return res.status(403).json({ success: false, reason: `${prof.full_name} — this leave is ${qrLeave.status}, not valid at the gate. Contact your mentor. Nothing recorded.` });
+        }
+        if (!isMine) {
+            return res.status(403).json({ success: false, reason: `${prof.full_name} — this QR does not match any leave of this student. Ask the student to show the live QR in the app. Nothing recorded.` });
+        }
+        const leave = qrLeave.status === 'APPROVED' ? qrLeave : null;
 
         if (!leave) {
             const { data: pending } = await supabase.from('leave_requests')
@@ -4000,10 +4030,15 @@ app.post('/api/leave-scan', authenticateUser, requireRole('GUARD', 'WARDEN', 'AD
         }
 
         const scannedAt = new Date().toISOString();
-        const { error: upErr } = await supabase.from('leave_requests').update({
+        // Only flips a still-APPROVED, unscanned row — two guards scanning
+        // the same QR at once can't both record an exit.
+        const { data: flipped, error: upErr } = await supabase.from('leave_requests').update({
             status: 'OUT', scanned_at: scannedAt
-        }).eq('id', leave.id);
+        }).eq('id', leave.id).eq('status', 'APPROVED').is('scanned_at', null).select('id');
         if (upErr) return res.status(500).json({ success: false, error: upErr.message });
+        if (Array.isArray(flipped) && flipped.length === 0) {
+            return res.status(409).json({ success: false, reason: `${prof.full_name} — this leave QR was already used at the gate. One-way leave, no second scan. Nothing recorded.` });
+        }
 
         // Gate register row (one-way: EXIT only, no return leg will exist).
         // pass_ref column is varchar(20): LV-<roll>-MMDD keeps it short while
@@ -4049,10 +4084,23 @@ app.post('/api/leave-scan', authenticateUser, requireRole('GUARD', 'WARDEN', 'AD
             } catch { /* non-blocking */ }
         })();
 
+        // Course / section for the guard's readout (best-effort; the
+        // shared profileByRoll() select is left as it is).
+        let course = null, section = null;
+        try {
+            const { data: cs } = await supabase.from('profiles')
+                .select('course, section').eq('roll_number', prof.roll_number).maybeSingle();
+            course = cs?.course || null;
+            section = cs?.section || null;
+        } catch { /* readout only */ }
+
         return res.json({
             success: true,
             name: prof.full_name,
             rollNo: prof.roll_number,
+            department: prof.department || null,
+            course,
+            section,
             outAt: scannedAt,
             leaveReason: leave.reason,
             parentSms: prof.guardian_phone ? 'dispatched to guardian' : 'no guardian phone on file'
