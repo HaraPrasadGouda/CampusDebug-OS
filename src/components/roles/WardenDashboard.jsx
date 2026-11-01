@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   ShieldCheck, 
   CheckCircle2, 
@@ -25,6 +25,7 @@ import { getAllLocal, saveLocal, queueOfflineAction } from '../../utils/db';
 import { getAccessToken } from '../../utils/authClient';
 import { notifyGatePassApproved } from '../../utils/notifications';
 import WardenCreatePassModal from '../modals/WardenCreatePassModal';
+import { isPageHidden, onPageActive, POLL_ACTIVE_MS, POLL_IDLE_MS } from '../../utils/livePoll';
 
 // NO seeded demo data — the warden queue only shows REAL passes/tickets/clusters
 // created by actual student activity (IndexedDB + Supabase via /api/dashboard-data).
@@ -149,12 +150,26 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
     }
   };
 
+  // Fix 2 (polling): was every 3 s. Now every 15 s while passes are waiting
+  // for a decision, every 30 s when the queue is empty, paused while the tab
+  // is hidden, and refreshed at once when the warden comes back to the tab.
+  const pendingCountRef = useRef(0);
+  useEffect(() => { pendingCountRef.current = pendingPasses.length; }, [pendingPasses]);
+
   useEffect(() => {
     refreshWardenData();
 
-    const pollInterval = setInterval(() => {
+    let lastPollAt = Date.now();
+    const pollNow = () => {
+      lastPollAt = Date.now();
       refreshWardenData();
+    };
+    const pollInterval = setInterval(() => {
+      if (isPageHidden()) return;
+      const every = pendingCountRef.current > 0 ? POLL_ACTIVE_MS : POLL_IDLE_MS;
+      if (Date.now() - lastPollAt >= every) pollNow();
     }, 3000);
+    const offPageActive = onPageActive(pollNow);
 
     const handlePassEvent = () => refreshWardenData();
     const handleTicketEvent = (e) => {
@@ -168,6 +183,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
     window.addEventListener('campus_tickets_updated', handleTicketEvent);
     return () => {
       clearInterval(pollInterval);
+      offPageActive();
       window.removeEventListener('campus_gate_pass_updated', handlePassEvent);
       window.removeEventListener('campus_tickets_updated', handleTicketEvent);
     };

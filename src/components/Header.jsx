@@ -21,6 +21,7 @@ import {
 import { getOutboxCount } from '../utils/db';
 import { getPendingSyncCount } from '../utils/syncEngine';
 import FacultyFinderDropdown from './FacultyFinderDropdown';
+import { isPageHidden, onPageActive } from '../utils/livePoll';
 
 const ROLES = [
   { id: 'Student', label: 'Student', title: 'Student Portal', icon: User, color: 'text-blue-600 bg-blue-50' },
@@ -115,8 +116,10 @@ export default function Header({
 
   useEffect(() => {
     fetchBellNotices();
-    const bellInterval = setInterval(fetchBellNotices, 20000);
-    return () => clearInterval(bellInterval);
+    // Fix 2: no bell refresh while the tab is hidden; refresh on return.
+    const bellInterval = setInterval(() => { if (!isPageHidden()) fetchBellNotices(); }, 20000);
+    const offBellActive = onPageActive(fetchBellNotices);
+    return () => { clearInterval(bellInterval); offBellActive(); };
   }, []);
 
   // Bell "new" count = real fetchese items newer than the last time
@@ -194,14 +197,24 @@ export default function Header({
     window.addEventListener('offline', handleOffline);
     window.addEventListener('campus_outbox_updated', updateQueueCount);
 
-    // Periodically poll getPendingSyncCount and check connectivity every 3 seconds
+    // Periodically poll getPendingSyncCount (local, no network) every 3 seconds.
+    // Fix 2: the server heartbeat now runs every 15 s instead of every 3 s,
+    // never while the tab is hidden, and at once when the tab comes back.
+    // (The browser's own online/offline events above still flip the badge
+    // instantly.)
+    let lastPingAt = Date.now();
     const intervalId = setInterval(() => {
       refreshQueueCount();
-      checkConnectivity();
+      if (!isPageHidden() && Date.now() - lastPingAt >= 15000) {
+        lastPingAt = Date.now();
+        checkConnectivity();
+      }
     }, 3000);
+    const offPingActive = onPageActive(() => { lastPingAt = Date.now(); checkConnectivity(); });
 
     return () => {
       clearInterval(intervalId);
+      offPingActive();
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
       window.removeEventListener('campus_outbox_updated', updateQueueCount);
