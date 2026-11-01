@@ -223,11 +223,30 @@ export async function flushOutbox(onNotification) {
               }
             }
 
+            // Guard's OFFLINE day-scholar leave exit: tell the guard screen.
+            if (item.actionType === 'LEAVE_SCAN' && typeof window !== 'undefined') {
+              const j = await res.json().catch(() => ({}));
+              window.dispatchEvent(new CustomEvent('campus_leave_scan_synced', { detail: { ...j, ok: true, leaveId: targetBody.leaveId } }));
+            }
+
             if (item.actionType === 'REQUEST_DOCUMENT' || item.actionType === 'APPLY_CERTIFICATE') {
               console.log('Successfully flushed document request:', deleteKey);
             } else {
               console.log(`[SyncEngine] Synced outbox item #${deleteKey} (${item.actionType})`);
             }
+            break;
+          } else if (item.actionType === 'LEAVE_SCAN' && [400, 403, 404, 409].includes(res.status)) {
+            // Final answer for an offline leave exit (double use from another
+            // gate, expired QR, not approved) — retrying can't change it.
+            // Drop it from the outbox and show the guard why.
+            const j = await res.json().catch(() => ({}));
+            await db.delete('outbox_queue', item.queueId !== undefined ? item.queueId : item.id);
+            syncedCount++;
+            succeeded = true;
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('campus_leave_scan_synced', { detail: { ...j, ok: false, status: res.status, leaveId: targetBody.leaveId } }));
+            }
+            console.warn(`[SyncEngine] Offline leave exit refused at sync (${res.status}):`, j.reason || j.error || '');
             break;
           } else {
             console.warn(`[SyncEngine] Attempt ${attempt} failed with status ${res.status} for ${item.queueId || item.id}`);

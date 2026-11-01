@@ -21,3 +21,21 @@ export function pickTodaysLeave(leaves = [], now = new Date()) {
 export function isLeaveLive(leave) {
   return !!leave && (leave.status === 'PENDING' || (leave.status === 'APPROVED' && !leave.scanned_at));
 }
+
+// Last /api/leave-requests/mine answer, kept on the phone so an APPROVED
+// leave (and its rotating QR, signed on the phone) still shows when the
+// student opens the app at the gate with no network. Per roll number.
+const SNAP_KEY = 'campus_leave_snapshot';
+export function saveLeaveSnapshot(roll, j) {
+  try {
+    if (!roll || !j?.success) return;
+    localStorage.setItem(SNAP_KEY, JSON.stringify({ roll: String(roll), savedAt: Date.now(), data: j }));
+  } catch { /* storage full / private mode */ }
+}
+export function readLeaveSnapshot(roll) {
+  try {
+    const s = JSON.parse(localStorage.getItem(SNAP_KEY) || 'null');
+    if (!s || !roll || String(s.roll) !== String(roll) || !s.data?.success) return null;
+    return s.data;
+  } catch { return null; }
+}

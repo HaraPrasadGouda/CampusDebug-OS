@@ -3,7 +3,7 @@ import { Compass, Clock, Send, QrCode, RefreshCw, CheckCircle2, XCircle, LogOut 
 import { generateSignedLeaveToken, LEAVE_QR_ROTATE_MS } from '../../utils/crypto';
 import { noteServerDate, serverNow } from '../../utils/serverClock';
 import { getStoredProfile, getAccessToken } from '../../utils/authClient';
-import { pickTodaysLeave } from '../../utils/dayScholarLeave';
+import { pickTodaysLeave, saveLeaveSnapshot, readLeaveSnapshot } from '../../utils/dayScholarLeave';
 import ScannableQR from '../ScannableQR';
 
 /**
@@ -32,9 +32,14 @@ export default function LeaveQRModal({ isOpen, onClose, onToast }) {
       const j = await r.json();
       if (j?.success) {
         setError('');
+        saveLeaveSnapshot(getStoredProfile()?.rollNumber, j);
         setState({ phase: 'READY', leaves: j.leaves || [], outToday: j.outToday, hasLiveRequest: j.hasLiveRequest });
       }
-    } catch { /* offline — keep last snapshot */ }
+    } catch {
+      // offline — keep last snapshot; first open with no network: the saved one
+      const snap = readLeaveSnapshot(getStoredProfile()?.rollNumber);
+      if (snap) setState(prev => prev.phase === 'READY' ? prev : { phase: 'READY', leaves: snap.leaves || [], outToday: snap.outToday, hasLiveRequest: snap.hasLiveRequest });
+    }
     if (showSpinner) setRefreshing(false);
   };
 

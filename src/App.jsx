@@ -28,7 +28,7 @@ import { initDB, getAllLocal, saveLocal, deleteLocal } from './utils/db';
 import { flushOutbox, getPendingSyncCount, initSyncEngine } from './utils/syncEngine';
 import { getStoredProfile, clearStoredSession, getAccessToken } from './utils/authClient';
 import { startNotificationPolling, stopNotificationPolling } from './utils/notify';
-import { pickTodaysLeave, isLeaveLive } from './utils/dayScholarLeave';
+import { pickTodaysLeave, isLeaveLive, saveLeaveSnapshot, readLeaveSnapshot } from './utils/dayScholarLeave';
 import { noteServerDate } from './utils/serverClock';
 
 // Feed demographics start EMPTY — the feed only ever shows items the user
@@ -113,18 +113,26 @@ export default function App() {
     if (!isDayScholarStudent) { setDayLeave(null); return undefined; }
     let alive = true;
     let ticks = 0;
+    // Offline (app opened at the gate with no network): show the last saved
+    // leave so an approved leave's QR is still there.
+    const fromSnapshot = () => {
+      if (!alive || dayLeaveRef.current) return;
+      const snap = readLeaveSnapshot(getStoredProfile()?.rollNumber);
+      if (snap) setDayLeave(pickTodaysLeave(snap.leaves || []).activeLeave);
+    };
     const pullLeave = async () => {
-      if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+      if (typeof navigator !== 'undefined' && !navigator.onLine) { fromSnapshot(); return; }
       try {
         const res = await fetch('/api/leave-requests/mine');
         noteServerDate(res); // server clock for the rotating leave QR
         if (!res.ok) return;
         const j = await res.json();
         if (!alive || !j?.success) return;
+        saveLeaveSnapshot(getStoredProfile()?.rollNumber, j);
         setDayLeave(pickTodaysLeave(j.leaves || []).activeLeave);
         // Same snapshot to an open Leave modal, so both views agree.
         window.dispatchEvent(new CustomEvent('campus_leave_state', { detail: j }));
-      } catch { /* offline or server unreachable — keep the last state */ }
+      } catch { fromSnapshot(); /* offline or server unreachable — keep the last state */ }
     };
     pullLeave();
     const iv = setInterval(() => {

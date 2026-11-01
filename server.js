@@ -3958,6 +3958,59 @@ app.post('/api/leave-requests/:id/decide', authenticateUser, requireRole('TEACHE
 // QR is refused within a minute. Same numbers as src/utils/crypto.js.
 const LEAVE_QR_MAX_AGE_MS = 60 * 1000;
 const LEAVE_QR_MAX_FUTURE_MS = 30 * 1000;
+// OFFLINE gate scans (guard phone had no network): the guard app checks the
+// QR on the phone, records the REAL scan time and sends it here when the
+// network is back. A synced scan time may be at most 24 h old and only a
+// little ahead of the server clock (guard phone clock drift).
+const LEAVE_OFFLINE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const LEAVE_OFFLINE_MAX_AHEAD_MS = 5 * 60 * 1000;
+
+// Double use of one leave QR by two guard phones that were BOTH offline:
+// the first sync wins, the second is refused at sync and logged here (no DB
+// column for it) so the warden/admin can follow up.
+const LEAVE_SCAN_CONFLICTS_FILE = path.join(__dirname, 'data', 'leave_scan_conflicts.json');
+function recordLeaveScanConflict(entry) {
+    const row = { ...entry, loggedAt: new Date().toISOString() };
+    console.warn(`⚠️ LEAVE SCAN CONFLICT: ${row.studentName || ''} (${row.rollNo}) leave ${row.leaveId} — offline scan at ${row.scannedAt}, but already OUT at ${row.firstOutAt || 'unknown'}`);
+    try {
+        let rows = [];
+        if (fs.existsSync(LEAVE_SCAN_CONFLICTS_FILE)) {
+            rows = JSON.parse(fs.readFileSync(LEAVE_SCAN_CONFLICTS_FILE, 'utf8')) || [];
+        }
+        rows.push(row);
+        fs.writeFileSync(LEAVE_SCAN_CONFLICTS_FILE, JSON.stringify(rows.slice(-500), null, 2), 'utf8');
+    } catch (e) { console.warn('leave conflict log write skipped:', e.message); }
+}
+
+// Guard phone's OFFLINE list: today's mentor-APPROVED, not-yet-scanned
+// day-scholar leaves. The guard app downloads it whenever it is online so a
+// leave QR can be checked at the gate without network.
+app.get('/api/leave-scan/approved', authenticateUser, requireRole('GUARD', 'WARDEN', 'ADMIN', 'DEAN'), async (req, res) => {
+    try {
+        if (!supabase) return res.status(503).json({ success: false, error: 'Leave register offline' });
+        await expireStaleLeaves();
+        const { data, error } = await supabase.from('leave_requests')
+            .select('id, student_roll, student_name, status, created_at, decided_at')
+            .eq('status', 'APPROVED').is('scanned_at', null)
+            .gte('created_at', localStartOfDayISO())
+            .limit(500);
+        if (error) return res.status(500).json({ success: false, error: error.message });
+        return res.json({
+            success: true,
+            serverTime: new Date().toISOString(),
+            gateCloseAt: gateCloseISO(),
+            leaves: (data || []).map(l => ({
+                id: l.id,
+                rollNo: l.student_roll,
+                name: l.student_name || null,
+                approvedAt: l.decided_at || null,
+                createdAt: l.created_at || null
+            }))
+        });
+    } catch (e) {
+        return res.status(500).json({ success: false, error: e.message });
+    }
+});
 
 app.post('/api/leave-scan', authenticateUser, requireRole('GUARD', 'WARDEN', 'ADMIN', 'DEAN'), async (req, res) => {
     try {
@@ -3976,21 +4029,58 @@ app.post('/api/leave-scan', authenticateUser, requireRole('GUARD', 'WARDEN', 'AD
         if (!/^[A-Za-z0-9-]{1,64}$/.test(leaveId)) {
             return res.status(400).json({ success: false, error: 'Invalid leave id in QR' });
         }
+        // Offline sync: the guard phone checked this QR without network and
+        // sends the REAL scan time. Freshness is judged against that scan
+        // time (not the sync time). Online scans: unchanged (server now).
+        const offlineSync = req.body.offline === true && !!req.body.scannedAt;
+        let refMs = Date.now();
+        if (offlineSync) {
+            const scanMs = Date.parse(String(req.body.scannedAt));
+            if (!Number.isFinite(scanMs) || scanMs > Date.now() + LEAVE_OFFLINE_MAX_AHEAD_MS || scanMs < Date.now() - LEAVE_OFFLINE_MAX_AGE_MS) {
+                return res.status(400).json({ success: false, offlineSync: true, reason: 'Offline scan time is out of range (must be within the last 24 h). Nothing recorded.' });
+            }
+            refMs = Math.min(scanMs, Date.now());
+        }
         const issuedMs = Date.parse(String(req.body.issuedAt || ''));
-        const qrAgeMs = Date.now() - issuedMs;
+        const qrAgeMs = refMs - issuedMs;
         if (!Number.isFinite(issuedMs) || qrAgeMs > LEAVE_QR_MAX_AGE_MS || qrAgeMs < -LEAVE_QR_MAX_FUTURE_MS) {
             return res.status(403).json({ success: false, expired: true, reason: 'QR expired — ask the student to show the live QR in the app (screenshots or old photos are not accepted). Nothing recorded.' });
         }
         const prof = await profileByRoll(roll);
         if (!prof) return res.status(404).json({ success: false, error: `${roll} is not in the college records` });
 
-        const startToday = localStartOfDayISO();
+        const startToday = localStartOfDayISO(new Date(refMs));
+        // The second offline guard phone to sync the same leave: refused,
+        // logged for the warden, and the guard phone shows the conflict.
+        const offlineConflict = async (firstOutAt) => {
+            // Same offline scan sent twice (the first sync's reply was lost):
+            // the recorded OUT time is exactly this scan's time — not a
+            // double use, just confirm it.
+            if (firstOutAt && Date.parse(firstOutAt) === refMs) {
+                return res.json({ success: true, offlineSync: true, alreadySynced: true, leaveId, name: prof.full_name, rollNo: prof.roll_number, outAt: new Date(refMs).toISOString() });
+            }
+            recordLeaveScanConflict({
+                leaveId, rollNo: prof.roll_number, studentName: prof.full_name,
+                scannedAt: new Date(refMs).toISOString(), firstOutAt: firstOutAt || null,
+                scannedBy: String(req.body.scannedBy || 'Main Gate Guard'),
+                syncedBy: String(req.user?.rollNumber || req.user?.profile?.roll_number || '')
+            });
+            return res.status(409).json({
+                success: false, offlineSync: true, conflict: true, firstOutAt: firstOutAt || null,
+                reason: `${prof.full_name} — DOUBLE USE: this leave was already used at another gate${firstOutAt ? ` at ${new Date(firstOutAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}. This offline exit was not recorded; flagged for the warden.`
+            });
+        };
         // Already OUT today? One-way leave: never a second scan today.
         const { count: outToday, error: outErr } = await supabase.from('pass_scans')
             .select('id', { count: 'exact' })
             .eq('category', 'LEAVE').eq('student_roll', prof.roll_number)
             .eq('direction', 'EXIT').gte('scanned_at', startToday);
         if (!outErr && (outToday || 0) > 0) {
+            if (offlineSync) {
+                const { data: first } = await supabase.from('leave_requests')
+                    .select('scanned_at').eq('id', leaveId).maybeSingle();
+                return offlineConflict(first?.scanned_at || null);
+            }
             return res.status(409).json({ success: false, reason: `${prof.full_name} already LEFT campus on a leave today — one-way leave, no second scan. Back on the next working day.` });
         }
 
@@ -4001,15 +4091,30 @@ app.post('/api/leave-scan', authenticateUser, requireRole('GUARD', 'WARDEN', 'AD
             .maybeSingle();
         const isMine = !!qrLeave && String(qrLeave.student_roll || '').trim().toLowerCase() === String(prof.roll_number).trim().toLowerCase();
         if (isMine && (qrLeave.status === 'OUT' || qrLeave.scanned_at)) {
+            if (offlineSync) return offlineConflict(qrLeave.scanned_at || null);
             return res.status(409).json({ success: false, reason: `${prof.full_name} — this leave QR was already used at the gate. One-way leave, no second scan. Nothing recorded.` });
         }
-        if (isMine && qrLeave.status !== 'APPROVED' && qrLeave.status !== 'PENDING') {
+        // Offline sync only: the 16:30 / midnight sweep may have EXPIRED an
+        // approved leave AFTER the guard already let the student out offline.
+        // A scan made before that day's gate close still counts.
+        const expiredAfterScan = offlineSync && isMine && qrLeave.status === 'EXPIRED' && !qrLeave.scanned_at
+            && !!qrLeave.decided_at
+            && refMs < Date.parse(gateCloseISO(new Date(refMs)))
+            && Date.parse(qrLeave.created_at || 0) >= Date.parse(localStartOfDayISO(new Date(refMs)));
+        if (offlineSync && isMine && (qrLeave.status === 'APPROVED' || expiredAfterScan)) {
+            // The scan cannot be older than the approval (5 min phone-clock slack).
+            const approvedMs = Date.parse(qrLeave.decided_at || qrLeave.created_at || 0);
+            if (Number.isFinite(approvedMs) && refMs < approvedMs - LEAVE_OFFLINE_MAX_AHEAD_MS) {
+                return res.status(400).json({ success: false, offlineSync: true, reason: `${prof.full_name} — offline scan time is before the leave was approved. Nothing recorded.` });
+            }
+        }
+        if (isMine && qrLeave.status !== 'APPROVED' && qrLeave.status !== 'PENDING' && !expiredAfterScan) {
             return res.status(403).json({ success: false, reason: `${prof.full_name} — this leave is ${qrLeave.status}, not valid at the gate. Contact your mentor. Nothing recorded.` });
         }
         if (!isMine) {
             return res.status(403).json({ success: false, reason: `${prof.full_name} — this QR does not match any leave of this student. Ask the student to show the live QR in the app. Nothing recorded.` });
         }
-        const leave = qrLeave.status === 'APPROVED' ? qrLeave : null;
+        const leave = (qrLeave.status === 'APPROVED' || expiredAfterScan) ? qrLeave : null;
 
         if (!leave) {
             const { data: pending } = await supabase.from('leave_requests')
@@ -4029,14 +4134,20 @@ app.post('/api/leave-scan', authenticateUser, requireRole('GUARD', 'WARDEN', 'AD
             });
         }
 
-        const scannedAt = new Date().toISOString();
+        // Online: now. Offline sync: the real scan time from the guard phone.
+        const scannedAt = new Date(refMs).toISOString();
         // Only flips a still-APPROVED, unscanned row — two guards scanning
         // the same QR at once can't both record an exit.
         const { data: flipped, error: upErr } = await supabase.from('leave_requests').update({
             status: 'OUT', scanned_at: scannedAt
-        }).eq('id', leave.id).eq('status', 'APPROVED').is('scanned_at', null).select('id');
+        }).eq('id', leave.id).eq('status', leave.status).is('scanned_at', null).select('id');
         if (upErr) return res.status(500).json({ success: false, error: upErr.message });
         if (Array.isArray(flipped) && flipped.length === 0) {
+            if (offlineSync) {
+                const { data: first } = await supabase.from('leave_requests')
+                    .select('scanned_at').eq('id', leave.id).maybeSingle();
+                return offlineConflict(first?.scanned_at || null);
+            }
             return res.status(409).json({ success: false, reason: `${prof.full_name} — this leave QR was already used at the gate. One-way leave, no second scan. Nothing recorded.` });
         }
 
@@ -4044,7 +4155,7 @@ app.post('/api/leave-scan', authenticateUser, requireRole('GUARD', 'WARDEN', 'AD
         // pass_ref column is varchar(20): LV-<roll>-MMDD keeps it short while
         // staying unique per day.
         supabase.from('pass_scans').insert({
-            pass_ref: `LV-${prof.roll_number}-${String(localDayKey()).slice(5).replace('-', '')}`,
+            pass_ref: `LV-${prof.roll_number}-${String(localDayKey(new Date(refMs))).slice(5).replace('-', '')}`,
             student_roll: prof.roll_number,
             student_name: prof.full_name || prof.roll_number,
             destination: '',
@@ -4103,7 +4214,8 @@ app.post('/api/leave-scan', authenticateUser, requireRole('GUARD', 'WARDEN', 'AD
             section,
             outAt: scannedAt,
             leaveReason: leave.reason,
-            parentSms: prof.guardian_phone ? 'dispatched to guardian' : 'no guardian phone on file'
+            parentSms: prof.guardian_phone ? 'dispatched to guardian' : 'no guardian phone on file',
+            ...(offlineSync ? { offlineSynced: true, leaveId } : {})
         });
     } catch (e) {
         return res.status(500).json({ success: false, error: e.message });

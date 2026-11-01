@@ -28,6 +28,7 @@ Thumbs.db
 # Sensitive project data files
 new_teachers.csv
 data/gate_passes.json
+data/leave_scan_conflicts.json
 
 *.gguf
 teachers_fresh_50.csv
