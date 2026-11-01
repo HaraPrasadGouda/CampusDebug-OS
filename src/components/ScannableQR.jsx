@@ -31,7 +31,7 @@ export default function ScannableQR({ value, caption, hint }) {
         onClick={() => setFull(true)}
         aria-label="Enlarge QR for the gate scanner"
         data-testid="scannable-qr"
-        className="block w-full max-w-[300px] mx-auto bg-white rounded-2xl border border-slate-200 shadow-sm p-1.5 cursor-zoom-in"
+        className="block w-full max-w-[180px] sm:max-w-[200px] mx-auto bg-white rounded-xl border border-slate-200 shadow-sm p-1 cursor-zoom-in"
       >
         <QRCodeSVG
           value={value}
@@ -42,11 +42,11 @@ export default function ScannableQR({ value, caption, hint }) {
           fgColor="#000000"
           style={{ width: '100%', height: 'auto', display: 'block' }}
         />
-        <span className="mt-1 mb-0.5 flex items-center justify-center gap-1 text-[11px] font-bold text-slate-500">
+        <span className="mt-0.5 mb-0.5 flex items-center justify-center gap-1 text-[11px] font-bold text-blue-700 whitespace-nowrap">
           <Maximize2 className="w-3 h-3" /> Tap to enlarge
         </span>
       </button>
-      {hint && <p data-testid="scannable-qr-hint" className="mt-1.5 text-[11px] font-bold text-emerald-800 text-center">{hint}</p>}
+      {hint && <p data-testid="scannable-qr-hint" className="mt-1 text-[11px] font-bold text-emerald-800 text-center whitespace-nowrap">{hint}</p>}
 
       {full && typeof document !== 'undefined' && createPortal(
         <div

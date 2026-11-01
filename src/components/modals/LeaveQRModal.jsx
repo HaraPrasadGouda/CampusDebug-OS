@@ -144,11 +144,11 @@ export default function LeaveQRModal({ isOpen, onClose, onToast }) {
     const m = map[anyStatus];
     const Icon = m.icon;
     return (
-      <div className={`rounded-2xl border p-3.5 flex items-start gap-3 ${m.cls}`}>
-        <Icon className="w-5 h-5 shrink-0 mt-0.5" />
-        <div className="text-sm leading-snug">
-          <strong className="font-extrabold block">{m.text}</strong>
-          <span className="text-xs">
+      <div className={`rounded-xl border px-3 py-2.5 flex items-start gap-2.5 ${m.cls}`}>
+        <Icon className="w-4 h-4 shrink-0 mt-0.5" />
+        <div className="text-[13px] leading-snug min-w-0">
+          <strong className="font-extrabold block text-xs">{m.text}</strong>
+          <span className="text-[11px] leading-snug block mt-0.5">
             {anyStatus === 'PENDING' && `Requested ${new Date(pending.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} — your mentor decides in the app. You may also visit them; nothing is approved automatically.`}
             {anyStatus === 'APPROVED' && `Approved by ${live.decided_by_name || 'your mentor'}${live.mentor_note ? ` — note: ${live.mentor_note}` : ''}. Flash the QR below once at the gate; the exit registers and your parent gets an SMS. One-way leave — back on the next working day.`}
             {anyStatus === 'OUT' && `Left campus at ${new Date(out.scanned_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}, parent informed. The next working day is your return.`}
@@ -164,9 +164,9 @@ export default function LeaveQRModal({ isOpen, onClose, onToast }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/40 backdrop-blur-xs animate-in fade-in duration-200 overflow-y-auto">
       <div className="bg-white rounded-3xl max-w-md w-full border border-slate-200/80 shadow-2xl overflow-hidden my-auto">
         {/* Header */}
-        <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-blue-50 border border-blue-200/60 flex items-center justify-center text-blue-600 shadow-xs shrink-0">
+        <div className="px-4 sm:px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-9 h-9 rounded-xl bg-blue-50 border border-blue-200/60 flex items-center justify-center text-blue-600 shadow-xs shrink-0">
               <Compass className="w-5 h-5" />
             </div>
             <div>
@@ -179,7 +179,7 @@ export default function LeaveQRModal({ isOpen, onClose, onToast }) {
           </button>
         </div>
 
-        <div className="p-5 sm:p-6 space-y-4">
+        <div className="p-4 sm:p-5 space-y-3">
           {state.phase === 'LOADING' && (
             <div className="py-6 text-center text-sm font-bold text-slate-500 flex items-center justify-center gap-2">
               <RefreshCw className="w-4 h-4 animate-spin" /> Checking your leave status…
@@ -194,7 +194,7 @@ export default function LeaveQRModal({ isOpen, onClose, onToast }) {
                   (after a REJECTED/EXPIRED request the student may apply again;
                   the server enforces the same rule). */}
               {!(pending || live || out) && (
-                <div className="rounded-2xl border border-blue-200 bg-blue-50/50 p-4 space-y-3">
+                <div className="rounded-2xl border border-blue-200 bg-blue-50/50 p-3.5 space-y-2.5">
                   <p className="text-sm font-extrabold text-blue-900">Request leave from your mentor</p>
                   <ul className="text-[11px] text-blue-800 leading-relaxed list-disc pl-4">
                     <li>Apply <strong>at least 1 hour</strong> before you need to leave</li>
@@ -225,19 +225,22 @@ export default function LeaveQRModal({ isOpen, onClose, onToast }) {
                   APPROVED: big, full-width, gate-scannable QR (tap = fullscreen).
                   Otherwise: compact locked card, QR left, status right. */}
               {live && tokenStage === 'READY' ? (
-                <div className="rounded-2xl border-2 p-3.5 space-y-3 text-center from-emerald-50 to-teal-50 border-emerald-200 bg-gradient-to-br">
-                  <div>
+                <div className="rounded-2xl border-2 p-3 flex flex-col min-[380px]:flex-row items-center gap-3 text-center min-[380px]:text-left from-emerald-50 to-teal-50 border-emerald-200 bg-gradient-to-br">
+                  {/* Inline QR stays compact (tap = big fullscreen for the guard) */}
+                  <div className="w-[170px] min-[380px]:w-[150px] sm:w-[170px] shrink-0">
+                    <ScannableQR
+                      value={token}
+                      caption={qrCaption}
+                      hint={`🔄 New QR in ${Math.max(1, Math.ceil((nextQrAt - Date.now()) / 1000))}s`}
+                    />
+                  </div>
+                  <div className="min-w-0">
                     <p className="text-xs font-extrabold text-emerald-800">🟢 QR is LIVE at the gate</p>
                     <p className="text-[11px] text-slate-600 leading-snug mt-1">One scan at the gate records your exit — show this live QR (it changes every few seconds).</p>
                   </div>
-                  <ScannableQR
-                    value={token}
-                    caption={qrCaption}
-                    hint={`🔄 New QR in ${Math.max(1, Math.ceil((nextQrAt - Date.now()) / 1000))}s · screenshots won't work`}
-                  />
                 </div>
               ) : (
-              <div className={`rounded-2xl border-2 p-3.5 flex items-center gap-4 text-left ${live ? 'from-emerald-50 to-teal-50 border-emerald-200 bg-gradient-to-br' : 'border-slate-200 bg-slate-50'}`}>
+              <div className={`rounded-2xl border-2 p-3 flex items-center gap-3 text-left ${live ? 'from-emerald-50 to-teal-50 border-emerald-200 bg-gradient-to-br' : 'border-slate-200 bg-slate-50'}`}>
                 <div className="bg-white p-2.5 rounded-xl shadow-sm border border-slate-200/70 relative shrink-0">
                   {!live ? (
                     /* Locked (no approved leave yet, or already scanned OUT):
@@ -267,7 +270,7 @@ export default function LeaveQRModal({ isOpen, onClose, onToast }) {
 
               {/* History of today's decisions */}
               {todays.length > 0 && (
-                <div className="rounded-2xl border border-slate-200 p-3.5 space-y-2">
+                <div className="rounded-xl border border-slate-200 px-3 py-2.5 space-y-1.5">
                   <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Today's requests</p>
                   {todays.slice(0, 4).map(l => (
                     <div key={l.id} className="flex items-center justify-between gap-2 text-xs">
@@ -288,20 +291,22 @@ export default function LeaveQRModal({ isOpen, onClose, onToast }) {
             </>
           )}
 
+          <div className="grid grid-cols-2 gap-2.5">
           <button
             onClick={() => load(true)}
             disabled={refreshing}
-            className="w-full py-2.5 rounded-2xl border-2 border-slate-200 hover:bg-slate-50 text-slate-600 font-bold text-xs transition-colors cursor-pointer flex items-center justify-center gap-2 disabled:opacity-60"
+            className="w-full min-h-[44px] px-2 rounded-xl border-2 border-slate-200 hover:bg-slate-50 text-slate-600 font-bold text-xs transition-colors cursor-pointer flex items-center justify-center gap-2 disabled:opacity-60 whitespace-nowrap"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} /> Refresh status
           </button>
 
           <button
             onClick={onClose}
-            className="w-full py-3 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm transition-colors cursor-pointer"
+            className="w-full min-h-[44px] px-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm transition-colors cursor-pointer whitespace-nowrap"
           >
             Done & Close
           </button>
+          </div>
         </div>
       </div>
     </div>

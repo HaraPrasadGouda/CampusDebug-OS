@@ -43,9 +43,9 @@ export default function ViewPassQRModal({ isOpen, onClose, pass }) {
       <div className="bg-white rounded-3xl max-w-md w-full border border-slate-200/80 shadow-2xl overflow-hidden my-auto">
 
         {/* Modal Header */}
-        <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shadow-xs shrink-0 ${
+        <div className="px-4 sm:px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className={`w-9 h-9 rounded-xl flex items-center justify-center shadow-xs shrink-0 ${
               isApproved && !isUsed
                 ? 'bg-emerald-50 border border-emerald-200/60 text-emerald-600'
                 : canShowReturnQR
@@ -86,12 +86,12 @@ export default function ViewPassQRModal({ isOpen, onClose, pass }) {
         </div>
 
         {/* Modal Body */}
-        <div className="p-5 space-y-4">
+        <div className="p-4 sm:p-5 space-y-3">
 
           {!isApproved && !canShowReturnQR && (
             /* ---------- PENDING / REJECTED / RETURNED / USED-without-token:
                  no QR is shown ---------- */
-            <div className={`border-2 rounded-xl p-6 flex flex-col items-center justify-center text-center gap-3 ${
+            <div className={`border-2 rounded-xl p-4 flex flex-col items-center justify-center text-center gap-2.5 ${
               isReturned
                 ? 'bg-slate-50 border-slate-300'
                 : pass.status === 'REJECTED'
@@ -146,30 +146,32 @@ export default function ViewPassQRModal({ isOpen, onClose, pass }) {
 
           {isApproved && pass.token && (
             /* ---------- APPROVED (and not yet used): real scannable QR ---------- */
-            <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 flex flex-col items-center justify-center text-center relative overflow-hidden">
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 sm:p-4 flex flex-col items-center justify-center text-center relative overflow-hidden">
 
               {/* Active Status Ribbon */}
-              <div className="flex items-center space-x-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 px-3 py-1 rounded-full text-xs font-mono font-semibold mb-3">
+              <div className="flex items-center space-x-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 px-3 py-1 rounded-full text-xs font-mono font-semibold mb-2.5">
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
                 <span>ACTIVE & CRYPTO-VERIFIED</span>
               </div>
 
-              {/* QR Code — big, quiet-zoned, tap = fullscreen (shared with day scholars) */}
-              <div className="w-full">
+              <div className="w-full flex flex-col min-[380px]:flex-row items-center gap-3">
+              {/* QR Code — compact inline, tap = big fullscreen for the gate (shared with day scholars) */}
+              <div className="w-[170px] min-[380px]:w-[150px] sm:w-[170px] shrink-0">
                 <ScannableQR value={pass.token || pass.id} caption={qrCaption} />
               </div>
 
-              <div className="mt-4 font-mono">
-                <div className="text-base font-bold text-slate-900 tracking-wider">
+              <div className="min-w-0 w-full flex-1">
+              <div className="font-mono text-center min-[380px]:text-left">
+                <div className="text-base font-bold text-slate-900 tracking-wider break-words">
                   {pass.id}
                 </div>
-                <div className="text-xs text-emerald-700 font-semibold mt-0.5">
+                <div className="text-xs text-emerald-700 font-semibold mt-0.5 break-words">
                   {pass.name} ({pass.rollNo})
                 </div>
               </div>
 
               {/* Pass Details Grid */}
-              <div className="w-full grid grid-cols-2 gap-2 mt-4 pt-4 border-t border-slate-200 text-left text-xs font-mono">
+              <div className="w-full grid grid-cols-2 min-[380px]:grid-cols-1 gap-1.5 mt-2.5 text-left text-xs font-mono">
                 <div className="bg-white p-2 rounded-lg border border-slate-200">
                   <span className="text-[10px] text-slate-500 block">Destination</span>
                   <span className="font-bold text-slate-800 truncate block">{pass.destination}</span>
@@ -180,6 +182,8 @@ export default function ViewPassQRModal({ isOpen, onClose, pass }) {
                     {pass.validUntil ? new Date(pass.validUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '09:30 PM'}
                   </span>
                 </div>
+              </div>
+              </div>
               </div>
 
               {/* Signature Hash Preview */}
@@ -202,32 +206,36 @@ export default function ViewPassQRModal({ isOpen, onClose, pass }) {
             /* ---------- RETURN LEG: the USED pass shows the SAME signed QR.
                The guard scans it once more at the gate, which the server reads
                as a RETURN (the state machine switches direction for USED). ---------- */
-            <div className="bg-blue-50/60 border border-blue-200 rounded-xl p-5 flex flex-col items-center justify-center text-center relative overflow-hidden">
+            <div className="bg-blue-50/60 border border-blue-200 rounded-xl p-3 sm:p-4 flex flex-col items-center justify-center text-center relative overflow-hidden">
 
               {/* Return-lane Ribbon */}
-              <div className="flex items-center space-x-1.5 bg-blue-600 text-white px-3 py-1.5 rounded-full text-xs font-mono font-bold mb-3">
-                <LogIn className="w-3.5 h-3.5" />
+              <div className="flex items-center space-x-1.5 bg-blue-600 text-white px-3 py-1.5 rounded-full text-xs font-mono font-bold mb-2.5">
+                <LogIn className="w-3.5 h-3.5 shrink-0" />
                 <span>EXIT REGISTERED — SHOW AGAIN TO RETURN</span>
               </div>
 
-              {/* QR Code — big, quiet-zoned, tap = fullscreen (shared with day scholars) */}
-              <div className="w-full">
+              <div className="w-full flex flex-col min-[380px]:flex-row items-center gap-3">
+              {/* QR Code — compact inline, tap = big fullscreen for the gate (shared with day scholars) */}
+              <div className="w-[170px] min-[380px]:w-[150px] sm:w-[170px] shrink-0">
                 <ScannableQR value={pass.token || pass.id} caption={qrCaption} />
               </div>
 
-              <div className="mt-4 font-mono">
-                <div className="text-base font-bold text-slate-900 tracking-wider">
+              <div className="min-w-0 w-full flex-1 text-center min-[380px]:text-left">
+              <div className="font-mono">
+                <div className="text-base font-bold text-slate-900 tracking-wider break-words">
                   {pass.id}
                 </div>
-                <div className="text-xs text-blue-700 font-semibold mt-0.5">
+                <div className="text-xs text-blue-700 font-semibold mt-0.5 break-words">
                   {pass.name} ({pass.rollNo})
                 </div>
               </div>
 
-              <p className="text-[11px] text-blue-800 font-medium leading-relaxed mt-3 max-w-[260px]">
+              <p className="text-[11px] text-blue-800 font-medium leading-relaxed mt-2">
                 You have exited campus. Show this same QR at the gate when returning —
                 the guard scans it once more and your return is registered in the gate register.
               </p>
+              </div>
+              </div>
 
               <button
                 type="button"
@@ -245,7 +253,7 @@ export default function ViewPassQRModal({ isOpen, onClose, pass }) {
                the guard scanner would reject it as a malformed token. The
                App's /api/pass-status reconciliation delivers the token in a
                few seconds; closing and reopening the modal will show it. ---------- */
-            <div className="bg-amber-50 border border-amber-300 rounded-xl p-6 flex flex-col items-center justify-center text-center gap-3">
+            <div className="bg-amber-50 border border-amber-300 rounded-xl p-4 flex flex-col items-center justify-center text-center gap-2.5">
               <Hourglass className="w-10 h-10 text-amber-600 animate-pulse" />
               <div className="text-sm font-extrabold tracking-wide font-mono text-amber-800">
                 SIGNATURE SYNCING…
@@ -260,7 +268,7 @@ export default function ViewPassQRModal({ isOpen, onClose, pass }) {
           <div className="text-center">
             <button
               onClick={onClose}
-              className={`w-full py-2.5 rounded-lg text-white font-medium text-xs cursor-pointer shadow-sm ${
+              className={`w-full min-h-[44px] py-2.5 rounded-lg text-white font-medium text-xs cursor-pointer shadow-sm ${
                 canShowReturnQR
                   ? 'bg-blue-600 hover:bg-blue-700'
                   : isApproved ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-slate-900 hover:bg-slate-800'
