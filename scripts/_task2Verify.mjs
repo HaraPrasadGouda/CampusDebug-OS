@@ -46,7 +46,7 @@ for (const c of cases) {
   ids.push(passData.id);
   const r = await fetch(`${BASE}/api/create-pass`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${login.session.access_token}` },
     body: JSON.stringify({ passData })
   }).then((x) => x.json());
   console.log('created', passData.id, c.label, '->', r.success ? 'ok' : JSON.stringify(r));
