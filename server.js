@@ -905,9 +905,24 @@ app.post('/api/parse-ticket', authenticateUser, async (req, res) => {
             // Fix 4 (AI category): remember the category ONLY when the model
             // itself returned a valid one (not when it is re-derived from
             // keywords below) — this is what the ticket chip shows as "AI".
-            const aiOwnCategory = (typeof parsedAI.category === 'string'
-                && !parsedAI.category.includes('|')
-                && CANON_CATEGORIES.includes(parsedAI.category.trim())) ? parsedAI.category.trim() : null;
+            // The fine-tuned model (Modelfile / campus_ai_dataset.jsonl) answers with
+            // its own labels (ELECTRICAL, PLUMBING, MESS_HYGIENE …), not the app's 5
+            // names, so map them here (case-insensitive; the app's own names work too).
+            // A label with no sensible ticket category (GATE_PASS, MESS_FEEDBACK,
+            // anything unknown) maps to nothing → no chip. Chip only — routing and the
+            // student's category below are NOT affected by this map.
+            const AI_LABEL_TO_CATEGORY = {
+                ELECTRICAL: 'Electrical', ELECTRIC: 'Electrical', ELECTRICITY: 'Electrical',
+                PLUMBING: 'Plumbing', WATER_COOLER: 'Plumbing', WATER: 'Plumbing',
+                WI_FI_LAN: 'Wi-Fi / LAN', WIFI_LAN: 'Wi-Fi / LAN', WI_FI: 'Wi-Fi / LAN', WIFI: 'Wi-Fi / LAN',
+                LAN: 'Wi-Fi / LAN', NETWORK: 'Wi-Fi / LAN', INTERNET: 'Wi-Fi / LAN',
+                FURNITURE: 'Furniture',
+                CLEANLINESS: 'Cleanliness', CLEANING: 'Cleanliness', HOUSEKEEPING: 'Cleanliness',
+                HYGIENE: 'Cleanliness', MESS_HYGIENE: 'Cleanliness'
+            };
+            const aiLabelKey = typeof parsedAI.category === 'string' && !parsedAI.category.includes('|')
+                ? parsedAI.category.trim().toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '') : '';
+            const aiOwnCategory = AI_LABEL_TO_CATEGORY[aiLabelKey] || null;
             // Qwen occasionally echoes the prompt's enum verbatim ("Electrical|Plumbing|…")
             // or invents labels. Any non-canonical category is discarded and re-derived
             // deterministically from the STUDENT'S OWN complaint text — never from the AI.
