@@ -1,0 +1,10 @@
+const fs = require('fs');
+require('dotenv').config();
+const h = fs.readFileSync(process.argv[2], 'utf8');
+const heads = [...h.matchAll(/<h[12][^>]*>([^<]+)/g)].map(m => m[1]);
+console.log('Sections:', heads);
+console.log('Staff rows:', (h.match(/class="staff"/g) || []).length);
+console.log('Has warden password:', h.includes(process.env.DEMO_PASSWORD_WARDEN || ''));
+console.log('Has guard password:', h.includes(process.env.DEMO_PASSWORD_GUARD || ''));
+console.log('Has admin password:', h.includes(process.env.DEMO_PASSWORD_ADMIN || ''));
+console.log('Has dean password:', h.includes(process.env.DEMO_PASSWORD_DEAN || ''));

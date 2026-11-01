@@ -1,0 +1,19 @@
+{
+  "tickets": {
+    "05cefc75-37e9-4366-a844-03b7abf652d0": {
+      "assignedTo": "Suresh Patra",
+      "assignedTechId": "TECH-NET-01",
+      "statusLabel": "Routed to Suresh Patra",
+      "notes": "",
+      "createdAt": "2026-10-26T17:53:08.563Z"
+    },
+    "ead6589c-fb85-43c8-af2e-ac3ac1320cd1": {
+      "assignedTo": "Ashok Mishra",
+      "assignedTechId": "TECH-ELEC-01",
+      "statusLabel": "Routed to Ashok Mishra",
+      "notes": "",
+      "createdAt": "2026-10-26T17:55:59.837Z"
+    }
+  },
+  "masters": {}
+}

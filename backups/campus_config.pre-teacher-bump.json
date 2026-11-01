@@ -1,0 +1,834 @@
+{
+  "version": 1,
+  "updatedAt": "2026-10-29T11:23:14.732Z",
+  "updatedBy": "System Administrator",
+  "ttMaxWeekly": 26,
+  "branches": [
+    {
+      "key": "BTech|Computer Science & Engineering",
+      "course": "BTech",
+      "department": "Computer Science & Engineering",
+      "code": "CSE",
+      "label": "BTech CSE",
+      "lectureRooms": [
+        "A301",
+        "A302",
+        "A303",
+        "A304",
+        "A305",
+        "A306",
+        "A307"
+      ],
+      "lab": "Programming Lab B204",
+      "subjects": [
+        {
+          "code": "DSA",
+          "title": "Data Structures & Algorithms",
+          "lectures": 4,
+          "lab": false,
+          "shared": false,
+          "pool": [
+            "FAC003",
+            "FAC026"
+          ]
+        },
+        {
+          "code": "OS",
+          "title": "Operating Systems",
+          "lectures": 3,
+          "lab": false,
+          "shared": false,
+          "pool": [
+            "FAC003",
+            "FAC026"
+          ]
+        },
+        {
+          "code": "OOP",
+          "title": "Object-Oriented Programming",
+          "lectures": 3,
+          "lab": true,
+          "shared": false,
+          "pool": [
+            "FAC004",
+            "FAC028"
+          ]
+        },
+        {
+          "code": "DM",
+          "title": "Discrete Mathematics",
+          "lectures": 2,
+          "lab": false,
+          "shared": false,
+          "pool": [
+            "FAC004",
+            "FAC028"
+          ]
+        },
+        {
+          "code": "DBMS",
+          "title": "Database Management Systems",
+          "lectures": 3,
+          "lab": false,
+          "shared": false,
+          "pool": [
+            "FAC005",
+            "FAC027"
+          ]
+        },
+        {
+          "code": "CN",
+          "title": "Computer Networks",
+          "lectures": 2,
+          "lab": false,
+          "shared": false,
+          "pool": [
+            "FAC005",
+            "FAC027"
+          ]
+        },
+        {
+          "code": "MATHS",
+          "title": "Engineering Mathematics",
+          "lectures": 3,
+          "lab": false,
+          "shared": true,
+          "pool": [
+            "FAC001",
+            "FAC021",
+            "FAC022",
+            "FAC023",
+            "FAC024",
+            "FAC046"
+          ]
+        },
+        {
+          "code": "PPT",
+          "title": "Pre-Placement Training",
+          "lectures": 1,
+          "lab": false,
+          "shared": true,
+          "pool": [
+            "FAC002",
+            "FAC025"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "BTech|Data Science & AI",
+      "course": "BTech",
+      "department": "Data Science & AI",
+      "code": "DS&AI",
+      "label": "BTech DS&AI",
+      "lectureRooms": [
+        "A311",
+        "A312",
+        "A313",
+        "A314",
+        "A315",
+        "A316",
+        "A317"
+      ],
+      "lab": "AI Lab B206",
+      "subjects": [
+        {
+          "code": "DSAI",
+          "title": "Data Structures for AI",
+          "lectures": 4,
+          "lab": false,
+          "shared": false,
+          "pool": [
+            "FAC006",
+            "FAC029"
+          ]
+        },
+        {
+          "code": "STAT",
+          "title": "Statistics for Data Science",
+          "lectures": 3,
+          "lab": false,
+          "shared": false,
+          "pool": [
+            "FAC006",
+            "FAC029"
+          ]
+        },
+        {
+          "code": "ML",
+          "title": "Machine Learning Foundations",
+          "lectures": 3,
+          "lab": false,
+          "shared": false,
+          "pool": [
+            "FAC007",
+            "FAC030"
+          ]
+        },
+        {
+          "code": "DLV",
+          "title": "Data Visualization & BI",
+          "lectures": 2,
+          "lab": false,
+          "shared": false,
+          "pool": [
+            "FAC007",
+            "FAC030"
+          ]
+        },
+        {
+          "code": "PY",
+          "title": "Python Programming",
+          "lectures": 3,
+          "lab": true,
+          "shared": false,
+          "pool": [
+            "FAC008",
+            "FAC031"
+          ]
+        },
+        {
+          "code": "LA",
+          "title": "Linear Algebra & Optimisation",
+          "lectures": 2,
+          "lab": false,
+          "shared": false,
+          "pool": [
+            "FAC008",
+            "FAC031"
+          ]
+        },
+        {
+          "code": "MATHS",
+          "title": "Engineering Mathematics",
+          "lectures": 3,
+          "lab": false,
+          "shared": true,
+          "pool": [
+            "FAC001",
+            "FAC021",
+            "FAC022",
+            "FAC023",
+            "FAC024",
+            "FAC046"
+          ]
+        },
+        {
+          "code": "PPT",
+          "title": "Pre-Placement Training",
+          "lectures": 1,
+          "lab": false,
+          "shared": true,
+          "pool": [
+            "FAC002",
+            "FAC025"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "BTech|Electronics & Telecommunication",
+      "course": "BTech",
+      "department": "Electronics & Telecommunication",
+      "code": "ET",
+      "label": "BTech E&T",
+      "lectureRooms": [
+        "E101",
+        "E102",
+        "E103",
+        "E104",
+        "E105",
+        "E106",
+        "E107"
+      ],
+      "lab": "Electronics Lab G102",
+      "subjects": [
+        {
+          "code": "DE",
+          "title": "Digital Electronics",
+          "lectures": 4,
+          "lab": false,
+          "shared": false,
+          "pool": [
+            "FAC009",
+            "FAC032"
+          ]
+        },
+        {
+          "code": "CS",
+          "title": "Communication Systems",
+          "lectures": 3,
+          "lab": false,
+          "shared": false,
+          "pool": [
+            "FAC009",
+            "FAC032"
+          ]
+        },
+        {
+          "code": "SS",
+          "title": "Signals & Systems",
+          "lectures": 3,
+          "lab": true,
+          "shared": false,
+          "pool": [
+            "FAC010",
+            "FAC033"
+          ]
+        },
+        {
+          "code": "EMT",
+          "title": "Electromagnetic Theory",
+          "lectures": 2,
+          "lab": false,
+          "shared": false,
+          "pool": [
+            "FAC010",
+            "FAC033"
+          ]
+        },
+        {
+          "code": "AC",
+          "title": "Analog Circuit Design",
+          "lectures": 3,
+          "lab": false,
+          "shared": false,
+          "pool": [
+            "FAC011",
+            "FAC034"
+          ]
+        },
+        {
+          "code": "ED",
+          "title": "Electronic Devices",
+          "lectures": 2,
+          "lab": false,
+          "shared": false,
+          "pool": [
+            "FAC011",
+            "FAC034"
+          ]
+        },
+        {
+          "code": "MATHS",
+          "title": "Engineering Mathematics",
+          "lectures": 3,
+          "lab": false,
+          "shared": true,
+          "pool": [
+            "FAC001",
+            "FAC021",
+            "FAC022",
+            "FAC023",
+            "FAC024",
+            "FAC046"
+          ]
+        },
+        {
+          "code": "PPT",
+          "title": "Pre-Placement Training",
+          "lectures": 1,
+          "lab": false,
+          "shared": true,
+          "pool": [
+            "FAC002",
+            "FAC025"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "BTech|Mechanical Engineering",
+      "course": "BTech",
+      "department": "Mechanical Engineering",
+      "code": "ME",
+      "label": "BTech ME",
+      "lectureRooms": [
+        "M201",
+        "M202",
+        "M203",
+        "M204",
+        "M205",
+        "M206",
+        "M207"
+      ],
+      "lab": "Workshop W101",
+      "subjects": [
+        {
+          "code": "TH",
+          "title": "Thermodynamics",
+          "lectures": 4,
+          "lab": false,
+          "shared": false,
+          "pool": [
+            "FAC012",
+            "FAC035"
+          ]
+        },
+        {
+          "code": "FM",
+          "title": "Fluid Mechanics",
+          "lectures": 3,
+          "lab": false,
+          "shared": false,
+          "pool": [
+            "FAC012",
+            "FAC035"
+          ]
+        },
+        {
+          "code": "EM",
+          "title": "Engineering Mechanics",
+          "lectures": 3,
+          "lab": true,
+          "shared": false,
+          "pool": [
+            "FAC013",
+            "FAC036"
+          ]
+        },
+        {
+          "code": "MM",
+          "title": "Materials & Metallurgy",
+          "lectures": 2,
+          "lab": false,
+          "shared": false,
+          "pool": [
+            "FAC013",
+            "FAC036"
+          ]
+        },
+        {
+          "code": "MP",
+          "title": "Manufacturing Processes",
+          "lectures": 3,
+          "lab": false,
+          "shared": false,
+          "pool": [
+            "FAC014",
+            "FAC037"
+          ]
+        },
+        {
+          "code": "MD",
+          "title": "Machine Drawing & Design",
+          "lectures": 2,
+          "lab": false,
+          "shared": false,
+          "pool": [
+            "FAC014",
+            "FAC037"
+          ]
+        },
+        {
+          "code": "MATHS",
+          "title": "Engineering Mathematics",
+          "lectures": 3,
+          "lab": false,
+          "shared": true,
+          "pool": [
+            "FAC001",
+            "FAC021",
+            "FAC022",
+            "FAC023",
+            "FAC024",
+            "FAC046"
+          ]
+        },
+        {
+          "code": "PPT",
+          "title": "Pre-Placement Training",
+          "lectures": 1,
+          "lab": false,
+          "shared": true,
+          "pool": [
+            "FAC002",
+            "FAC025"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "BTech|Electrical Engineering",
+      "course": "BTech",
+      "department": "Electrical Engineering",
+      "code": "EE",
+      "label": "BTech EE",
+      "lectureRooms": [
+        "K101",
+        "K102",
+        "K103",
+        "K104",
+        "K105",
+        "K106",
+        "K107"
+      ],
+      "lab": "Machines Lab K104",
+      "subjects": [
+        {
+          "code": "CT",
+          "title": "Circuit Theory",
+          "lectures": 4,
+          "lab": false,
+          "shared": false,
+          "pool": [
+            "FAC015",
+            "FAC038"
+          ]
+        },
+        {
+          "code": "CS2",
+          "title": "Control Systems",
+          "lectures": 3,
+          "lab": false,
+          "shared": false,
+          "pool": [
+            "FAC015",
+            "FAC038"
+          ]
+        },
+        {
+          "code": "ELM",
+          "title": "Electrical Machines",
+          "lectures": 3,
+          "lab": true,
+          "shared": false,
+          "pool": [
+            "FAC016",
+            "FAC039"
+          ]
+        },
+        {
+          "code": "MS",
+          "title": "Measurement & Instrumentation",
+          "lectures": 2,
+          "lab": false,
+          "shared": false,
+          "pool": [
+            "FAC016",
+            "FAC039"
+          ]
+        },
+        {
+          "code": "PS",
+          "title": "Power Systems",
+          "lectures": 3,
+          "lab": false,
+          "shared": false,
+          "pool": [
+            "FAC017",
+            "FAC040"
+          ]
+        },
+        {
+          "code": "PE",
+          "title": "Power Electronics",
+          "lectures": 2,
+          "lab": false,
+          "shared": false,
+          "pool": [
+            "FAC017",
+            "FAC040"
+          ]
+        },
+        {
+          "code": "MATHS",
+          "title": "Engineering Mathematics",
+          "lectures": 3,
+          "lab": false,
+          "shared": true,
+          "pool": [
+            "FAC001",
+            "FAC021",
+            "FAC022",
+            "FAC023",
+            "FAC024",
+            "FAC046"
+          ]
+        },
+        {
+          "code": "PPT",
+          "title": "Pre-Placement Training",
+          "lectures": 1,
+          "lab": false,
+          "shared": true,
+          "pool": [
+            "FAC002",
+            "FAC025"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "MTech|Computer Science & Engineering",
+      "course": "MTech",
+      "department": "Computer Science & Engineering",
+      "code": "MTech-CSE",
+      "label": "MTech CSE",
+      "lectureRooms": [
+        "P401",
+        "P402"
+      ],
+      "lab": "PG Computing Lab P410",
+      "subjects": [
+        {
+          "code": "AAG",
+          "title": "Advanced Algorithms",
+          "lectures": 4,
+          "lab": false,
+          "shared": false,
+          "pool": [
+            "FAC041"
+          ]
+        },
+        {
+          "code": "CONC",
+          "title": "Concurrency Models",
+          "lectures": 2,
+          "lab": false,
+          "shared": false,
+          "pool": [
+            "FAC041"
+          ]
+        },
+        {
+          "code": "DSYS",
+          "title": "Distributed Systems",
+          "lectures": 3,
+          "lab": false,
+          "shared": false,
+          "pool": [
+            "FAC042"
+          ]
+        },
+        {
+          "code": "ADB",
+          "title": "Advanced Databases",
+          "lectures": 3,
+          "lab": true,
+          "shared": false,
+          "pool": [
+            "FAC042"
+          ]
+        },
+        {
+          "code": "RM",
+          "title": "Research Methodology",
+          "lectures": 3,
+          "lab": false,
+          "shared": false,
+          "pool": [
+            "FAC043"
+          ]
+        },
+        {
+          "code": "OPT",
+          "title": "Optimization Techniques",
+          "lectures": 2,
+          "lab": false,
+          "shared": false,
+          "pool": [
+            "FAC019"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "B.Sc|Physical Sciences",
+      "course": "B.Sc",
+      "department": "Physical Sciences",
+      "code": "BSC-PS",
+      "label": "B.Sc Physical Sciences",
+      "lectureRooms": [
+        "S101",
+        "S102"
+      ],
+      "lab": "Science Lab S110",
+      "subjects": [
+        {
+          "code": "PHY",
+          "title": "Physics",
+          "lectures": 4,
+          "lab": true,
+          "shared": false,
+          "pool": [
+            "FAC044"
+          ]
+        },
+        {
+          "code": "CHEM",
+          "title": "Chemistry",
+          "lectures": 3,
+          "lab": false,
+          "shared": false,
+          "pool": [
+            "FAC045"
+          ]
+        },
+        {
+          "code": "MATH1",
+          "title": "Mathematics I",
+          "lectures": 3,
+          "lab": false,
+          "shared": false,
+          "pool": [
+            "FAC046"
+          ]
+        },
+        {
+          "code": "EVS",
+          "title": "Environmental Science",
+          "lectures": 2,
+          "lab": false,
+          "shared": false,
+          "pool": [
+            "FAC044"
+          ]
+        },
+        {
+          "code": "COMM",
+          "title": "Technical Communication",
+          "lectures": 2,
+          "lab": false,
+          "shared": false,
+          "pool": [
+            "FAC045"
+          ]
+        },
+        {
+          "code": "STAT1",
+          "title": "Statistics",
+          "lectures": 2,
+          "lab": false,
+          "shared": false,
+          "pool": [
+            "FAC046"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "B.Sc Nursing|Nursing",
+      "course": "B.Sc Nursing",
+      "department": "Nursing",
+      "code": "NUR",
+      "label": "B.Sc Nursing",
+      "lectureRooms": [
+        "N201"
+      ],
+      "lab": "Nursing Lab N210",
+      "subjects": [
+        {
+          "code": "NF",
+          "title": "Nursing Foundations",
+          "lectures": 4,
+          "lab": true,
+          "shared": false,
+          "pool": [
+            "FAC048"
+          ]
+        },
+        {
+          "code": "ANA",
+          "title": "Anatomy",
+          "lectures": 3,
+          "lab": false,
+          "shared": false,
+          "pool": [
+            "FAC047"
+          ]
+        },
+        {
+          "code": "PHYSIO",
+          "title": "Physiology",
+          "lectures": 3,
+          "lab": false,
+          "shared": false,
+          "pool": [
+            "FAC047"
+          ]
+        },
+        {
+          "code": "PSY",
+          "title": "Psychology",
+          "lectures": 2,
+          "lab": false,
+          "shared": false,
+          "pool": [
+            "FAC048"
+          ]
+        },
+        {
+          "code": "BIOC",
+          "title": "Biochemistry",
+          "lectures": 2,
+          "lab": false,
+          "shared": false,
+          "pool": [
+            "FAC049"
+          ]
+        },
+        {
+          "code": "MICRO",
+          "title": "Microbiology",
+          "lectures": 2,
+          "lab": false,
+          "shared": false,
+          "pool": [
+            "FAC049"
+          ]
+        },
+        {
+          "code": "CHN",
+          "title": "Community Health Nursing",
+          "lectures": 3,
+          "lab": false,
+          "shared": false,
+          "pool": [
+            "FAC050"
+          ]
+        },
+        {
+          "code": "PHARMA",
+          "title": "Pharmacology",
+          "lectures": 2,
+          "lab": false,
+          "shared": false,
+          "pool": [
+            "FAC050"
+          ]
+        }
+      ]
+    }
+  ],
+  "hostelBlocks": [
+    {
+      "name": "Block D",
+      "capacity": 466,
+      "warden": null,
+      "gender": "Girls",
+      "seatsPerRoom": 4
+    },
+    {
+      "name": "Block B",
+      "capacity": 673,
+      "warden": null,
+      "gender": "Boys",
+      "seatsPerRoom": 4
+    },
+    {
+      "name": "Block C",
+      "capacity": 427,
+      "warden": null,
+      "gender": "Girls",
+      "seatsPerRoom": 4
+    },
+    {
+      "name": "Block A",
+      "capacity": 428,
+      "warden": null,
+      "gender": "Boys",
+      "seatsPerRoom": 4
+    }
+  ]
+}
