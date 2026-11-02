@@ -5,7 +5,7 @@
  * The phone no longer signs anything. While online it asks the server
  * (POST /api/pass-token, login required, only for the student's OWN approved
  * pass / leave) for a small batch of ready-signed QRs: the current one plus
- * the next ones, each with its own issuedAt 25 s apart (~15 min in total).
+ * the next ones, each with its own issuedAt 25 s apart (~60 min in total).
  * The batch is kept on the phone, so the QR keeps changing every 25 s even if
  * the network drops at the gate. While online the batch is refreshed every
  * 2 minutes and the moment the network comes back.

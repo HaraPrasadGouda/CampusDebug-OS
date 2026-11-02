@@ -18,7 +18,7 @@ import {
 
 export default function ViewPassQRModal({ isOpen, onClose, pass: passIn }) {
   const [copied, setCopied] = React.useState(false);
-  // Fix 5: the QR is signed by the SERVER and rotates every ~25 s (a ~15 min
+  // Fix 5: the QR is signed by the SERVER and rotates every ~25 s (a ~60 min
   // batch is kept on the phone, so it keeps rotating offline). `pass.token`
   // below is always the CURRENT live QR — never a stored, static one.
   const qrWanted = !!isOpen && !!passIn && (passIn.status === 'APPROVED' || passIn.status === 'USED');

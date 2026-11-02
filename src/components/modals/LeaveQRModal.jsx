@@ -61,7 +61,7 @@ export default function LeaveQRModal({ isOpen, onClose, onToast }) {
 
   // Rotating per-leave QR: only while THIS leave is APPROVED and not yet
   // scanned. Fix 5: the SERVER signs it (POST /api/pass-token); the phone
-  // keeps a ~15 min batch so it still rotates every ~25 s with no network.
+  // keeps a ~60 min batch so it still rotates every ~25 s with no network.
   // No approved leave → no token at all.
   const liveLeaveId = (() => {
     if (!isOpen || state.phase !== 'READY') return null;

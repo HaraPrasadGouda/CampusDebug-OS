@@ -22,8 +22,8 @@ export const PASS_QR_MAX_AGE_MS = 60 * 1000;    // gate refuses older than this
 export const PASS_QR_MAX_FUTURE_MS = 30 * 1000; // allowed clock skew ahead
 // Tokens handed out per request: the current one + the next ones, each with
 // its own issuedAt 25 s apart, so the QR keeps rotating if the student's
-// phone loses network. 36 × 25 s = 15 min.
-export const PASS_QR_BATCH = 36;
+// phone loses network. 144 × 25 s = 60 min.
+export const PASS_QR_BATCH = 144;
 
 let privateKey = null;
 let publicKey = null;
