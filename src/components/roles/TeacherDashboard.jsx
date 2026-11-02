@@ -4,6 +4,7 @@ import {
 } from 'lucide-react';
 import { getAccessToken } from '../../utils/authClient';
 import AttendanceMarkModal from '../modals/AttendanceMarkModal';
+import { leaveNumber } from '../../utils/passNumber';
 
 // Day-scholar leave mentor console. scoped server-side: a TEACHER's queue
 // only ever contains their own mentees (+ leaves routed to them by the
@@ -39,6 +40,12 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
   // Long lists show the first few rows + "View all" (layout only).
   const [showAllMentees, setShowAllMentees] = useState(false);
   const [showAllScans, setShowAllScans] = useState(false);
+  // Mentor-created leave (keypad-phone day scholars): which mentee row has the
+  // reason box open, the draft, and the last error for that row.
+  const [mlRoll, setMlRoll] = useState(null);
+  const [mlReason, setMlReason] = useState('');
+  const [mlBusy, setMlBusy] = useState(false);
+  const [mlErr, setMlErr] = useState('');
 
   // --- My Teaching Timetable (Phase 2): the solver publishes engagement for
   //     THIS faculty (matched on the FAC-staff roll). Today's classes first.
@@ -127,7 +134,7 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
       if (j?.success) {
         setNoteDraft('');
         if (onNotification) onNotification(
-          action === 'APPROVED' ? 'Approved — the student must show their Campus-QR at the gate; nothing auto-approved.' : 'Request rejected — the student has been notified.',
+          action === 'APPROVED' ? `Approved — leave number ${leaveNumber(j.leave?.id)} sent to the student. They tell the guard this number (or show the Campus-QR).` : 'Request rejected — the student has been notified.',
           'success'
         );
         load(false);
@@ -138,6 +145,31 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
       if (onNotification) onNotification('Offline — decision not recorded.', 'error');
     }
     setBusyId(null);
+  };
+
+  // Mentor creates a leave for a mentee who has no smartphone. The server
+  // records it as APPROVED by this mentor and SMSes the LV number.
+  const createLeave = async (roll) => {
+    setMlBusy(true); setMlErr('');
+    try {
+      const tok = getAccessToken();
+      const r = await fetch('/api/leave-requests/mentor-create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(tok ? { Authorization: `Bearer ${tok}` } : {}) },
+        body: JSON.stringify({ studentRoll: roll, reason: mlReason })
+      });
+      const j = await r.json();
+      if (j?.success) {
+        setMlRoll(null); setMlReason('');
+        if (onNotification) onNotification(`Leave ${j.number} approved — SMS sent to the student. Tell them the number too.`, 'success');
+        load(false);
+      } else {
+        setMlErr(j?.error || 'Leave was not created.');
+      }
+    } catch {
+      setMlErr('Offline — leave not created.');
+    }
+    setMlBusy(false);
   };
 
   const toggleAbsent = async (onLeave) => {
@@ -544,18 +576,76 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
           <div className={`space-y-2 pr-1 ${showAllMentees || filterText ? 'max-h-96 overflow-y-auto' : ''}`}>
             {(showAllMentees || filterText ? mentees : mentees.slice(0, LIST_PREVIEW)).map(m => {
               const chip = statusChips[m.todayStatus] || statusChips.NO_REQUEST_TODAY;
+              const isDS = String(m.resident_type || '').toLowerCase() === 'dayscholar';
+              const canCreate = isDS && ['NO_REQUEST_TODAY', 'REJECTED', 'EXPIRED'].includes(m.todayStatus || 'NO_REQUEST_TODAY');
+              const liveLeave = m.todayStatus === 'APPROVED_NOT_OUT'
+                ? (queue?.leaves || []).find(l => l.student_roll === m.roll_number && l.status === 'APPROVED' && !l.scanned_at)
+                : null;
+              const formOpen = mlRoll === m.roll_number;
               return (
-                <div key={m.id} className="bg-slate-50/60 border border-slate-200 rounded-xl px-3.5 py-3 flex flex-wrap sm:flex-nowrap items-center justify-between gap-x-3 gap-y-2">
-                  <div className="min-w-0 basis-full sm:basis-auto">
-                    <div className="text-xs font-bold text-slate-900 truncate">
-                      {m.full_name}
-                      <span className="text-[11px] font-normal text-slate-500 font-mono"> ({m.roll_number})</span>
+                <div key={m.id} className="bg-slate-50/60 border border-slate-200 rounded-xl px-3.5 py-3">
+                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+                    <div className="min-w-0 grow basis-full sm:basis-[15rem]">
+                      <div className="text-xs font-bold text-slate-900 truncate">
+                        {m.full_name}
+                        <span className="text-[11px] font-normal text-slate-500 font-mono"> ({m.roll_number})</span>
+                      </div>
+                      <div className="text-[11px] text-slate-500 font-medium mt-0.5">{m.department || '—'}</div>
                     </div>
-                    <div className="text-[11px] text-slate-500 font-medium mt-0.5">{m.department || '—'}</div>
+                    <div className="flex flex-1 sm:flex-none sm:ml-auto items-center justify-between sm:justify-end gap-2">
+                      <span className={`shrink-0 text-[10px] font-extrabold px-2.5 py-1 rounded-full border ${chip.cls}`}>
+                        {chip.label}
+                      </span>
+                      {liveLeave && (
+                        <span className="shrink-0 font-mono text-[11px] font-extrabold text-emerald-800 bg-emerald-50 border border-emerald-300 px-2.5 py-1 rounded-lg" title="Leave number — the student tells the guard this">
+                          {leaveNumber(liveLeave.id)}
+                        </span>
+                      )}
+                      {canCreate && !formOpen && (
+                        <button
+                          type="button"
+                          onClick={() => { setMlRoll(m.roll_number); setMlReason(''); setMlErr(''); }}
+                          className="shrink-0 min-h-[44px] px-3.5 rounded-xl border border-cyan-300 bg-white text-cyan-800 text-xs font-bold hover:bg-cyan-50 active:scale-[0.98] transition"
+                        >
+                          Create leave
+                        </button>
+                      )}
+                    </div>
                   </div>
-                  <span className={`shrink-0 text-[10px] font-extrabold px-2.5 py-1 rounded-full border ${chip.cls}`}>
-                    {chip.label}
-                  </span>
+                  {formOpen && (
+                    <div className="mt-3 pt-3 border-t border-slate-200 space-y-2">
+                      <label className="block text-[11px] font-bold text-slate-600" htmlFor={`ml-${m.roll_number}`}>
+                        Reason (student has no smartphone — leave is approved at once, number goes by SMS)
+                      </label>
+                      <input
+                        id={`ml-${m.roll_number}`}
+                        type="text"
+                        value={mlReason}
+                        onChange={e => setMlReason(e.target.value)}
+                        placeholder="e.g. Fever, going home"
+                        maxLength={200}
+                        className="w-full min-h-[44px] px-3 rounded-xl border border-slate-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-cyan-400"
+                      />
+                      {mlErr && <p className="text-[11px] font-bold text-rose-600">{mlErr}</p>}
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          disabled={mlBusy || mlReason.trim().length < 5}
+                          onClick={() => createLeave(m.roll_number)}
+                          className="flex-1 sm:flex-none min-h-[44px] px-4 rounded-xl bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
+                        >
+                          {mlBusy ? 'Creating…' : 'Approve & send SMS'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setMlRoll(null); setMlErr(''); }}
+                          className="min-h-[44px] px-4 rounded-xl border border-slate-300 bg-white text-slate-700 text-xs font-bold hover:bg-slate-50 transition"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}
