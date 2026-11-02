@@ -42,6 +42,7 @@ export default function GuardScanner({ searchQuery = '' }) {
   const [manualInput, setManualInput] = useState('');
   const [manualBusy, setManualBusy] = useState(false);
   const html5QrCodeRef = useRef(null);
+  const scanLockRef = useRef(false);
 
   useEffect(() => {
     return () => {
@@ -86,6 +87,7 @@ export default function GuardScanner({ searchQuery = '' }) {
 
   const startCamera = async () => {
     setCameraError(null);
+    scanLockRef.current = false;
     try {
       const html5QrCode = new Html5Qrcode('guard-reader');
       html5QrCodeRef.current = html5QrCode;
@@ -97,6 +99,12 @@ export default function GuardScanner({ searchQuery = '' }) {
           qrbox: { width: 250, height: 250 }
         },
         async (decodedText) => {
+          // One scan per student: the camera keeps reading ~10 frames/s, so
+          // without this lock the same QR was processed several times (first
+          // = exit OK, next = "already LEFT" overwriting it).
+          if (scanLockRef.current) return;
+          scanLockRef.current = true;
+          try { html5QrCode.pause(true); } catch (e) { /* ignore */ }
           await processToken(decodedText);
           stopCamera();
         },
