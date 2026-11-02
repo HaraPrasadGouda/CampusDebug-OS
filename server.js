@@ -3715,6 +3715,104 @@ async function profileByRoll(roll) {
     return data || null;
 }
 
+// Leave decision -> student. SMS (keypad phones) carries the LV number the
+// student SPEAKS at the gate, like the hostel GP SMS. Push keeps the QR text
+// and adds the number. Used by mentor approve/reject AND mentor-created leaves.
+function leaveApprovedSmsText(updated) {
+    const num = leaveNumber(updated.id);
+    const by = String(updated.decided_by_name || 'your mentor').slice(0, 30);
+    const note = updated.mentor_note ? ` Note: ${String(updated.mentor_note).slice(0, 60)}` : '';
+    return `CampusDebug OS: Leave ${num} APPROVED by ${by} till 4:30 PM today. Tell the guard number ${num} at the gate. Carry your ID card.${note}`;
+}
+function notifyLeaveDecision(studentRoll, updated, action) {
+    (async () => {
+        try {
+            const prof = await profileByRoll(studentRoll);
+            const num = leaveNumber(updated.id);
+            const text = action === 'APPROVED'
+                ? leaveApprovedSmsText(updated)
+                : `CampusDebug OS: Your day-scholar leave was REJECTED by ${updated.decided_by_name || 'your mentor'}.${updated.mentor_note ? ` Note: ${updated.mentor_note}` : ''} Stay in classes.`;
+            const delivery = await notifyStudent(studentRoll, prof?.phone_number, text);
+            if (delivery.mode === 'push') {
+                await pushToRolls([studentRoll], {
+                    title: action === 'APPROVED' ? '✅ Leave Approved' : '❌ Leave Rejected',
+                    body: action === 'APPROVED' ? `${num} · Show your Campus QR (or tell the guard ${num}) at the gate — exit is one-way (back next working day).` : (updated.mentor_note || 'Stay in classes.')
+                }).catch(() => {});
+            }
+        } catch { /* non-blocking */ }
+    })();
+}
+
+// Mentor creates a day-scholar leave FOR a mentee (keypad-phone students who
+// can't use the app): created already APPROVED by this mentor — same row shape
+// as an approved student request, so the guard list / LV lookup / scan /
+// expiry all work unchanged. The student gets the LV number by SMS.
+// TEACHER: own mentees only. ADMIN: any day scholar. College hours only.
+app.post('/api/leave-requests/mentor-create', authenticateUser, requireRole('TEACHER', 'ADMIN'), async (req, res) => {
+    try {
+        if (!supabase) return res.status(503).json({ success: false, error: 'Database offline' });
+        await expireStaleLeaves();
+        if (!leaveWindowOpen()) {
+            return res.status(400).json({ success: false, error: `Leave can be created only between ${LEAVE_WINDOW_LABEL} (college hours).` });
+        }
+        const myRoll = String(req.user?.rollNumber || req.user?.profile?.roll_number || '').trim();
+        const role = String(req.user?.role || req.user?.profile?.role || '').toUpperCase();
+        const studentRoll = String(req.body?.studentRoll || '').trim();
+        const reason = String(req.body?.reason || '').trim();
+        if (!studentRoll) return res.status(400).json({ success: false, error: 'Pick the student' });
+        if (reason.length < 5) return res.status(400).json({ success: false, error: 'Write a short reason (min 5 characters)' });
+        const stu = await profileByRoll(studentRoll);
+        if (!stu || String(stu.role || '').toUpperCase() !== 'STUDENT') return res.status(404).json({ success: false, error: 'Student not found' });
+        if (role === 'TEACHER' && String(stu.mentor_roll || '').trim().toUpperCase() !== myRoll.toUpperCase()) {
+            return res.status(403).json({ success: false, error: 'This student is not your mentee' });
+        }
+        if (String(stu.resident_type || '').toLowerCase() !== 'dayscholar') {
+            return res.status(400).json({ success: false, error: 'Day-scholar leave is for day scholars — hostellers use the gate pass flow.' });
+        }
+        // Same rules as a student request: one live leave, one exit per day.
+        const { data: live } = await supabase.from('leave_requests')
+            .select('id, status')
+            .eq('student_roll', stu.roll_number)
+            .or('status.eq.PENDING,and(status.eq.APPROVED,scanned_at.is.null)')
+            .limit(1).maybeSingle();
+        if (live) {
+            return res.status(409).json({ success: false, error: live.status === 'PENDING'
+                ? 'This student already asked for leave — approve it from your queue.'
+                : `This student already has an approved leave today (${leaveNumber(live.id)}).` });
+        }
+        const { count: outCount, error: outErr } = await supabase.from('pass_scans')
+            .select('id', { count: 'exact' })
+            .eq('category', 'LEAVE')
+            .eq('student_roll', stu.roll_number)
+            .eq('direction', 'EXIT')
+            .gte('scanned_at', localStartOfDayISO());
+        if (!outErr && (outCount || 0) > 0) {
+            return res.status(409).json({ success: false, error: 'This student already left campus on a leave today.' });
+        }
+
+        const now = new Date().toISOString();
+        const { data: created, error: insErr } = await supabase.from('leave_requests').insert({
+            student_id: stu.id,
+            student_roll: stu.roll_number,
+            student_name: stu.full_name,
+            resident_type: stu.resident_type,
+            mentor_roll: stu.mentor_roll || null,
+            reason,
+            status: 'APPROVED',
+            created_at: now,
+            decided_by: myRoll || role,
+            decided_by_name: req.user?.name || null,
+            decided_at: now,
+            mentor_note: null
+        }).select('*').single();
+        if (insErr) return res.status(500).json({ success: false, error: insErr.message });
+        notifyLeaveDecision(stu.roll_number, created, 'APPROVED');
+        return res.json({ success: true, leave: created, number: leaveNumber(created.id), smsText: leaveApprovedSmsText(created) });
+    } catch (e) {
+        return res.status(500).json({ success: false, error: e.message });
+    }
+});
+
 // Student applies: one-way leave to their mentor.
 app.post('/api/leave-requests', authenticateUser, requireRole('STUDENT'), async (req, res) => {
     try {
@@ -3948,21 +4046,7 @@ app.post('/api/leave-requests/:id/decide', authenticateUser, requireRole('TEACHE
 
         // Tell the student immediately: activated → push, else SMS to the
         // student's own phone (parent SMS is reserved for the gate scan).
-        (async () => {
-            try {
-                const prof = await profileByRoll(leave.student_roll);
-                const text = action === 'APPROVED'
-                    ? `CampusDebug OS: Your day-scholar leave was APPROVED by ${updated.decided_by_name || 'your mentor'}. Show your Campus QR at the gate before leaving.${updated.mentor_note ? ` Note: ${updated.mentor_note}` : ''}`
-                    : `CampusDebug OS: Your day-scholar leave was REJECTED by ${updated.decided_by_name || 'your mentor'}.${updated.mentor_note ? ` Note: ${updated.mentor_note}` : ''} Stay in classes.`;
-                const delivery = await notifyStudent(leave.student_roll, prof?.phone_number, text);
-                if (delivery.mode === 'push') {
-                    await pushToRolls([leave.student_roll], {
-                        title: action === 'APPROVED' ? '✅ Leave Approved' : '❌ Leave Rejected',
-                        body: action === 'APPROVED' ? 'Show your Campus QR at the gate — exit is one-way (back next working day).' : (updated.mentor_note || 'Stay in classes.')
-                    }).catch(() => {});
-                }
-            } catch { /* non-blocking */ }
-        })();
+        notifyLeaveDecision(leave.student_roll, updated, action);
         return res.json({ success: true, leave: updated });
     } catch (e) {
         return res.status(500).json({ success: false, error: e.message });
