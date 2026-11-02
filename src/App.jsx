@@ -27,7 +27,7 @@ import {
 import { initDB, getAllLocal, saveLocal, deleteLocal } from './utils/db';
 import { flushOutbox, getPendingSyncCount, initSyncEngine } from './utils/syncEngine';
 import { getStoredProfile, clearStoredSession, getAccessToken } from './utils/authClient';
-import { startNotificationPolling, stopNotificationPolling } from './utils/notify';
+import { startNotificationPolling, stopNotificationPolling, releasePushDeviceOnSignOut } from './utils/notify';
 import { pickTodaysLeave, isLeaveLive, saveLeaveSnapshot, readLeaveSnapshot } from './utils/dayScholarLeave';
 import { noteServerDate } from './utils/serverClock';
 
@@ -759,6 +759,9 @@ export default function App() {
   };
 
   const handleSignOut = () => {
+    // Stop this device getting the signed-out account's notifications
+    // (background, never blocks logout; must run before the session is cleared).
+    releasePushDeviceOnSignOut();
     localStorage.removeItem(SESSION_KEY);
     clearStoredSession();
     setSession(null);
