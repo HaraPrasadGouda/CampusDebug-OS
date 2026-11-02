@@ -42,6 +42,8 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
   const [registerRows, setRegisterRows] = useState([]);
   const [registerOk, setRegisterOk] = useState(false);
   const [showCreatePassModal, setShowCreatePassModal] = useState(false);
+  // Long lists show the first few rows + "View all" (layout only).
+  const [showAll, setShowAll] = useState({});
 
   useEffect(() => {
     if (masterClusters.length > 0) {
@@ -416,162 +418,107 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
     0
   ) || clusters.length;
 
+  // Section switcher chips (layout only): each chip scrolls to its own card.
+  const sectionChips = [
+    { tab: 'passes', id: 'wd-passes', label: 'Pending Passes', count: pendingPasses.length, dot: 'bg-emerald-500', hot: pendingPasses.length > 0, hotCls: 'bg-emerald-600 text-white' },
+    { tab: 'tickets', id: 'wd-tickets', label: 'Student Issues', count: allTickets.length, dot: 'bg-amber-500', hot: false },
+    { tab: 'clusters', id: 'wd-clusters', label: 'Master Incidents', count: clusters.length, dot: 'bg-purple-500', hot: false },
+    { tab: 'sla', id: 'wd-sla', label: 'SLA Heatmap', count: slaAtRiskCount > 0 ? slaAtRiskCount : null, dot: 'bg-rose-500', hot: slaAtRiskCount > 0, hotCls: 'bg-rose-600 text-white' },
+    { tab: 'register', id: 'wd-register', label: 'Gate Register', count: registerRows.length, dot: 'bg-slate-700', hot: false }
+  ];
+  const jumpToSection = (c) => {
+    setActiveTab(c.tab);
+    document.getElementById(c.id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+  const PREVIEW = { passes: 5, tickets: 4, clusters: 3, register: 6 };
+  const shownGateRows = shownRegister.filter(r => {
+    const c = String(r.category || '').toUpperCase();
+    return c !== 'COMMUTE' && c !== 'LEAVE';
+  });
+  const preview = (key, list) => (wq || showAll[key] ? list : list.slice(0, PREVIEW[key]));
+  const toggleAll = (key) => setShowAll(v => ({ ...v, [key]: !v[key] }));
+  const viewAllCls = 'w-full min-h-[44px] rounded-xl border text-xs font-bold transition-colors cursor-pointer';
+
   return (
     <div className="space-y-5 animate-in fade-in duration-200">
       
-      {/* Warden Top Overview Stats - 3D Colorful Stat Cards with border-2 & bigger text */}
-      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 w-full">
-        <div className="bg-gradient-to-br from-[#edf9f5] to-[#e0f5ed] border-2 border-[#bbf7d0] rounded-2xl sm:rounded-3xl p-4 sm:p-5 flex flex-col justify-between shadow-[0_6px_20px_rgba(16,185,129,0.1)] hover:shadow-xl hover:-translate-y-1 transition-all duration-300">
-          <div className="flex flex-wrap items-start justify-between gap-1.5">
-            <span className="text-xs sm:text-sm font-extrabold text-emerald-950 leading-snug">Pending Gate Passes</span>
-            <span className="text-[10px] sm:text-xs font-mono px-2 py-0.5 rounded-full bg-emerald-200/80 text-emerald-900 font-extrabold border border-emerald-300 whitespace-nowrap">
-              Sign-off
-            </span>
+      {/* Warden overview — slim KPI strip (same four numbers, compact so the queues start higher) */}
+      <section className="grid grid-cols-2 xl:grid-cols-4 gap-2 sm:gap-3 w-full">
+        <div className="bg-gradient-to-br from-[#edf9f5] to-[#e0f5ed] border border-[#bbf7d0] rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 flex items-center justify-between gap-2 min-w-0">
+          <div className="min-w-0">
+            <span className="block text-[11px] sm:text-xs font-extrabold text-emerald-950 leading-snug">Pending Gate Passes</span>
+            <span className="block text-[10px] sm:text-[11px] text-emerald-800 font-bold leading-snug">Awaiting action · <span className="font-mono">Sign-off</span></span>
           </div>
-          <div className="mt-2.5 flex items-baseline justify-between flex-wrap gap-1">
-            <span className="text-3xl sm:text-4xl font-extrabold font-mono text-emerald-900">{pendingPasses.length}</span>
-            <span className="text-[11px] sm:text-sm text-emerald-800 font-bold">Awaiting action</span>
-          </div>
+          <span className="text-2xl sm:text-3xl font-extrabold font-mono text-emerald-900 shrink-0">{pendingPasses.length}</span>
         </div>
 
-        <div className="bg-gradient-to-br from-[#faf5ff] to-[#f3e8ff] border-2 border-[#e9d5ff] rounded-2xl sm:rounded-3xl p-4 sm:p-5 flex flex-col justify-between shadow-[0_6px_20px_rgba(168,85,247,0.1)] hover:shadow-xl hover:-translate-y-1 transition-all duration-300">
-          <div className="flex flex-wrap items-start justify-between gap-1.5">
-            <span className="text-xs sm:text-sm font-extrabold text-purple-950 leading-snug">Master Clusters</span>
-            <span className="text-[10px] sm:text-xs font-mono px-2 py-0.5 rounded-full bg-purple-200/80 text-purple-900 font-extrabold border border-purple-300 whitespace-nowrap">
-              AI Grouped
-            </span>
+        <div className="bg-gradient-to-br from-[#faf5ff] to-[#f3e8ff] border border-[#e9d5ff] rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 flex items-center justify-between gap-2 min-w-0">
+          <div className="min-w-0">
+            <span className="block text-[11px] sm:text-xs font-extrabold text-purple-950 leading-snug">Master Clusters</span>
+            <span className="block text-[10px] sm:text-[11px] text-purple-800 font-bold leading-snug">{impactedStudentsCount} Students · <span className="font-mono">AI Grouped</span></span>
           </div>
-          <div className="mt-2.5 flex items-baseline justify-between flex-wrap gap-1">
-            <span className="text-3xl sm:text-4xl font-extrabold font-mono text-purple-900">{clusters.length}</span>
-            <span className="text-[11px] sm:text-sm text-purple-800 font-bold">{impactedStudentsCount} Students</span>
-          </div>
+          <span className="text-2xl sm:text-3xl font-extrabold font-mono text-purple-900 shrink-0">{clusters.length}</span>
         </div>
 
-        <div className="bg-gradient-to-br from-[#fff1f2] to-[#ffe4e6] border-2 border-[#fecdd3] rounded-2xl sm:rounded-3xl p-4 sm:p-5 flex flex-col justify-between shadow-[0_6px_20px_rgba(244,63,94,0.1)] hover:shadow-xl hover:-translate-y-1 transition-all duration-300">
-          <div className="flex flex-wrap items-start justify-between gap-1.5">
-            <span className="text-xs sm:text-sm font-extrabold text-rose-950 leading-snug">Critical SLA At-Risk</span>
-            <span className="text-[10px] sm:text-xs font-mono px-2 py-0.5 rounded-full bg-rose-200/80 text-rose-900 font-extrabold border border-rose-300 whitespace-nowrap">
-              Escalated
-            </span>
+        <div className="bg-gradient-to-br from-[#fff1f2] to-[#ffe4e6] border border-[#fecdd3] rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 flex items-center justify-between gap-2 min-w-0">
+          <div className="min-w-0">
+            <span className="block text-[11px] sm:text-xs font-extrabold text-rose-950 leading-snug">Critical SLA At-Risk</span>
+            <span className="block text-[10px] sm:text-[11px] text-rose-800 font-bold leading-snug">{slaAtRiskCount > 0 ? '<1h Remaining' : 'No breaches'} · <span className="font-mono">Escalated</span></span>
           </div>
-          <div className="mt-2.5 flex items-baseline justify-between flex-wrap gap-1">
-            <span className="text-3xl sm:text-4xl font-extrabold font-mono text-rose-600">{slaAtRiskCount}</span>
-            <span className="text-[11px] sm:text-sm text-rose-800 font-bold">{slaAtRiskCount > 0 ? '<1h Remaining' : 'No breaches'}</span>
-          </div>
+          <span className="text-2xl sm:text-3xl font-extrabold font-mono text-rose-600 shrink-0">{slaAtRiskCount}</span>
         </div>
 
-        <div className="bg-gradient-to-br from-[#eff6ff] to-[#dbeafe] border-2 border-[#bfdbfe] rounded-2xl sm:rounded-3xl p-4 sm:p-5 flex flex-col justify-between shadow-[0_6px_20px_rgba(59,130,246,0.1)] hover:shadow-xl hover:-translate-y-1 transition-all duration-300">
-          <div className="flex flex-wrap items-start justify-between gap-1.5">
-            <span className="text-xs sm:text-sm font-extrabold text-blue-950 leading-snug">Avg Resolution Time</span>
-            <span className="text-[10px] sm:text-xs font-mono px-2 py-0.5 rounded-full bg-blue-200/80 text-blue-900 font-extrabold border border-blue-300 whitespace-nowrap">
-              Target: 4h
-            </span>
+        <div className="bg-gradient-to-br from-[#eff6ff] to-[#dbeafe] border border-[#bfdbfe] rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 flex items-center justify-between gap-2 min-w-0">
+          <div className="min-w-0">
+            <span className="block text-[11px] sm:text-xs font-extrabold text-blue-950 leading-snug">Avg Resolution Time</span>
+            <span className="block text-[10px] sm:text-[11px] text-blue-800 font-bold leading-snug">Within SLA · <span className="font-mono">Target: 4h</span></span>
           </div>
-          <div className="mt-2.5 flex items-baseline justify-between flex-wrap gap-1">
-            <span className="text-3xl sm:text-4xl font-extrabold font-mono text-blue-950">3.2<span className="text-xl font-normal text-blue-800">h</span></span>
-            <span className="text-[11px] sm:text-sm text-blue-800 font-bold">Within SLA</span>
-          </div>
+          <span className="text-2xl sm:text-3xl font-extrabold font-mono text-blue-950 shrink-0">3.2<span className="text-base font-normal text-blue-800">h</span></span>
         </div>
       </section>
 
-      {/* Navigation Tabs — Quick-Action tile grid (like the student dashboard,
-          a size smaller): every tab is a compact colored card, so nothing
-          ever hides behind a horizontal scroll on phones */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
-        <button
-          onClick={() => setActiveTab('tickets')}
-          className={`flex items-center gap-2.5 rounded-xl border p-2 text-left transition-all cursor-pointer ${
-            activeTab === 'tickets'
-              ? 'bg-amber-50 border-amber-400 ring-2 ring-amber-300/40'
-              : 'bg-white border-slate-200 hover:border-slate-300 hover:shadow-sm'
-          }`}
-        >
-          <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${activeTab === 'tickets' ? 'bg-amber-600 text-white' : 'bg-amber-100 text-amber-600'}`}>
-            <Wrench className="w-4 h-4" />
-          </span>
-          <span className={`text-[11px] font-bold leading-tight ${activeTab === 'tickets' ? 'text-amber-900' : 'text-slate-700'}`}>
-            Reported Student Issues ({allTickets.length})
-          </span>
-        </button>
+      {/* Section switcher — tap a chip to jump to that section (layout only) */}
+      <nav aria-label="Dashboard sections" className="sticky top-[51px] sm:top-[54px] z-20 -mx-3 sm:-mx-5 lg:-mx-6 px-3 sm:px-5 lg:px-6 py-2 bg-[#F1F5F9]/90 backdrop-blur-md">
+        <div className="flex gap-2 overflow-x-auto scrollbar-none -mx-3 px-3 sm:mx-0 sm:px-0 xl:flex-wrap">
+          {sectionChips.map(c => (
+            <button
+              key={c.id}
+              type="button"
+              onClick={() => jumpToSection(c)}
+              className="shrink-0 min-h-[44px] inline-flex items-center gap-2 pl-3 pr-2.5 rounded-full bg-white border border-slate-200 hover:border-slate-300 hover:bg-slate-50 text-xs font-bold text-slate-700 whitespace-nowrap shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-colors cursor-pointer"
+            >
+              <span className={`w-2 h-2 rounded-full ${c.dot}`} />
+              {c.label}
+              {c.count != null && (
+                <span className={`min-w-[22px] h-[22px] px-1.5 rounded-full text-[11px] font-mono font-extrabold flex items-center justify-center ${c.hot ? c.hotCls : 'bg-slate-100 text-slate-600'}`}>
+                  {c.count}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      </nav>
 
-        <button
-          onClick={() => setActiveTab('clusters')}
-          className={`flex items-center gap-2.5 rounded-xl border p-2 text-left transition-all cursor-pointer ${
-            activeTab === 'clusters'
-              ? 'bg-purple-50 border-purple-400 ring-2 ring-purple-300/40'
-              : 'bg-white border-slate-200 hover:border-slate-300 hover:shadow-sm'
-          }`}
-        >
-          <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${activeTab === 'clusters' ? 'bg-purple-600 text-white' : 'bg-purple-100 text-purple-600'}`}>
-            <Layers className="w-4 h-4" />
-          </span>
-          <span className={`text-[11px] font-bold leading-tight ${activeTab === 'clusters' ? 'text-purple-900' : 'text-slate-700'}`}>
-            Spatial Master Incidents ({clusters.length})
-          </span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('passes')}
-          className={`flex items-center gap-2.5 rounded-xl border p-2 text-left transition-all cursor-pointer ${
-            activeTab === 'passes'
-              ? 'bg-emerald-50 border-emerald-400 ring-2 ring-emerald-300/40'
-              : 'bg-white border-slate-200 hover:border-slate-300 hover:shadow-sm'
-          }`}
-        >
-          <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${activeTab === 'passes' ? 'bg-emerald-600 text-white' : 'bg-emerald-100 text-emerald-600'}`}>
-            <QrCode className="w-4 h-4" />
-          </span>
-          <span className={`text-[11px] font-bold leading-tight ${activeTab === 'passes' ? 'text-emerald-900' : 'text-slate-700'}`}>
-            Pending Passes ({pendingPasses.length})
-          </span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('sla')}
-          className={`flex items-center gap-2.5 rounded-xl border p-2 text-left transition-all cursor-pointer ${
-            activeTab === 'sla'
-              ? 'bg-rose-50 border-rose-400 ring-2 ring-rose-300/40'
-              : 'bg-white border-slate-200 hover:border-slate-300 hover:shadow-sm'
-          }`}
-        >
-          <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${activeTab === 'sla' ? 'bg-rose-600 text-white' : 'bg-rose-100 text-rose-600'}`}>
-            <Flame className="w-4 h-4" />
-          </span>
-          <span className={`text-[11px] font-bold leading-tight ${activeTab === 'sla' ? 'text-rose-900' : 'text-slate-700'}`}>
-            SLA Aging Heatmap
-          </span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('register')}
-          className={`flex items-center gap-2.5 rounded-xl border p-2 text-left transition-all cursor-pointer col-span-2 lg:col-span-1 ${
-            activeTab === 'register'
-              ? 'bg-slate-100 border-slate-700 ring-2 ring-slate-400/30'
-              : 'bg-white border-slate-200 hover:border-slate-300 hover:shadow-sm'
-          }`}
-        >
-          <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${activeTab === 'register' ? 'bg-slate-900 text-white' : 'bg-slate-200 text-slate-800'}`}>
-            <ClipboardList className="w-4 h-4" />
-          </span>
-          <span className={`text-[11px] font-bold leading-tight ${activeTab === 'register' ? 'text-slate-900' : 'text-slate-700'}`}>
-            Gate Register ({registerRows.length})
-          </span>
-        </button>
-      </div>
+      {/* Sections: phone = one column (Pending Passes first); laptop (xl) = passes + issues on the
+          left, SLA heatmap + clusters on the right, Gate Register full width below */}
+      <div className="flex flex-col gap-4 xl:grid xl:grid-cols-12 xl:items-start">
+        <div className="contents xl:flex xl:flex-col xl:gap-4 xl:col-span-7 xl:min-w-0">
 
       {/* --- TAB 0: ALL REPORTED STUDENT ISSUES --- */}
-      {activeTab === 'tickets' && (
-        <section className="bg-white/90 backdrop-blur-sm border border-slate-200/50 rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-            <div>
-              <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                <Wrench className="w-5 h-5 text-amber-600" />
+        <section id="wd-tickets" className="order-2 scroll-mt-[124px] min-w-0 bg-white border-2 border-amber-200 rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm">
+          <div className="flex items-start justify-between gap-3 border-b border-amber-100 pb-3">
+            <div className="min-w-0">
+              <h2 className="text-[15px] font-bold text-slate-900 flex items-center gap-2.5">
+                <span className="w-9 h-9 rounded-xl bg-amber-100/70 text-amber-700 border border-amber-200 flex items-center justify-center shrink-0">
+                  <Wrench className="w-4 h-4" />
+                </span>
                 <span>Student Maintenance Complaints Queue</span>
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
                 Real-time log of all individual issues submitted by students across hostel blocks.
               </p>
             </div>
+            <span className="shrink-0 text-[11px] font-mono font-bold px-2.5 py-1 rounded-full border text-amber-800 bg-amber-50 border-amber-200">{allTickets.length}</span>
           </div>
 
           {shownTickets.length === 0 ? (
@@ -581,13 +528,13 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
             </div>
           ) : (
             <div className="space-y-3">
-              {shownTickets.map((t) => (
+              {preview('tickets', shownTickets).map((t) => (
                 <div 
                   key={t.id}
-                  className="bg-slate-50/70 border border-slate-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:border-slate-300 transition-all"
+                  className="bg-slate-50/70 border border-slate-200 rounded-xl p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 hover:border-slate-300 transition-all"
                 >
-                  <div className="space-y-1.5">
-                    <div className="flex items-center space-x-2 flex-wrap gap-y-1">
+                  <div className="space-y-1.5 min-w-0 flex-1">
+                    <div className="flex items-center flex-wrap gap-x-2 gap-y-1">
                       <span className="font-mono text-xs font-bold text-amber-700">{t.id}</span>
                       <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-100 text-amber-800 font-semibold">
                         {t.category}
@@ -617,8 +564,8 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                     </div>
                   </div>
 
-                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 shrink-0 border-t sm:border-t-0 border-slate-200 pt-3 sm:pt-0 min-w-[190px]">
-                    <div className="flex flex-col items-start sm:items-end gap-1.5">
+                  <div className="flex flex-col items-stretch gap-2 shrink-0 border-t sm:border-t-0 border-slate-200 pt-3 sm:pt-0 sm:w-[210px]">
+                    <div className="flex flex-row flex-wrap sm:flex-col items-center sm:items-end gap-1.5">
                       <span className="text-xs font-mono px-3 py-1 rounded-full bg-amber-50 text-amber-800 border border-amber-200 font-semibold">
                         {(t.statusLabel || t.status || 'REPORTED').replace(/_/g, ' ')}
                       </span>
@@ -659,7 +606,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                           {String(t.status).toUpperCase() === 'RESOLVED' && t.studentConfirmed && (
                             <button
                               onClick={() => handleCloseTicket(t)}
-                              className="px-2 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-[10px] font-bold cursor-pointer transition-colors"
+                              className="px-3 py-1 min-h-[44px] rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-[11px] font-bold cursor-pointer transition-colors"
                             >
                               🔒 Confirm & Close
                             </button>
@@ -679,7 +626,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                           {t.studentConfirmed && (
                             <button
                               onClick={() => handleCloseTicket(t)}
-                              className="px-2 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-[10px] font-bold cursor-pointer transition-colors"
+                              className="px-3 py-1 min-h-[44px] rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-[11px] font-bold cursor-pointer transition-colors"
                             >
                               🔒 Confirm & Close
                             </button>
@@ -687,7 +634,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                           <select
                             value=""
                             onChange={(e) => handleReassign(t, e.target.value)}
-                            className="text-[11px] px-2 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-700 cursor-pointer"
+                            className="w-full min-h-[44px] text-xs px-2 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-700 cursor-pointer"
                           >
                             <option value="">Reassign to…</option>
                             {technicianRoster.map(r => (
@@ -702,15 +649,21 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
               ))}
             </div>
           )}
+          {shownTickets.length > PREVIEW.tickets && !wq && (
+            <button type="button" onClick={() => toggleAll('tickets')} className={`${viewAllCls} border-amber-200 bg-amber-50/50 hover:bg-amber-50 text-amber-800`}>
+              {showAll.tickets ? 'Show less' : `View all (${shownTickets.length})`}
+            </button>
+          )}
         </section>
-      )}
-      {activeTab === 'passes' && (
-        <section className="bg-white/90 backdrop-blur-sm border border-slate-200/50 rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3 gap-3">
-            <div>
-              <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                <ShieldCheck className="w-5 h-5 text-emerald-600" />
+        <section id="wd-passes" className="order-1 scroll-mt-[124px] min-w-0 bg-white border-2 border-emerald-300 rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm">
+          <div className="flex items-start justify-between border-b border-emerald-100 pb-3 gap-3">
+            <div className="min-w-0">
+              <h2 className="text-[15px] font-bold text-slate-900 flex items-center gap-2.5">
+                <span className="w-9 h-9 rounded-xl bg-emerald-100/70 text-emerald-700 border border-emerald-200 flex items-center justify-center shrink-0">
+                  <ShieldCheck className="w-4 h-4" />
+                </span>
                 <span>Student Gate Pass Authorization Queue</span>
+                <span className={`shrink-0 text-[11px] font-mono font-bold px-2.5 py-1 rounded-full border ${pendingPasses.length > 0 ? 'text-white bg-emerald-600 border-emerald-600' : 'text-slate-600 bg-slate-50 border-slate-200'}`}>{pendingPasses.length}</span>
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
                 Approving automatically generates the cryptographic HMAC-SHA256 token for offline guard verification.
@@ -718,7 +671,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
             </div>
             <button
               onClick={() => setShowCreatePassModal(true)}
-              className="shrink-0 px-3 sm:px-4 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold shadow-sm transition-colors cursor-pointer flex items-center gap-1.5"
+              className="shrink-0 min-h-[44px] px-3 sm:px-4 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold shadow-sm transition-colors cursor-pointer flex items-center gap-1.5"
             >
               <ArrowRight className="w-3.5 h-3.5 rotate-[-90deg] sm:rotate-45" />
               <span className="hidden sm:inline">Create Pass on Behalf</span>
@@ -733,13 +686,13 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
             </div>
           ) : (
             <div className="space-y-3">
-              {shownPasses.map((pass) => (
+              {preview('passes', shownPasses).map((pass) => (
                 <div 
                   key={pass.id}
-                  className="bg-slate-50/50 border border-slate-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:border-slate-300 transition-all"
+                  className={`border rounded-xl p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center xl:flex-col xl:items-stretch 2xl:flex-row 2xl:items-center justify-between gap-3 sm:gap-4 hover:border-slate-300 transition-all ${pass.priority ? 'bg-rose-50/30 border-rose-200' : 'bg-slate-50/50 border-slate-200'}`}
                 >
-                  <div className="space-y-1.5">
-                    <div className="flex items-center space-x-2 flex-wrap gap-y-1">
+                  <div className="space-y-1.5 min-w-0">
+                    <div className="flex items-center flex-wrap gap-x-2 gap-y-1">
                       <span className="font-mono text-xs font-bold text-emerald-700">{pass.id}</span>
                       <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-200 text-slate-700 font-medium">
                         {pass.passType}
@@ -767,7 +720,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                       "{pass.reason}"
                     </div>
 
-                    <div className="flex items-center space-x-3 text-[11px] text-slate-500 font-mono pt-1">
+                    <div className="flex items-center flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-500 font-mono pt-1">
                       <span className="flex items-center gap-1 text-amber-700 font-medium">
                         <Clock className="w-3 h-3" />
                         Valid until: {new Date(pass.validUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -782,17 +735,17 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                   </div>
 
                   {/* 1-Tap Action Buttons */}
-                  <div className="flex items-center space-x-2 shrink-0 border-t sm:border-t-0 border-slate-200 pt-3 sm:pt-0">
+                  <div className="flex items-center gap-2 shrink-0 border-t sm:border-t-0 xl:border-t 2xl:border-t-0 border-slate-200 pt-3 sm:pt-0 xl:pt-3 2xl:pt-0">
                     <button
                       onClick={() => handleRejectPass(pass)}
-                      className="px-3.5 py-2 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-medium text-xs transition-colors cursor-pointer flex items-center space-x-1"
+                      className="flex-1 sm:flex-none xl:flex-1 2xl:flex-none min-h-[44px] justify-center px-3.5 py-2 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-semibold text-xs transition-colors cursor-pointer flex items-center space-x-1"
                     >
                       <X className="w-3.5 h-3.5" />
                       <span>Reject</span>
                     </button>
                     <button
                       onClick={() => handleApprovePass(pass)}
-                      className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-medium text-xs transition-all cursor-pointer shadow-sm flex items-center space-x-1.5"
+                      className="flex-[2] sm:flex-none xl:flex-[2] 2xl:flex-none min-h-[44px] justify-center px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs transition-all cursor-pointer shadow-sm flex items-center space-x-1.5"
                     >
                       <Check className="w-4 h-4" />
                       <span>1-Tap Approve & Sign</span>
@@ -802,28 +755,37 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
               ))}
             </div>
           )}
+          {shownPasses.length > PREVIEW.passes && !wq && (
+            <button type="button" onClick={() => toggleAll('passes')} className={`${viewAllCls} border-emerald-200 bg-emerald-50/50 hover:bg-emerald-50 text-emerald-800`}>
+              {showAll.passes ? 'Show less' : `View all (${shownPasses.length})`}
+            </button>
+          )}
         </section>
-      )}
+        </div>
+
+        <div className="contents xl:flex xl:flex-col xl:gap-4 xl:col-span-5 xl:min-w-0">
 
       {/* --- TAB 2: SPATIAL MASTER INCIDENTS (DEDUPLICATION ENGINE) --- */}
-      {activeTab === 'clusters' && (
-        <section className="bg-white/90 backdrop-blur-sm border border-slate-200/50 rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-            <div>
-              <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                <Layers className="w-5 h-5 text-purple-600" />
+        <section id="wd-clusters" className="order-3 xl:order-2 scroll-mt-[124px] min-w-0 bg-white border-2 border-purple-200 rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm">
+          <div className="flex items-start justify-between gap-3 border-b border-purple-100 pb-3">
+            <div className="min-w-0">
+              <h2 className="text-[15px] font-bold text-slate-900 flex items-center gap-2.5">
+                <span className="w-9 h-9 rounded-xl bg-purple-100/70 text-purple-700 border border-purple-200 flex items-center justify-center shrink-0">
+                  <Layers className="w-4 h-4" />
+                </span>
                 <span>Spatial Incident Deduplication & Clustering</span>
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
                 Multiple individual tickets from the same block/floor are grouped into single Master Incidents to prevent redundant work.
               </p>
             </div>
+            <span className="shrink-0 text-[11px] font-mono font-bold px-2.5 py-1 rounded-full border text-purple-800 bg-purple-50 border-purple-200">{clusters.length}</span>
           </div>
 
           <div className="space-y-3.5">
             {shownClusters.length === 0 && wq ? (
               <div className="py-12 text-center text-slate-500 text-xs">No clusters match "{wq}".</div>
-            ) : shownClusters.map((cluster, idx) => {
+            ) : preview('clusters', shownClusters).map((cluster, idx) => {
               const masterId = cluster.masterId || cluster.id || `MST-CLUSTER-${idx}`;
               const impactedCount = cluster.impactedCount || cluster.studentsImpacted || (cluster.impactedRooms ? cluster.impactedRooms.length : (cluster.students ? cluster.students.length : 0));
               const roomsList = Array.isArray(cluster.students) && cluster.students.length > 0
@@ -837,13 +799,13 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                   key={masterId}
                   className="bg-slate-50/50 border border-slate-200 rounded-xl p-4 space-y-3 hover:border-slate-300 transition-all"
                 >
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 pb-3">
-                    <div className="flex items-center space-x-2.5">
+                  <div className="flex flex-col sm:flex-row sm:items-center xl:flex-col xl:items-start justify-between gap-2 border-b border-slate-200 pb-3">
+                    <div className="flex items-center space-x-2.5 min-w-0">
                       <span className="w-8 h-8 rounded-lg bg-purple-50 border border-purple-200 flex items-center justify-center text-purple-600 font-mono text-xs font-bold">
                         <Layers className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                       </span>
                       <div>
-                        <div className="flex items-center space-x-2">
+                        <div className="flex items-center flex-wrap gap-x-2 gap-y-1">
                           <span className="font-mono text-xs font-bold text-purple-700">{masterId}</span>
                           <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-200 text-slate-700 font-medium">
                             {cluster.category}
@@ -862,7 +824,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                   </div>
 
                   {/* Impacted Rooms & Location */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2 gap-3 text-xs">
                     <div className="bg-white p-2.5 rounded-lg border border-slate-200">
                       <span className="text-slate-500 block text-[11px] mb-1">Spatial Location:</span>
                       <span className="font-semibold text-slate-900 flex items-center gap-1">
@@ -884,8 +846,8 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                   </div>
 
                   {/* Dispatch / Resolution Controls */}
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-slate-200 text-xs">
-                    <div className="flex items-center space-x-2 font-mono text-slate-600">
+                  <div className="flex flex-col sm:flex-row sm:items-center xl:flex-col xl:items-stretch justify-between gap-3 pt-2 border-t border-slate-200 text-xs">
+                    <div className="flex items-center flex-wrap gap-2 font-mono text-slate-600">
                       <span>Status:</span>
                       <span className={`px-2 py-0.5 rounded-md font-semibold text-[11px] ${
                         isResolved 
@@ -898,7 +860,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                       </span>
                     </div>
 
-                    <div className="flex items-center space-x-2">
+                    <div className="flex flex-wrap items-stretch gap-2">
                       {!isResolved && !cluster.assignedTo && (
                         <button
                           onClick={() => {
@@ -907,7 +869,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                               || technicianRoster.find(r => r.id === 'TECH-CLEAN-01');
                             handleAssignTechnician(masterId, match ? match.name : 'Technician Team A');
                           }}
-                          className="px-3.5 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white font-medium transition-all cursor-pointer text-xs flex items-center space-x-1 shadow-sm"
+                          className="flex-1 sm:flex-none xl:flex-1 min-h-[44px] justify-center px-3.5 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white font-semibold transition-all cursor-pointer text-xs flex items-center space-x-1 shadow-sm"
                         >
                           <Wrench className="w-3.5 h-3.5" />
                           <span>Dispatch Specialist</span>
@@ -917,7 +879,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                       {!isResolved && (
                         <button
                           onClick={() => handleResolveCluster(cluster.masterId)}
-                          className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-medium transition-all cursor-pointer text-xs flex items-center space-x-1 shadow-sm"
+                          className="flex-1 sm:flex-none xl:flex-1 min-h-[44px] justify-center px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold transition-all cursor-pointer text-xs flex items-center space-x-1 shadow-sm"
                         >
                           <CheckCircle2 className="w-3.5 h-3.5" />
                           <span>Resolve Master Ticket</span>
@@ -929,7 +891,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                         <select
                           value=""
                           onChange={(e) => handleReassign(cluster, e.target.value)}
-                          className="text-[11px] px-2 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-700 cursor-pointer"
+                          className="w-full sm:w-auto xl:w-full min-h-[44px] text-xs px-2 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-700 cursor-pointer"
                         >
                           <option value="">Assign to…</option>
                           {technicianRoster.map(r => (
@@ -943,11 +905,15 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
               );
             })}
           </div>
+          {shownClusters.length > PREVIEW.clusters && !wq && (
+            <button type="button" onClick={() => toggleAll('clusters')} className={`${viewAllCls} border-purple-200 bg-purple-50/50 hover:bg-purple-50 text-purple-800`}>
+              {showAll.clusters ? 'Show less' : `View all (${shownClusters.length})`}
+            </button>
+          )}
         </section>
-      )}
 
       {/* --- TAB 3: SLA AGING HEATMAP (all values derived from live ticket/cluster data) --- */}
-      {activeTab === 'sla' && (() => {
+      {(() => {
         const slaOf = (c) => (typeof c.slaHoursLeft === 'number' ? c.slaHoursLeft : 4);
         const openClusters = displayClusters.filter(c => c.status !== 'RESOLVED' && String(c.status || '').toUpperCase() !== 'CLOSED');
         const onTrack = openClusters.filter(c => slaOf(c) > 2);
@@ -957,20 +923,23 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
           ['PENDING', 'ASSIGNED', 'IN_PROGRESS', 'ESCALATED_TO_DEAN'].includes(String(t.status || '').toUpperCase()) && t.slaState === 'breached'
         );
         return (
-          <section className="bg-white/90 backdrop-blur-sm border border-slate-200/80 rounded-3xl p-4 sm:p-6 space-y-5 shadow-xs">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-            <div>
-              <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                <Flame className="w-5 h-5 text-rose-600" />
+          <section id="wd-sla" className="order-4 xl:order-1 scroll-mt-[124px] min-w-0 bg-white border-2 border-rose-200 rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm">
+          <div className="flex items-start justify-between gap-3 border-b border-rose-100 pb-3">
+            <div className="min-w-0">
+              <h2 className="text-[15px] font-bold text-slate-900 flex items-center gap-2.5">
+                <span className="w-9 h-9 rounded-xl bg-rose-100/70 text-rose-700 border border-rose-200 flex items-center justify-center shrink-0">
+                  <Flame className="w-4 h-4" />
+                </span>
                 <span>SLA Aging Heatmap & Escalation Matrix</span>
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
                 Live countdown from the single SLA engine — anything breached here auto-escalates to the Dean every 60s server tick.
               </p>
             </div>
+            <span className={`shrink-0 text-[11px] font-mono font-bold px-2.5 py-1 rounded-full border ${breached.length + breachedTickets.length > 0 ? 'text-white bg-rose-600 border-rose-600' : 'text-rose-800 bg-rose-50 border-rose-200'}`}>{openClusters.length}</span>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 xl:grid-cols-1 gap-3 sm:gap-4">
             {/* On Track (>2h left) */}
             <div className="bg-emerald-50/70 border border-emerald-200 rounded-xl p-4 space-y-3 flex flex-col justify-between">
               <div className="space-y-2">
@@ -991,7 +960,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
               <div className="space-y-1.5 pt-2 border-t border-emerald-200 text-xs">
                 {onTrack.slice(0, 2).map((c, i) => (
                   <div key={i} className="bg-white p-2 rounded-lg border border-emerald-100 flex items-center justify-between text-[11px]">
-                    <span className="font-semibold text-slate-800 truncate">{c.title || c.category}</span>
+                    <span className="font-semibold text-slate-800 min-w-0">{c.title || c.category}</span>
                     <span className="font-mono text-emerald-700 font-bold ml-2">{Math.max(slaOf(c), 0).toFixed(1)}h</span>
                   </div>
                 ))}
@@ -1018,7 +987,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
               <div className="space-y-1.5 pt-2 border-t border-amber-200 text-xs">
                 {warnZone.slice(0, 2).map((c, i) => (
                   <div key={i} className="bg-white p-2 rounded-lg border border-amber-100 flex items-center justify-between text-[11px]">
-                    <span className="font-semibold text-slate-800 truncate">{c.title || c.category}</span>
+                    <span className="font-semibold text-slate-800 min-w-0">{c.title || c.category}</span>
                     <span className="font-mono text-amber-700 font-bold ml-2">{Math.max(slaOf(c), 0).toFixed(1)}h</span>
                   </div>
                 ))}
@@ -1047,8 +1016,8 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                 {breached.concat(breachedTickets).slice(0, 2).map((c, i) => (
                   <div key={i} className="bg-white p-2.5 rounded-lg border border-rose-200 space-y-1">
                     <div className="flex items-center justify-between text-xs">
-                      <span className="font-bold text-rose-900 truncate">{c.title || c.category}</span>
-                      <span className="font-mono text-rose-600 font-bold text-[11px]">{Math.abs(slaOf(c)).toFixed(1)}h (BREACHED)</span>
+                      <span className="font-bold text-rose-900 min-w-0">{c.title || c.category}</span>
+                      <span className="font-mono text-rose-600 font-bold text-[11px] shrink-0 ml-2">{Math.abs(slaOf(c)).toFixed(1)}h (BREACHED)</span>
                     </div>
                     {(c.studentsImpacted || c.impactedRooms) && (
                       <span className="text-[10px] text-slate-500 block">
@@ -1066,13 +1035,15 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
         </section>
         );
       })()}
+        </div>
 
-      {activeTab === 'register' && (
-        <section className="bg-white/90 backdrop-blur-sm border border-slate-200/50 rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
-            <div>
-              <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                <ClipboardList className="w-5 h-5 text-slate-900" />
+        <section id="wd-register" className="order-5 xl:col-span-12 scroll-mt-[124px] min-w-0 bg-white border-2 border-slate-300 rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 pb-3">
+            <div className="min-w-0">
+              <h2 className="text-[15px] font-bold text-slate-900 flex items-center gap-2.5">
+                <span className="w-9 h-9 rounded-xl bg-slate-100 text-slate-800 border border-slate-300 flex items-center justify-center shrink-0">
+                  <ClipboardList className="w-4 h-4" />
+                </span>
                 <span>Main Gate Security Register</span>
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
@@ -1131,16 +1102,13 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
               No gate scans match "{wq}".
             </div>
           ) : (
-            <div className="space-y-2">
-              {shownRegister.filter(r => {
-                const c = String(r.category || '').toUpperCase();
-                return c !== 'COMMUTE' && c !== 'LEAVE';
-              }).map((row) => {
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-2">
+              {preview('register', shownGateRows).map((row) => {
                 const isExit = row.direction === 'EXIT';
                 return (
-                  <div key={row.id} className="bg-slate-50/60 border border-slate-200 rounded-xl px-3.5 py-3 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
+                  <div key={row.id} className="bg-slate-50/60 border border-slate-200 rounded-xl px-3.5 py-3 flex flex-wrap sm:flex-nowrap xl:flex-wrap 2xl:flex-nowrap items-center gap-x-3 gap-y-1.5">
                     {/* Direction badge */}
-                    <span className={`shrink-0 text-[10px] font-mono font-extrabold px-2.5 py-1 rounded-full w-fit ${
+                    <span className={`order-1 shrink-0 text-[10px] font-mono font-extrabold px-2.5 py-1 rounded-full w-fit ${
                       isExit
                         ? 'text-amber-800 bg-amber-100 border border-amber-200'
                         : 'text-emerald-800 bg-emerald-100 border border-emerald-200'
@@ -1148,14 +1116,14 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                       {isExit ? '↑ OUT (EXIT)' : '↓ IN (RETURN)'}
                     </span>
 
-                    <div className="min-w-0 flex-1">
-                      <div className="text-xs font-bold text-slate-900 truncate">
+                    <div className="min-w-0 flex-1 order-3 basis-full sm:order-2 sm:basis-auto xl:order-3 xl:basis-full 2xl:order-2 2xl:basis-auto">
+                      <div className="text-xs font-bold text-slate-900">
                         {row.student_name || 'Student'}
                         <span className="text-[11px] font-normal text-slate-500 font-mono"> ({row.student_roll})</span>
                         <span className="ml-2 text-[10px] font-mono text-emerald-700 font-bold">{row.pass_ref}</span>
                       </div>
                       <div className="text-[11px] text-slate-600 font-medium flex items-center gap-2 flex-wrap mt-0.5">
-                        <span className="truncate">{row.destination || '—'}</span>
+                        <span>{row.destination || '—'}</span>
                         <span>•</span>
                         <span>{row.category || 'Day Pass'}</span>
                         {row.late_return && (
@@ -1166,7 +1134,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                       </div>
                     </div>
 
-                    <div className="shrink-0 flex items-center gap-2 text-[10px] font-mono text-slate-500 flex-wrap">
+                    <div className="order-2 ml-auto sm:order-3 sm:ml-0 xl:order-2 xl:ml-auto 2xl:order-3 2xl:ml-0 shrink-0 flex items-center gap-2 text-[10px] font-mono text-slate-500 flex-wrap justify-end">
                       <span className={`px-1.5 py-0.5 rounded font-bold ${
                         row.method === 'MANUAL'
                           ? 'bg-blue-50 text-blue-700 border border-blue-200'
@@ -1184,8 +1152,13 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
               })}
             </div>
           )}
+          {shownGateRows.length > PREVIEW.register && !wq && (
+            <button type="button" onClick={() => toggleAll('register')} className={`${viewAllCls} border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-800`}>
+              {showAll.register ? 'Show less' : `View all (${shownGateRows.length})`}
+            </button>
+          )}
         </section>
-      )}
+      </div>
 
       {/* NOTE: the Day-Scholar Leave Register deliberately does NOT live here.
           Day-scholar in/out history is a mentor-welfare concern — it shows in
