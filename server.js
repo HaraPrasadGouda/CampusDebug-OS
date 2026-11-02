@@ -3680,20 +3680,30 @@ function localStartOfDayISO(d = new Date()) {
 function gateCloseISO(d = new Date()) {
     const c = new Date(d); c.setHours(16, 30, 0, 0); return c.toISOString();
 }
-// Auto-EXPIRE (not delete): PENDING requests from a previous day, and
-// APPROVED-but-never-scanned requests either from a previous day or past
-// the 16:30 gate close today. Only touched lazily when leave endpoints run.
+// Day-scholar leave window = college hours: apply / approve only from
+// LEAVE_OPEN_HOUR until the 16:30 gate close, same day (server local time).
+// Change the opening hour here (and in src/utils/leaveWindow.js for the UI).
+const LEAVE_OPEN_HOUR = 9;
+const LEAVE_OPEN_MINUTE = 0;
+const LEAVE_WINDOW_LABEL = '9:00 AM and 4:30 PM';
+function leaveOpenISO(d = new Date()) {
+    const o = new Date(d); o.setHours(LEAVE_OPEN_HOUR, LEAVE_OPEN_MINUTE, 0, 0); return o.toISOString();
+}
+function leaveWindowOpen(now = new Date()) {
+    return now >= new Date(leaveOpenISO(now)) && now < new Date(gateCloseISO(now));
+}
+// Auto-EXPIRE (not delete) PENDING and APPROVED-but-never-scanned requests:
+// inside college hours, everything created before today's opening (previous
+// days + any made before opening); outside college hours (after the 16:30
+// gate close, or before opening), every one of them, whenever it was created.
+// Scanned / OUT leaves are never touched. Runs lazily on the leave endpoints.
 async function expireStaleLeaves() {
     if (!supabase) return;
     const now = new Date();
-    const midnight = localStartOfDayISO(now);
+    const cutoff = leaveWindowOpen(now) ? leaveOpenISO(now) : now.toISOString();
     try {
-        const or = `and(status.eq.PENDING,created_at.lt.${midnight}),and(status.eq.APPROVED,scanned_at.is.null,created_at.lt.${midnight})`;
+        const or = `and(status.eq.PENDING,created_at.lt.${cutoff}),and(status.eq.APPROVED,scanned_at.is.null,created_at.lt.${cutoff})`;
         await supabase.from('leave_requests').update({ status: 'EXPIRED' }).or(or);
-        if (now >= new Date(gateCloseISO(now))) {
-            const orToday = `and(status.eq.PENDING,created_at.lt.${gateCloseISO(now)}),and(status.eq.APPROVED,scanned_at.is.null,created_at.lt.${gateCloseISO(now)})`;
-            await supabase.from('leave_requests').update({ status: 'EXPIRED' }).or(orToday);
-        }
     } catch (e) { console.warn('leave expiry skipped:', e.message); }
 }
 
@@ -3714,6 +3724,9 @@ app.post('/api/leave-requests', authenticateUser, requireRole('STUDENT'), async 
         if (!myProfile) return res.status(404).json({ success: false, error: 'Profile not found' });
         if (String(myProfile.resident_type || '').toLowerCase() !== 'dayscholar') {
             return res.status(400).json({ success: false, error: 'Day-scholar leave is for day scholars — hostellers use the gate pass flow.' });
+        }
+        if (!leaveWindowOpen()) {
+            return res.status(400).json({ success: false, error: `Day-scholar leave can be requested only between ${LEAVE_WINDOW_LABEL} (college hours).` });
         }
         const reason = String(req.body?.reason || '').trim();
         if (reason.length < 5) return res.status(400).json({ success: false, error: 'Give your mentor a short reason (min 5 characters)' });
@@ -3909,6 +3922,9 @@ app.post('/api/leave-requests/:id/decide', authenticateUser, requireRole('TEACHE
         if (!supabase) return res.status(503).json({ success: false, error: 'Database offline' });
         const action = String(req.body?.action || '').toUpperCase();
         if (!['APPROVED', 'REJECTED'].includes(action)) return res.status(400).json({ success: false, error: 'Action must be APPROVED or REJECTED' });
+        if (action === 'APPROVED' && !leaveWindowOpen()) {
+            return res.status(400).json({ success: false, error: `Leave can be approved only between ${LEAVE_WINDOW_LABEL} (college hours). You can still reject it.` });
+        }
         const myRoll = String(req.user?.rollNumber || req.user?.profile?.roll_number || '').trim();
         const role = String(req.user?.role || req.user?.profile?.role || '').toUpperCase();
         const { data: leave, error: lErr } = await supabase.from('leave_requests')

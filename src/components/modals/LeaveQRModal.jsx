@@ -4,6 +4,7 @@ import { useRotatingQr } from '../../utils/passQr';
 import { noteServerDate } from '../../utils/serverClock';
 import { getStoredProfile, getAccessToken } from '../../utils/authClient';
 import { pickTodaysLeave, saveLeaveSnapshot, readLeaveSnapshot } from '../../utils/dayScholarLeave';
+import { isLeaveWindowOpen, LEAVE_WINDOW_MSG } from '../../utils/leaveWindow';
 import ScannableQR from '../ScannableQR';
 import { leaveNumber } from '../../utils/passNumber';
 
@@ -196,10 +197,11 @@ export default function LeaveQRModal({ isOpen, onClose, onToast }) {
                     className="w-full rounded-xl border-2 border-blue-200 bg-white p-3 text-sm text-slate-800 outline-none focus:border-blue-500 transition-colors resize-none"
                   />
                   {error && <p className="text-xs font-bold text-rose-600">{error}</p>}
+                  {!isLeaveWindowOpen() && <p className="text-xs font-bold text-amber-700">{LEAVE_WINDOW_MSG}</p>}
                   <button
                     type="button"
                     onClick={submit}
-                    disabled={submitting}
+                    disabled={submitting || !isLeaveWindowOpen()}
                     className="w-full py-3 rounded-2xl bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-bold text-sm transition-colors cursor-pointer flex items-center justify-center gap-2"
                   >
                     <Send className="w-4 h-4" /> {submitting ? 'Sending…' : 'Send to Mentor'}
