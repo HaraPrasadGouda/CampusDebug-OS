@@ -228,12 +228,29 @@ export async function flushOutbox(onNotification) {
               const j = await res.json().catch(() => ({}));
               window.dispatchEvent(new CustomEvent('campus_leave_scan_synced', { detail: { ...j, ok: true, leaveId: targetBody.leaveId } }));
             }
+            // Guard's OFFLINE exit from a typed GP number: same answer path.
+            if (item.actionType === 'SCAN_PASS' && targetBody.passData?.manualOffline && typeof window !== 'undefined') {
+              const j = await res.json().catch(() => ({}));
+              window.dispatchEvent(new CustomEvent('campus_leave_scan_synced', { detail: { ...j, ok: true, kind: 'PASS', leaveId: targetBody.passData.id } }));
+            }
 
             if (item.actionType === 'REQUEST_DOCUMENT' || item.actionType === 'APPLY_CERTIFICATE') {
               console.log('Successfully flushed document request:', deleteKey);
             } else {
               console.log(`[SyncEngine] Synced outbox item #${deleteKey} (${item.actionType})`);
             }
+            break;
+          } else if (item.actionType === 'SCAN_PASS' && targetBody.passData?.manualOffline && [400, 403, 404, 409].includes(res.status)) {
+            // Final answer for an offline typed-number exit (double use from
+            // another guard phone, pass not approved) — drop it, show the guard.
+            const j = await res.json().catch(() => ({}));
+            await db.delete('outbox_queue', item.queueId !== undefined ? item.queueId : item.id);
+            syncedCount++;
+            succeeded = true;
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('campus_leave_scan_synced', { detail: { ...j, ok: false, status: res.status, kind: 'PASS', leaveId: targetBody.passData.id } }));
+            }
+            console.warn(`[SyncEngine] Offline pass exit refused at sync (${res.status}):`, j.reason || j.error || '');
             break;
           } else if (item.actionType === 'LEAVE_SCAN' && [400, 403, 404, 409].includes(res.status)) {
             // Final answer for an offline leave exit (double use from another

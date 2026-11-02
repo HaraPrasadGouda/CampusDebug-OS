@@ -7,7 +7,10 @@
  * the server re-checks it when the phone is back online.
  * localStorage (not a new IndexedDB store) so the shared DB version stays as is.
  */
+import { normalizePassNumber } from './passNumber';
+
 const LIST_KEY = 'campus_guard_leave_list';
+const PASS_CACHE_KEY = 'campus_guard_pass_cache';
 const USED_KEY = 'campus_guard_leave_used';
 
 const readJson = (key, fallback) => {
@@ -76,4 +79,62 @@ export function checkLeaveOffline(payload, nowMs = Date.now()) {
     return { ok: false, reasonKind: 'state', reason: `${payload?.name || 'Student'} — NOT APPROVED in this phone's offline list (last updated ${at}). If the mentor approved it after that, connect to the internet and scan again. Nothing recorded.` };
   }
   return { ok: true, leave: hit };
+}
+
+/**
+ * MANUAL PASS-NUMBER ENTRY OFFLINE (same phone list idea as above).
+ * When online the guard phone also keeps ONLY approved, not-yet-used hostel
+ * gate passes (GP-…) and day-scholar leaves (LV-…): number, name, roll,
+ * branch, destination/reason, valid till. GET /api/guard/pass-cache (GUARD only).
+ * One-time use on this phone uses the same "used" record as leave QR scans.
+ */
+export async function refreshGuardPassCache() {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return null;
+  try {
+    const r = await fetch('/api/guard/pass-cache');
+    if (!r.ok) return null;
+    const j = await r.json();
+    if (!j?.success || !Array.isArray(j.passes)) return null;
+    const snap = { fetchedAt: Date.now(), gateCloseAt: j.gateCloseAt || null, passes: j.passes };
+    writeJson(PASS_CACHE_KEY, snap);
+    return snap;
+  } catch { return null; }
+}
+
+export function getGuardPassCache() {
+  return readJson(PASS_CACHE_KEY, null);
+}
+
+// Key in the shared one-time-use record: leave id for a leave (so a leave QR
+// scan and a typed LV- number count as the SAME use), pass number for a pass.
+export const usedKeyFor = (entry) => String(entry?.kind === 'LEAVE' ? entry.leaveId : entry?.number);
+
+/** Typed number, no network: { ok, entry } or { ok:false, reason }. */
+export function checkPassNumberOffline(input, nowMs = Date.now()) {
+  const number = normalizePassNumber(input);
+  if (!/^(GP-\d{6}|LV-[A-Z0-9]{1,12})$/.test(number)) {
+    return { ok: false, reason: 'Enter the pass number (e.g. GP-984163 or LV-3F9A2C).' };
+  }
+  const snap = getGuardPassCache();
+  if (!snap || !Array.isArray(snap.passes) || !snap.fetchedAt || snap.fetchedAt < dayStartMs(nowMs)) {
+    return { ok: false, reason: 'Offline — this phone has no pass list for today yet. Connect the guard phone to the internet once (it downloads the list), then try again. Nothing recorded.' };
+  }
+  const at = new Date(snap.fetchedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const hits = snap.passes.filter(p => normalizePassNumber(p.number) === number);
+  if (hits.length !== 1) {
+    return { ok: false, reason: hits.length > 1
+      ? `${number} matches two passes in this phone's list — scan the QR or wait for internet. Nothing recorded.`
+      : `${number} — NOT FOUND in this phone's offline list (approved, not-yet-used passes only; last updated ${at}). Do not let the student out on this number. If it was approved just now, connect to the internet and try again. Nothing recorded.` };
+  }
+  const entry = hits[0];
+  const used = getUsedLeaves()[usedKeyFor(entry)];
+  if (used) {
+    const t = used.scannedAt ? new Date(used.scannedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+    return { ok: false, entry, reason: `${entry.name || 'Student'} — ${number} was already used at this gate${t ? ` at ${t}` : ''}. One exit only. Nothing recorded.` };
+  }
+  const till = Date.parse(entry.validUntil || '');
+  if (Number.isFinite(till) && nowMs > till) {
+    return { ok: false, entry, reason: `${entry.name || 'Student'} — ${number} expired at ${new Date(till).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}. Cannot permit exit. Nothing recorded.` };
+  }
+  return { ok: true, entry, fetchedAt: snap.fetchedAt };
 }

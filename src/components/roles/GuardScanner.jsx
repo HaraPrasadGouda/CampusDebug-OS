@@ -24,7 +24,8 @@ import { noteServerDate, serverNow } from '../../utils/serverClock';
 import { getAllLocal, saveLocal, queueOfflineAction } from '../../utils/db';
 import { getAccessToken } from '../../utils/authClient';
 import { queueAction } from '../../utils/syncEngine';
-import { refreshApprovedLeaves, checkLeaveOffline, markLeaveUsedLocally, getUsedLeaves } from '../../utils/leaveGateCache';
+import { refreshApprovedLeaves, checkLeaveOffline, markLeaveUsedLocally, getUsedLeaves, refreshGuardPassCache, checkPassNumberOffline, usedKeyFor } from '../../utils/leaveGateCache';
+import { leaveNumber } from '../../utils/passNumber';
 
 export default function GuardScanner({ searchQuery = '' }) {
   const [isScanning, setIsScanning] = useState(false);
@@ -55,7 +56,7 @@ export default function GuardScanner({ searchQuery = '' }) {
   useEffect(() => {
     // Fix 5: the server's PUBLIC gate key is downloaded with the list, so
     // QRs can be checked offline (the phone holds no signing secret).
-    const refreshGateData = () => { refreshApprovedLeaves(); refreshPassPublicKey(); };
+    const refreshGateData = () => { refreshApprovedLeaves(); refreshPassPublicKey(); refreshGuardPassCache(); };
     refreshGateData();
     const iv = setInterval(refreshGateData, 60000);
     const onOnline = () => refreshGateData();
@@ -68,6 +69,16 @@ export default function GuardScanner({ searchQuery = '' }) {
         ? { state: 'SYNCED', syncedAt: new Date().toISOString() }
         : { state: d.conflict ? 'CONFLICT' : 'REFUSED', reason: d.reason || d.error || 'Refused by server at sync', firstOutAt: d.firstOutAt || null });
       setLocalLeaveUsed(getUsedLeaves());
+      // Offline exit of a typed GP number (same outbox): show the sync answer.
+      if (d.kind === 'PASS') {
+        setScanResult(cur => (cur && cur.mode === 'exit' && cur.offline && cur.payload?.passId === String(d.leaveId) && !d.ok)
+          ? { valid: false, reasonKind: 'state', typed: true, message: d.reason || 'Offline exit refused by the server at sync.', payload: cur.payload }
+          : cur);
+        setGateLogs(prev => prev.map(l => (l.offlineManual && l.passId === String(d.leaveId))
+          ? { ...l, status: d.ok ? 'VERIFIED (SYNCED)' : (d.conflict ? 'DOUBLE USE — FLAGGED' : 'REFUSED AT SYNC') }
+          : l));
+        return;
+      }
       setScanResult(cur => (cur && cur.mode === 'leave' && cur.leave?.pendingSync && cur.payload?.leaveId === String(d.leaveId))
         ? (d.ok
             ? { ...cur, leave: { ...cur.leave, pendingSync: false, synced: true, parentSms: d.parentSms || cur.leave.parentSms } }
@@ -660,8 +671,43 @@ export default function GuardScanner({ searchQuery = '' }) {
 
   // Keypad-phone path: the student speaks their GP number, the guard looks it
   // up and gets the AUTHORITATIVE server state, then registers Exit / Return.
+  // Day-scholar leaves have a number too (LV-…). With NO network the number is
+  // looked up in this phone's cached list (approved, not-yet-used only).
+  const lookupOffline = () => {
+    const chk = checkPassNumberOffline(manualInput, serverNow());
+    if (!chk.ok) {
+      setScanResult({ valid: false, reasonKind: 'state', typed: true, message: chk.reason, payload: null });
+      playAudioFeedback(false);
+      return;
+    }
+    const e = chk.entry;
+    setScanResult({
+      valid: true,
+      pendingAction: true,
+      exitAllowed: true,
+      returnAllowed: false,
+      offlineManual: true,
+      listUpdatedAt: chk.fetchedAt,
+      payload: {
+        kind: e.kind,
+        passId: e.number,
+        leaveId: e.leaveId,
+        name: e.name,
+        rollNo: e.rollNo,
+        branch: e.branch || '',
+        destination: e.destination || '',
+        passType: e.passType || (e.kind === 'LEAVE' ? 'Day-scholar leave' : 'Day Pass'),
+        reason: e.reason || '',
+        validUntil: e.validUntil || new Date().toISOString()
+      }
+    });
+    playAudioFeedback(true);
+    setManualInput('');
+  };
+
   const handleManualLookup = async () => {
     if (!manualInput.trim() || manualBusy) return;
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) { lookupOffline(); return; }
     setManualBusy(true);
     try {
       const tok = getAccessToken();
@@ -676,6 +722,7 @@ export default function GuardScanner({ searchQuery = '' }) {
           exitAllowed: p.exitAllowed,
           returnAllowed: p.returnAllowed,
           statusLabel: p.statusLabel,
+          ...(p.kind === 'LEAVE' ? { reasonKind: 'state', typed: true } : {}),
           payload: {
             passId: p.id,
             name: p.name,
@@ -683,12 +730,13 @@ export default function GuardScanner({ searchQuery = '' }) {
             destination: p.destination,
             passType: p.passType,
             reason: p.reason || '',
-            validUntil: p.validUntil || new Date().toISOString()
+            validUntil: p.validUntil || new Date().toISOString(),
+            ...(p.kind === 'LEAVE' ? { kind: 'LEAVE', leaveId: p.leaveId, branch: p.branch || '' } : {})
           },
           message: !(p.exitAllowed || p.returnAllowed)
-            ? (p.status === 'PENDING'
+            ? (p.blockedReason || (p.status === 'PENDING'
               ? 'Warden approval still pending — this pass is not valid at the gate yet.'
-              : 'Round trip already completed — this pass is closed.')
+              : 'Round trip already completed — this pass is closed.'))
             : null
         });
         playAudioFeedback(p.exitAllowed || p.returnAllowed);
@@ -698,8 +746,118 @@ export default function GuardScanner({ searchQuery = '' }) {
         playAudioFeedback(false);
       }
     } catch (err) {
-      setScanResult({ valid: false, message: 'Server unreachable — manual lookup needs connectivity.', payload: null });
+      // Network dropped: same number, checked against this phone's list.
+      lookupOffline();
+    } finally {
+      setManualBusy(false);
+    }
+  };
+
+  // Exit marked with NO network from a typed number: once on this phone
+  // (same one-time-use record as offline leave QR scans), queued in the same
+  // outbox with the REAL scan time; the server re-checks it at sync and a
+  // double use from another guard phone comes back as a conflict.
+  const exitOfflineManual = async (pass) => {
+    const entry = { kind: pass.kind, number: pass.passId, leaveId: pass.leaveId };
+    const key = usedKeyFor(entry);
+    if (getUsedLeaves()[key]) {
+      setScanResult({ valid: false, reasonKind: 'state', typed: true, message: `${pass.name || 'Student'} — ${pass.passId} was already used at this gate. One exit only. Nothing recorded.`, payload: pass });
       playAudioFeedback(false);
+      return;
+    }
+    const scannedAt = new Date(serverNow()).toISOString();
+    markLeaveUsedLocally(key, { state: 'PENDING', scannedAt, rollNo: pass.rollNo, name: pass.name, kind: pass.kind, number: pass.passId, method: 'MANUAL' });
+    setLocalLeaveUsed(getUsedLeaves());
+    try {
+      if (pass.kind === 'LEAVE') {
+        await queueAction('LEAVE_SCAN', '/api/leave-scan', {
+          rollNo: pass.rollNo,
+          name: pass.name,
+          leaveId: pass.leaveId,
+          leaveNumber: pass.passId,
+          scannedAt,
+          offline: true,
+          method: 'MANUAL',
+          scannedBy: 'Main Gate Guard'
+        });
+      } else {
+        try {
+          await saveLocal('gate_passes', { ...passDataFixes(pass, 'EXIT'), status: 'USED', statusLabel: 'Scanned at Main Gate (Expired)', verifiedAt: scannedAt, gateCheckInStatus: 'CHECKED_OUT' });
+        } catch (dbErr) { console.warn('local save failed:', dbErr); }
+        await queueAction('SCAN_PASS', '/api/scan-pass', { ...passDataFixes(pass, 'EXIT'), verifiedAt: scannedAt, manualOffline: true });
+      }
+    } catch (qErr) { console.warn('Offline exit could not be queued:', qErr); }
+    setGateLogs(prev => [{
+      id: `MN-${Date.now()}`,
+      passId: pass.passId,
+      student: `${pass.name} (${pass.rollNo})`,
+      destination: pass.kind === 'LEAVE' ? 'Day-scholar leave' : pass.destination,
+      type: pass.kind === 'LEAVE' ? 'LEAVE_OUT' : 'EXIT_GATE',
+      time: new Date(scannedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      ts: new Date(scannedAt).getTime(),
+      status: 'OUT (sync pending)',
+      verifiedAt: scannedAt,
+      offlineManual: true
+    }, ...prev].slice(0, 10));
+    if (pass.kind === 'LEAVE') {
+      setScanResult({
+        valid: true,
+        mode: 'leave',
+        leave: { outAt: scannedAt, pendingSync: true, parentSms: 'sent when this phone is back online' },
+        student: { name: pass.name, rollNo: pass.rollNo, department: pass.branch || '', course: '', section: '' },
+        payload: pass
+      });
+    } else {
+      setScanResult({ valid: true, mode: 'exit', offline: true, payload: pass });
+    }
+    playAudioFeedback(true);
+  };
+
+  // Typed LV- number, online: the server checks the leave (approved, this
+  // student's, not used) and records the one-way OUT — same as a QR scan.
+  const exitLeaveByNumber = async (pass) => {
+    setManualBusy(true);
+    try {
+      const tok = getAccessToken();
+      const r = await fetch('/api/leave-scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(tok ? { Authorization: `Bearer ${tok}` } : {}) },
+        body: JSON.stringify({ rollNo: pass.rollNo, name: pass.name, leaveId: pass.leaveId, leaveNumber: pass.passId, method: 'MANUAL', scannedBy: 'Main Gate Guard' })
+      });
+      noteServerDate(r);
+      const j = await r.json();
+      if (j?.success) {
+        markLeaveUsedLocally(pass.leaveId, { state: 'SYNCED', scannedAt: j.outAt, rollNo: j.rollNo, name: j.name, online: true });
+        setLocalLeaveUsed(getUsedLeaves());
+        setGateLogs(prev => [{
+          id: `LV-${Date.now()}`,
+          passId: pass.passId,
+          student: `${j.name} (${j.rollNo})`,
+          destination: 'Day-scholar leave',
+          type: 'LEAVE_OUT',
+          time: new Date(j.outAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          ts: new Date(j.outAt).getTime(),
+          status: 'OUT (LEAVE)',
+          verifiedAt: j.outAt
+        }, ...prev].slice(0, 10));
+        setScanResult({
+          valid: true,
+          mode: 'leave',
+          leave: { outAt: j.outAt, reason: j.leaveReason, parentSms: j.parentSms },
+          student: { name: j.name || pass.name, rollNo: j.rollNo || pass.rollNo, department: j.department || pass.branch || '', course: j.course || '', section: j.section || '' },
+          payload: pass
+        });
+        playAudioFeedback(true);
+        window.dispatchEvent(new CustomEvent('campus_leave_updated', { detail: { rollNo: j.rollNo, outAt: j.outAt } }));
+      } else {
+        setScanResult({ valid: false, reasonKind: 'state', typed: true, message: j?.reason || j?.error || 'Gate leave-scan rejected', payload: pass });
+        playAudioFeedback(false);
+      }
+    } catch {
+      // Network dropped mid-tap: fall back to this phone's list.
+      const chk = checkPassNumberOffline(pass.passId, serverNow());
+      if (chk.ok) await exitOfflineManual(pass);
+      else { setScanResult({ valid: false, reasonKind: 'state', typed: true, message: chk.reason, payload: pass }); playAudioFeedback(false); }
     } finally {
       setManualBusy(false);
     }
@@ -721,6 +879,8 @@ export default function GuardScanner({ searchQuery = '' }) {
       playAudioFeedback(false);
       return;
     }
+    if (direction === 'EXIT' && scanResult?.offlineManual) { await exitOfflineManual(pass); return; }
+    if (direction === 'EXIT' && pass?.kind === 'LEAVE') { await exitLeaveByNumber(pass); return; }
     setManualBusy(true);
     try {
       const tok = getAccessToken();
@@ -905,7 +1065,7 @@ export default function GuardScanner({ searchQuery = '' }) {
               Keypad-Phone Pass Entry
             </label>
             <p className="text-[10px] text-slate-500 leading-relaxed">
-              Student reads out the pass number from their approval SMS. The server state decides whether this is an Exit or a Return.
+              Student reads out the pass number from their approval SMS (day scholars: the Leave No. in the app). The server state decides whether this is an Exit or a Return. No network: approved, unused numbers are checked on this phone.
             </p>
             <div className="flex space-x-2">
               <input
@@ -914,13 +1074,13 @@ export default function GuardScanner({ searchQuery = '' }) {
                 onChange={(e) => setManualInput(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleManualLookup(); } }}
                 placeholder="e.g. GP-984163"
-                className="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono font-bold tracking-wide text-slate-800 uppercase focus:outline-none focus:border-emerald-600"
+                className="flex-1 min-w-0 min-h-[44px] bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono font-bold tracking-wide text-slate-800 uppercase focus:outline-none focus:border-emerald-600"
               />
               <button
                 type="button"
                 onClick={handleManualLookup}
                 disabled={manualBusy || !manualInput.trim()}
-                className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold transition-colors cursor-pointer shrink-0 shadow-sm disabled:opacity-50"
+                className="min-h-[44px] px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold transition-colors cursor-pointer shrink-0 shadow-sm disabled:opacity-50"
               >
                 {manualBusy ? '…' : 'Fetch Pass'}
               </button>
@@ -1023,6 +1183,15 @@ export default function GuardScanner({ searchQuery = '' }) {
                   </div>
                 )}
 
+                {/* Typed number checked OFFLINE against this phone's list */}
+                {scanResult.offlineManual && (
+                  <div data-testid="offline-manual-hint" className="p-3 bg-amber-50 border border-amber-300 rounded-lg text-xs text-amber-800 leading-relaxed">
+                    <strong className="font-extrabold">📴 Offline check</strong> — found in this phone's list (updated {new Date(scanResult.listUpdatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}).
+                    <strong className="block font-extrabold">🪪 Check student's ID card: name and roll must match.</strong>
+                    The exit is saved on this phone and sent to the server when the network is back.
+                  </div>
+                )}
+
                 {/* Student Photo & Details */}
                 <div className="flex items-center space-x-3.5 pt-1">
                   <div className="w-12 h-12 rounded-xl bg-emerald-600 flex items-center justify-center text-white font-bold text-lg font-mono shadow-sm">
@@ -1035,9 +1204,14 @@ export default function GuardScanner({ searchQuery = '' }) {
                     <span className={`${scanResult.mode === 'leave' ? 'text-sm' : 'text-xs'} font-mono text-emerald-700 font-semibold`}>
                       Roll No: {(scanResult.mode === 'leave' && scanResult.student?.rollNo) || scanResult.payload.rollNo}
                     </span>
-                    <span className="text-[11px] text-slate-500 block font-mono">
-                      Pass ID: {scanResult.payload.passId}
+                    <span data-testid="result-pass-number" className="text-[11px] text-slate-500 block font-mono">
+                      {(scanResult.mode === 'leave' || scanResult.payload.kind === 'LEAVE')
+                        ? `Leave No: ${scanResult.payload.passId || leaveNumber(scanResult.payload.leaveId)}`
+                        : `Pass ID: ${scanResult.payload.passId}`}
                     </span>
+                    {scanResult.mode !== 'leave' && scanResult.payload.branch && (
+                      <span className="text-[11px] text-slate-600 block break-words">Branch: {scanResult.payload.branch}</span>
+                    )}
                   </div>
                 </div>
 
@@ -1074,7 +1248,7 @@ export default function GuardScanner({ searchQuery = '' }) {
                     </div>
 
                     <div className="bg-white p-2.5 rounded-lg border border-emerald-100">
-                      <span className="text-[10px] text-slate-500 block">Return Deadline</span>
+                      <span className="text-[10px] text-slate-500 block">{scanResult.payload.kind === 'LEAVE' ? 'Valid Till' : 'Return Deadline'}</span>
                       <span className="font-bold text-amber-700 block">
                         {new Date(scanResult.payload.validUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                       </span>
@@ -1096,7 +1270,7 @@ export default function GuardScanner({ searchQuery = '' }) {
                         <button
                           onClick={() => executeGateAction('EXIT', scanResult.payload)}
                           disabled={manualBusy}
-                          className="flex-1 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-medium text-xs transition-all cursor-pointer flex items-center justify-center space-x-1.5 shadow-sm disabled:opacity-50"
+                          className="flex-1 min-h-[44px] py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-medium text-xs transition-all cursor-pointer flex items-center justify-center space-x-1.5 shadow-sm disabled:opacity-50"
                         >
                           <LogOut className="w-3.5 h-3.5" />
                           <span>Register Campus Exit</span>
@@ -1106,7 +1280,7 @@ export default function GuardScanner({ searchQuery = '' }) {
                         <button
                           onClick={() => executeGateAction('RETURN', scanResult.payload)}
                           disabled={manualBusy}
-                          className="flex-1 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium text-xs transition-all cursor-pointer flex items-center justify-center space-x-1.5 shadow-sm disabled:opacity-50"
+                          className="flex-1 min-h-[44px] py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium text-xs transition-all cursor-pointer flex items-center justify-center space-x-1.5 shadow-sm disabled:opacity-50"
                         >
                           <LogIn className="w-3.5 h-3.5" />
                           <span>Register Return to Campus</span>
@@ -1137,7 +1311,9 @@ export default function GuardScanner({ searchQuery = '' }) {
                 </div>
 
                 <p className="text-xs text-slate-600 leading-relaxed">
-                  {scanResult.reasonKind === 'state'
+                  {scanResult.typed
+                    ? 'Pass number check — do not permit student exit on this number.'
+                    : scanResult.reasonKind === 'state'
                     ? 'The QR signature is authentic, but this pass is not authorised for exit right now (approval pending, rejected, or the trip is already completed). Do not permit student exit.'
                     : 'The digital signature does not match the campus cryptographic seed or the allowed time window has elapsed. Do not permit student exit.'}
                 </p>
@@ -1179,6 +1355,30 @@ export default function GuardScanner({ searchQuery = '' }) {
         </div>
 
         <div className="space-y-2">
+          {/* Gate passes let out OFFLINE by typed number that the server
+              refused at sync (double use on another guard phone). */}
+          {Object.entries(localLeaveUsed || {})
+            .filter(([, v]) => v?.kind === 'PASS' && (v.state === 'CONFLICT' || v.state === 'REFUSED'))
+            .map(([num, v]) => (
+              <div key={`pc-${num}`} data-testid="offline-pass-conflict-row" className="bg-red-50/70 border border-red-200 rounded-2xl p-3.5 flex items-center justify-between gap-3 text-xs font-mono">
+                <div className="flex items-center space-x-3 min-w-0">
+                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-700 border border-red-200 shrink-0">
+                    {v.state === 'CONFLICT' ? 'DOUBLE USE' : 'REFUSED AT SYNC'}
+                  </span>
+                  <div className="min-w-0">
+                    <span className="font-bold text-slate-900">{v.name || 'Student'} ({v.rollNo || '—'})</span>
+                    <span className="text-slate-500 block text-[11px] font-sans break-words">
+                      {num} • {v.state === 'CONFLICT'
+                        ? `Already exited at another gate${v.firstOutAt ? ` at ${new Date(v.firstOutAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''} — flagged for warden`
+                        : (v.reason || 'Refused by server')}
+                    </span>
+                  </div>
+                </div>
+                <span className="text-slate-700 font-bold text-[11px] shrink-0">
+                  {v.scannedAt ? new Date(v.scannedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                </span>
+              </div>
+            ))}
           {filteredGateLogs.map((log) => (
             <div
               key={log.id}
@@ -1199,8 +1399,8 @@ export default function GuardScanner({ searchQuery = '' }) {
               </div>
 
               <div className="text-right">
-                <span className="text-emerald-700 font-semibold block text-[11px]">
-                  ✓ {log.status}
+                <span className={`${/DOUBLE|REFUSED/.test(String(log.status)) ? 'text-rose-700' : 'text-emerald-700'} font-semibold block text-[11px]`}>
+                  {/DOUBLE|REFUSED/.test(String(log.status)) ? '⚠' : '✓'} {log.status}
                 </span>
                 <span className="text-slate-500 text-[10px]">
                   {log.time}
@@ -1238,7 +1438,7 @@ export default function GuardScanner({ searchQuery = '' }) {
           const serverRolls = new Set(todays.map(x => String(x.student_roll || '').toLowerCase()));
           const offlineRows = Object.entries(localLeaveUsed || {})
             .map(([leaveId, v]) => ({ leaveId, ...v }))
-            .filter(v => !v.online && v.scannedAt && new Date(v.scannedAt) >= start)
+            .filter(v => !v.online && v.kind !== 'PASS' && v.scannedAt && new Date(v.scannedAt) >= start)
             .filter(v => !(v.state === 'SYNCED' && serverRolls.has(String(v.rollNo || '').toLowerCase())))
             .sort((a, b) => Date.parse(b.scannedAt) - Date.parse(a.scannedAt));
           if (todays.length === 0 && offlineRows.length === 0) {
