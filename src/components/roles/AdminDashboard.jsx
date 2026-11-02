@@ -166,6 +166,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
   const [ccSearch, setCcSearch] = useState('');
   const [ccDirectory, setCcDirectory] = useState({ sections: [], years: [] }); // live roster sections/years (dispatcher dropdowns)
   const [staff, setStaff] = useState({ teachers: [], wardens: [] });
+  const [staffLoaded, setStaffLoaded] = useState(false); // KPI shows '—' until the real list arrives
   // --- ROOM ALLOCATION: dry-run plan preview, confirm-to-apply, plus the
   // per-student manual override (same rules, enforced live).
   const [roomPlan, setRoomPlan] = useState(null);   // dryRun response awaiting Confirm
@@ -207,7 +208,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
       const tok = getAccessToken();
       const r = await fetch('/api/admin/staff-directory', tok ? { headers: { Authorization: `Bearer ${tok}` } } : undefined);
       const j = await r.json();
-      if (j?.success) setStaff({ teachers: j.teachers || [], wardens: j.wardens || [] });
+      if (j?.success) { setStaff({ teachers: j.teachers || [], wardens: j.wardens || [] }); setStaffLoaded(true); }
     } catch { /* offline */ }
   };
 
@@ -413,6 +414,12 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
     }
     setTtSecBusy(null);
   };
+
+  // Teachers KPI: read the staff list once on mount (Campus Setup still reloads it when opened).
+  useEffect(() => {
+    loadStaffDirectory();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (activeTab === 'timetable') { loadTimetableInfo(); loadAttLocks(); loadCampusConfig(); loadAtRisk(); }
@@ -918,7 +925,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
     { label: 'Total Enrolled Students', value: campusStats.studentCount != null ? campusStats.studentCount.toLocaleString() : (importedUsers.length > 0 ? importedUsers.length : '—'), note: 'Active Rosters', dot: 'bg-purple-500', pill: 'bg-purple-100 text-purple-800' },
     { label: 'Micro-Segments', value: campusStats.blockCount != null ? campusStats.blockCount.toLocaleString() : '—', note: 'Hostel Blocks', dot: 'bg-blue-500', pill: 'bg-blue-100 text-blue-800' },
     { label: 'Resolution SLA Rate', value: campusStats.slaResolutionRate != null ? `${campusStats.slaResolutionRate}%` : '—', note: 'Target: >90%', dot: 'bg-emerald-500', pill: 'bg-emerald-100 text-emerald-800' },
-    { label: 'Legacy ERP Sync', value: 'Zero-Disruption', note: 'PWA Ingest', dot: 'bg-amber-500', pill: 'bg-amber-100 text-amber-800', small: true },
+    { label: 'Teachers', value: staffLoaded ? staff.teachers.length.toLocaleString() : '—', note: 'Faculty on roster', dot: 'bg-amber-500', pill: 'bg-amber-100 text-amber-800' },
   ];
 
   // Option A: mount point the app sidebar renders under "Home" for Admin.
