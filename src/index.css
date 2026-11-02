@@ -142,3 +142,19 @@ body {
     margin-left: 0 !important;
   }
 }
+
+
+/* ---------- Login screen: brand gradients sampled from the mockups ---------- */
+.login-brand {
+  background:
+    radial-gradient(240px 190px at 86% 0%, rgba(48, 200, 146, 0.85), rgba(48, 200, 146, 0) 100%),
+    linear-gradient(180deg, #067957 0%, #05704f 35%, #05613f 70%, #04533d 100%);
+}
+@media (min-width: 1024px) {
+  .login-brand {
+    background:
+      radial-gradient(300px 240px at 88% -2%, rgba(40, 178, 128, 0.95), rgba(40, 178, 128, 0) 100%),
+      radial-gradient(300px 230px at 46% 38%, rgba(36, 156, 114, 0.5), rgba(36, 156, 114, 0) 100%),
+      linear-gradient(172deg, #057a58 0%, #066c51 28%, #07624a 50%, #06533e 70%, #043a2c 86%, #032b22 100%);
+  }
+}

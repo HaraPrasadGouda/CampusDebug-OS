@@ -99,16 +99,20 @@ export default function NeedHelpModal({ open, onClose, onReportProblem, initialI
                 <p className="text-xs font-bold text-slate-800 truncate">support@campusdebug.in</p>
               </div>
             </a>
-            <a
-              href="tel:+917801022026"
-              className="flex items-center gap-2.5 p-3 rounded-xl border border-slate-200 bg-slate-50/70 hover:border-emerald-300 hover:bg-emerald-50/50 transition-colors"
+            {/* Placeholder only — the old number here was a real person's
+                number, so it is masked and deliberately NOT a tel: link. */}
+            <div
+              aria-disabled="true"
+              title="Demo placeholder — not a real number"
+              className="flex items-center gap-2.5 p-3 rounded-xl border border-slate-200 bg-slate-50/70 cursor-default select-none"
             >
-              <Phone className="w-4 h-4 text-emerald-600 shrink-0" />
+              <Phone className="w-4 h-4 text-slate-400 shrink-0" />
               <div className="min-w-0">
                 <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">College helpdesk</p>
-                <p className="text-xs font-bold text-slate-800 truncate">+91 78010 22026</p>
+                <p className="text-xs font-bold text-slate-800 truncate">+91 XXXXX XXXXX</p>
+                <p className="text-[10px] text-slate-400">Demo placeholder</p>
               </div>
-            </a>
+            </div>
           </div>
         </div>
 

@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { CheckCircle2, LockKeyhole, ArrowRight, ShieldCheck, XCircle, Loader, HelpCircle, Contact, Lock, Check } from 'lucide-react';
+import { CheckCircle2, LockKeyhole, ArrowRight, ShieldCheck, XCircle, Loader, HelpCircle, IdCard, Lock, Check } from 'lucide-react';
 import { storeSession, roleToDashboard } from '../../utils/authClient';
 import PasswordInput from './PasswordInput';
 import NeedHelpModal from './NeedHelpModal';
@@ -11,58 +11,69 @@ import ReportProblemModal from './ReportProblemModal';
 // password (firstname@last-4-of-registered-mobile) and MUST set their own
 // password before entering the portal.
 
-// Line-art campus skyline recreated from the design mockup: mint outline
-// strokes on the green brand panel — gabled teaching wing with an oculus,
-// columns; steep-roofed clock tower with a round face; slender buildings
-// with real window grids; domed hall; round-canopy trees. Pure vector.
-const CampusSkyline = ({ className = '' }) => (
-  <svg viewBox="0 0 480 150" fill="none" preserveAspectRatio="none" className={className} aria-hidden="true">
-    <g stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      {/* far-left low wing with window dashes */}
-      <path d="M8 138V92h40v46" />
-      <path d="M18 104h7M18 116h7M31 104h7M31 116h7" strokeOpacity="0.55" />
-      {/* gabled hall — pediment + oculus + colonnade */}
-      <path d="M56 138V96l32-20 32 20v42" />
-      <path d="M88 76l-2.5 1.5M90.5 76a3 3 0 105 0" strokeOpacity="0.6" />
-      <circle cx="88" cy="86" r="4" strokeOpacity="0.65" />
-      <path d="M64 138v-30M72 138v-30M80 138v-30M96 138v-30M104 138v-30M112 138v-30" strokeOpacity="0.55" />
-      {/* clock tower — steep roof + finial + pedestal face + arch door */}
-      <path d="M132 138V64h30v74" />
-      <path d="M127 64l20-24 20 24" />
-      <path d="M147 40v-6" strokeOpacity="0.7" />
-      <circle cx="147" cy="86" r="9" strokeOpacity="0.7" />
-      <path d="M147 86v-5M147.9 86.6l3.2 1.8" strokeOpacity="0.7" strokeWidth="1.4" />
-      <path d="M142 138v-9a5 5 0 0110 0v9" strokeOpacity="0.55" />
-      {/* tall rectangle tower — 3x4 square window grid */}
-      <path d="M174 138V74h34v64" />
-      <path d="M180 82h7M180 92h7M180 102h7M180 112h7M190 82h7M190 92h7M190 102h7M190 112h7M191 122h6" strokeOpacity="0.45" />
-      {/* domed arc hall */}
-      <path d="M216 138v-25a16 16 0 0132 0v25" />
-      <path d="M232 113v25" strokeOpacity="0.6" />
-      {/* main academic block — wide, square window grid */}
-      <path d="M256 138V58h52v80" />
-      <path d="M263 66h9v8h-9zM276 66h9v8h-9zM289 66h9v8h-9zM263 80h9v8h-9zM276 80h9v8h-9zM289 80h9v8h-9zM263 94h9v8h-9zM276 94h9v8h-9zM289 94h9v8h-9zM263 108h9v8h-9zM276 108h9v8h-9zM289 108h9v8h-9z" strokeOpacity="0.4" />
-      <path d="M278 138v-10h9v10" strokeOpacity="0.6" />
-      {/* slim hostel towers */}
-      <path d="M316 138V84h20v54M344 138V98h18v40" />
-      <path d="M321 92h10M321 102h10M321 112h10M349 106h8M349 116h8" strokeOpacity="0.5" />
-      {/* small gate booth */}
-      <path d="M370 138v-18h12v18M369 120h14" strokeOpacity="0.7" />
-      {/* trees — round canopies on trunks */}
-      <circle cx="404" cy="112" r="10" strokeOpacity="0.75" />
-      <path d="M404 122v16" strokeOpacity="0.75" />
-      <circle cx="430" cy="106" r="14" strokeOpacity="0.75" />
-      <path d="M430 120v18" strokeOpacity="0.75" />
-      {/* ground line */}
-      <path d="M0 140h480" strokeOpacity="0.8" />
-      {/* birds */}
-      <path d="M370 36c3-3 6-3 9 0M384 27c3-3 6-3 9 0M396 40c2.5-2.5 5-2.5 7.5 0" strokeOpacity="0.5" strokeWidth="1.5" />
+// Campus line-art for the green brand panel — drawn from scratch to the
+// layout of HARA's mockup: classical hall (pediment, oculus, colonnade),
+// clock tower with a spire, a block building with a window grid, round
+// trees and small sparkles, all in thin mint strokes on one ground line.
+// Coordinates are in a 704-wide box (the mockup's panel width at 1280px).
+const CampusLineArt = ({ className = '' }) => {
+  const cols = [84, 114, 144, 174, 204, 235];
+  const winX = [452, 480, 508, 537, 565, 594];
+  const winY = [168, 198, 228];
+  const Tree = ({ x, cy, r, base = 269 }) => (
+    <g>
+      <circle cx={x} cy={cy} r={r} />
+      <path d={`M${x} ${cy + r}V${base}`} />
+      <path d={`M${x} ${cy + r}V${cy - r * 0.15}M${x} ${cy + r * 0.45}l${-r * 0.4} ${-r * 0.4}M${x} ${cy + r * 0.3}l${r * 0.4} ${-r * 0.4}`} strokeOpacity="0.65" strokeWidth="1.6" />
     </g>
-  </svg>
-);
+  );
+  const Sparkle = ({ x, y, s = 6, o = 0.75 }) => (
+    <path d={`M${x} ${y - s}V${y + s}M${x - s} ${y}H${x + s}`} strokeOpacity={o} />
+  );
+  return (
+    <svg viewBox="0 0 704 300" fill="none" className={className} aria-hidden="true" preserveAspectRatio="xMidYMax meet">
+      <g stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        {/* classical hall */}
+        <path d="M52 181L164 135L276 181Z" />
+        <circle cx="164" cy="163" r="6" strokeOpacity="0.8" />
+        <path d="M61 191H267" />
+        <path d="M62 181V269M266 181V269" />
+        {cols.map((x) => <path key={x} d={`M${x} 191V262`} strokeOpacity="0.85" />)}
+        <path d="M58 262H270" />
+        {/* clock tower */}
+        <path d="M310 109V269M393 109V269" />
+        <path d="M301 109H402" />
+        <path d="M304 109L351.5 42L399 109" />
+        <path d="M351.5 42V16" strokeOpacity="0.85" />
+        <circle cx="351.5" cy="151.5" r="24" />
+        <path d="M351.5 151.5V137M351.5 151.5l9 5" strokeOpacity="0.85" />
+        <path d="M326 228v-16a4 4 0 018 0v16M369 228v-16a4 4 0 018 0v16" strokeOpacity="0.75" />
+        <path d="M341 269v-18a10.5 10.5 0 0121 0v18" strokeOpacity="0.8" />
+        {/* block building */}
+        <path d="M435 269V153H622V269" />
+        <path d="M461 153V127H596V153" />
+        {winY.map((y) => winX.map((x) => (
+          <rect key={`${x}-${y}`} x={x} y={y} width="13" height="17" rx="1.5" strokeWidth="1.8" strokeOpacity="0.8" />
+        )))}
+        {/* trees */}
+        <Tree x={27} cy={224} r={16} />
+        <Tree x={293} cy={233} r={12} />
+        <Tree x={418} cy={232} r={13} />
+        <Tree x={657} cy={217} r={19} />
+        {/* sparkles */}
+        <Sparkle x={418} y={20} s={5} />
+        <Sparkle x={230} y={30} s={4} o={0.6} />
+        <Sparkle x={612} y={66} s={4} o={0.55} />
+        <Sparkle x={96} y={96} s={3.5} o={0.5} />
+        {/* ground */}
+        <path d="M-40 269.5H744" strokeOpacity="0.95" />
+      </g>
+    </svg>
+  );
+};
 
 // Decorative dot grid from the mockups (rows/cols of soft white dots).
-const DotGrid = ({ className = '', cols = 6, rows = 7, gap = 14, r = 2.6 }) => {
+const DotGrid = ({ className = '', cols = 6, rows = 7, gap = 12.5, r = 1.6 }) => {
   const width = (cols - 1) * gap + r * 2;
   const height = (rows - 1) * gap + r * 2;
   const dots = [];
@@ -70,24 +81,20 @@ const DotGrid = ({ className = '', cols = 6, rows = 7, gap = 14, r = 2.6 }) => {
     for (let x = 0; x < cols; x++) dots.push(<circle key={`${x}-${y}`} cx={r + x * gap} cy={r + y * gap} r={r} />);
   }
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} className={className} aria-hidden="true" fill="currentColor">
+    <svg viewBox={`0 0 ${width} ${height}`} width={width} height={height} className={className} aria-hidden="true" fill="currentColor">
       {dots}
     </svg>
   );
 };
 
-// Soft concentric arcs anchored at the white panel's corners (per mockup).
-// Circles are centered at the SVG's own corner so the visible part sweeps
-// INWARD through the panel — arcs reach the middle, not clipped floated
-// full circles like before.
-const Rings = ({ className = '', corner = 'tr' }) => {
-  const c = corner === 'tr' ? { cx: 800, cy: 0 } : { cx: 0, cy: 800 };
+// Thin concentric arcs centred on a panel corner, sweeping inward (per mockup).
+const Rings = ({ className = '', corner = 'bl', radii = [110, 165, 220, 275, 330, 385] }) => {
+  const size = 800;
+  const c = { tr: [size, 0], bl: [0, size], tl: [0, 0], br: [size, size] }[corner];
   return (
-    <svg viewBox="0 0 800 800" fill="none" className={className} aria-hidden="true">
-      <g stroke="currentColor" strokeLinecap="round">
-        {[170, 265, 360, 455, 550, 645, 740, 800].map((r, i) => (
-          <circle key={r} cx={c.cx} cy={c.cy} r={r} strokeWidth={i % 3 === 0 ? 1.8 : 1.2} strokeOpacity={0.7 - i * 0.06} />
-        ))}
+    <svg viewBox={`0 0 ${size} ${size}`} fill="none" className={className} aria-hidden="true">
+      <g stroke="currentColor" strokeWidth="1.2">
+        {radii.map((r) => <circle key={r} cx={c[0]} cy={c[1]} r={r} />)}
       </g>
     </svg>
   );
@@ -97,7 +104,7 @@ const Rings = ({ className = '', corner = 'tr' }) => {
 // brand icon is missing (keeps the lockup intact offline).
 const BrandIcon = ({ size = 'w-9 h-9' }) => (
   <img
-    src="/brand_icon_128.png"
+    src="/brand_icon.png"
     alt="CampusDebug OS"
     className={`${size} object-contain`}
     onError={(e) => {
@@ -337,130 +344,140 @@ export default function LoginScreen({ onLogin }) {
   };
 
   return (
-    // FULL-BLEED per the mockup: on desktop the green panel + white form each
-    // cover half of the actual viewport — no floating card, no margins.
-    <main className="min-h-screen w-full bg-white lg:grid lg:grid-cols-2 lg:min-h-0 selection:bg-emerald-600 selection:text-white">
+    // Mobile (<1024px): green header + white bottom sheet. Desktop (≥1024px):
+    // full-bleed split — 55% green brand panel, 45% form panel (per mockups).
+    <main className="login-screen min-h-screen w-full bg-white overflow-x-hidden flex flex-col lg:grid lg:grid-cols-[55fr_45fr] selection:bg-emerald-600 selection:text-white">
 
-      {/* ================= LEFT: GREEN BRAND PANEL (full height) ================= */}
-      <section
-        className="relative overflow-hidden text-emerald-100 lg:h-screen lg:flex lg:flex-col
-          bg-gradient-to-b from-[#0A7A57] to-[#12946A]
-          pt-8 pb-16
-          lg:bg-gradient-to-br lg:from-[#086B4E] lg:via-[#0C855D] lg:to-[#17A673]
-          lg:py-0"
-      >
-        {/* Soft decorations from the mockups */}
-        <DotGrid className="absolute top-9 right-5 w-11 text-white/25 z-0" />
-        <DotGrid className="absolute bottom-24 left-4 w-8 text-white/20 z-0 lg:hidden" cols={4} rows={5} />
-
-        {/* Mobile: LEFT-aligned lockup (per the mobile mockup) */}
-        <div className="relative z-10 px-6 pt-10 lg:hidden">
-          <div className="w-16 h-16 rounded-[1.4rem] bg-white shadow-xl flex items-center justify-center overflow-hidden">
-            <BrandIcon size="w-11 h-11" />
-          </div>
-          <h1 className="mt-5 text-[1.85rem] font-extrabold text-white tracking-tight leading-none">
-            CampusDebug <span className="text-emerald-200">OS</span>
-          </h1>
-          <p className="mt-2 text-[15px] font-medium text-emerald-50/90">Your campus, in one app.</p>
+      {/* ================= GREEN BRAND PANEL ================= */}
+      <section className="login-brand relative overflow-hidden text-white pb-[76px] lg:pb-0 lg:h-screen lg:min-h-[640px] lg:flex lg:flex-col">
+        {/* --- decorations: mobile --- */}
+        <div className="lg:hidden pointer-events-none absolute inset-0 z-0" aria-hidden="true">
+          <div className="absolute -top-[150px] -right-[120px] w-[300px] h-[300px] rounded-full border border-white/[0.10]" />
+          <div className="absolute -top-[215px] -right-[185px] w-[430px] h-[430px] rounded-full border border-white/[0.07]" />
+          <div className="absolute -bottom-[150px] -left-[110px] w-[260px] h-[260px] rounded-full border border-white/[0.07]" />
+          <DotGrid className="absolute top-[60px] right-6 text-white/[0.22]" cols={8} rows={5} gap={11} r={1.5} />
+          <DotGrid className="absolute bottom-14 right-8 text-white/[0.16]" cols={8} rows={4} gap={11} r={1.5} />
         </div>
 
-        {/* Desktop: CENTERED composition (per the web mockup) */}
-        <div className="relative z-10 hidden lg:flex flex-col items-center text-center pt-12 pb-2">
-          <div className="w-24 h-24 rounded-[1.7rem] bg-white shadow-2xl ring-1 ring-white/40 flex items-center justify-center overflow-hidden">
-            <BrandIcon size="w-16 h-16" />
-          </div>
-          <p className="mt-6 text-[1.7rem] font-extrabold text-white tracking-tight leading-none">
-            CampusDebug <span className="text-emerald-200">OS</span>
-          </p>
-          <h2 className="mt-10 text-[3.1rem] xl:text-[3.5rem] font-extrabold text-white leading-[1.08] tracking-tight">
-            Your campus,<br /><span className="text-emerald-300">signed in.</span>
-          </h2>
-          <p className="mt-4 text-[15px] text-emerald-50/90">One account for your whole college life.</p>
+        {/* --- decorations: desktop --- */}
+        <div className="hidden lg:block pointer-events-none absolute inset-0 z-0" aria-hidden="true">
+          <div className="absolute -left-[270px] -top-[210px] w-[500px] h-[500px] rounded-full border-[1.5px] border-white/[0.08]" />
+          <div className="absolute -right-[271px] -top-[265px] w-[510px] h-[510px] rounded-full border-[1.5px] border-white/[0.08]" />
+          <div className="absolute -right-[366px] -top-[360px] w-[700px] h-[700px] rounded-full border border-white/[0.05]" />
+          <div className="absolute left-1/2 top-[300px] -translate-x-1/2 -translate-y-1/2 w-[520px] h-[520px] rounded-full border border-white/[0.04]" />
+          <DotGrid className="absolute left-[67px] top-[76px] text-white/[0.20]" cols={9} rows={6} />
+          <DotGrid className="absolute right-[60px] top-[270px] text-white/[0.16]" cols={7} rows={9} />
         </div>
 
-        {/* Scatter: dot grids + thin sparkle "+" marks (desktop) */}
-        <DotGrid className="hidden lg:block absolute top-14 left-14 w-14 text-white/25 z-0" />
-        <DotGrid className="hidden lg:block absolute top-[36%] right-12 w-10 text-white/20 z-0" cols={5} rows={5} />
-        <DotGrid className="hidden lg:block absolute bottom-[36%] left-24 w-9 text-white/15 z-0" cols={4} rows={4} />
-        <span className="hidden lg:block absolute top-[30%] left-[16%] text-white/40 text-xl font-light select-none z-0">+</span>
-        <span className="hidden lg:block absolute top-[24%] right-[24%] text-white/35 text-lg font-light select-none z-0">+</span>
-        <span className="hidden lg:block absolute top-[52%] right-[10%] text-white/30 text-xl font-light select-none z-0">+</span>
-
-        {/* Skyline composition (desktop) — FULL-BLEED: the wrapper keeps the
-            SVG's exact 480:150 ratio, so the drawing always spans the whole
-            panel width and its ground line runs edge to edge */}
-        <div className="hidden lg:block flex-[1.15]" />
-        <div className="hidden lg:block relative z-0 w-full aspect-[16/5]">
-          <CampusSkyline className="w-full h-full text-emerald-200" />
-        </div>
-        {/* Tall ground band under the skyline — the skyline floats above it */}
-        <div className="hidden lg:block flex-1" />
-        <div className="hidden lg:block relative z-0 h-12 bg-[#0A5C43]/50" />
-      </section>
-
-      {/* ================= RIGHT: WHITE FORM PANEL (full height) ================= */}
-      <section
-        className="relative z-10 -mt-9 rounded-t-[2rem] bg-white
-          px-6 pt-5 pb-8 min-h-screen
-          lg:m-0 lg:rounded-none lg:min-h-0 lg:h-screen lg:overflow-y-auto
-          lg:px-16 xl:px-24 lg:py-8
-          lg:flex lg:flex-col"
-      >
-        {/* Sheet grab-handle (mobile, per the mockup) */}
-        <div className="lg:hidden absolute top-2 left-1/2 -translate-x-1/2 w-12 h-[5px] rounded-full bg-slate-200" />
-
-        {/* Soft concentric arcs — anchored exactly at the panel corners so they
-            sweep toward the middle (per mockup: up-right and down-left) */}
-        <Rings corner="tr" className="hidden lg:block absolute top-0 right-0 w-[560px] h-[560px] text-emerald-950/[0.12] pointer-events-none z-0" />
-        <Rings corner="bl" className="hidden lg:block absolute bottom-0 left-0 w-[560px] h-[560px] text-emerald-950/[0.10] pointer-events-none z-0" />
-
-        {/* Need help? — top-right */}
-        <div className="relative flex justify-end shrink-0">
+        {/* Need help? — mobile sits on the green header (top-right) */}
+        <div className="lg:hidden absolute top-2 right-3 z-20">
           <button
             type="button"
             onClick={() => openHelp(null)}
-            className="flex items-center gap-1.5 text-xs font-bold text-slate-500 hover:text-emerald-700 transition-colors cursor-pointer"
+            className="min-h-[44px] inline-flex items-center px-1 cursor-pointer"
           >
-            <HelpCircle className="w-4 h-4" />
+            <span className="inline-flex items-center gap-1.5 h-8 px-3 rounded-full bg-white/[0.12] border border-white/[0.18] text-[12.5px] font-semibold text-white/95 backdrop-blur-sm">
+              <HelpCircle className="w-4 h-4" />
+              Need help?
+            </span>
+          </button>
+        </div>
+
+        {/* Mobile: left-aligned lockup */}
+        <div className="relative z-10 px-7 pt-[68px] sm:px-0 sm:w-full sm:max-w-[440px] sm:mx-auto lg:hidden">
+          <div className="w-[84px] h-[84px] rounded-[22px] bg-[#f6fbf7] flex items-center justify-center overflow-hidden shadow-[0_12px_26px_-10px_rgba(2,40,28,0.45)]">
+            <BrandIcon size="w-[56px] h-[56px]" />
+          </div>
+          <h1 className="font-display mt-[26px] text-[31px] min-[380px]:text-[34px] font-extrabold text-white tracking-[-0.01em] leading-[1.1] whitespace-nowrap">
+            CampusDebug <span className="text-[#a7f3d0]">OS</span>
+          </h1>
+          <p className="mt-2 text-[16px] min-[380px]:text-[17px] font-medium text-white/90">Your campus, in one app.</p>
+        </div>
+
+        {/* Desktop: centred composition */}
+        <div className="relative z-10 hidden lg:flex flex-col items-center text-center pt-[82px] xl:pt-[min(82px,10vh)]">
+          <div className="w-[92px] h-[92px] rounded-[24px] bg-[#f6fbf7] flex items-center justify-center overflow-hidden shadow-[0_18px_40px_-10px_rgba(2,40,28,0.55)] ring-[10px] ring-white/[0.12]">
+            <BrandIcon size="w-[64px] h-[64px]" />
+          </div>
+          <p className="font-display mt-[30px] text-[26px] font-extrabold text-white tracking-[-0.01em] leading-none">
+            CampusDebug <span className="text-[#a7f3d0]">OS</span>
+          </p>
+          <h2 className="font-display mt-[20px] text-[48.5px] font-extrabold text-white leading-[1.06] tracking-[-0.015em]">
+            Your campus,<br /><span className="text-[#a7f3d0]">signed in.</span>
+          </h2>
+          <p className="mt-[18px] text-[16px] font-medium text-white/85">One account for your whole college life.</p>
+        </div>
+
+        {/* Campus line-art, standing on a full-width ground line */}
+        <div className="hidden lg:block flex-1 min-h-[24px]" />
+        <div className="hidden lg:block relative z-0 w-full pb-[80px]">
+          <CampusLineArt className="block w-full max-w-[860px] mx-auto h-auto text-[#a7f3d0] opacity-[0.56]" />
+        </div>
+      </section>
+
+      {/* ================= FORM PANEL (sheet on mobile) ================= */}
+      <section
+        className="login-form relative z-10 -mt-7 rounded-t-[28px] bg-white
+          flex-1 px-[26px] pt-[40px] pb-8
+          lg:m-0 lg:rounded-none lg:h-screen lg:min-h-[640px] lg:overflow-y-auto lg:bg-[#fbfdfc]
+          lg:px-10 lg:pt-0 lg:pb-0 lg:flex lg:flex-col lg:items-center"
+      >
+        {/* Sheet grab-handle (mobile) */}
+        <div className="lg:hidden absolute top-3 left-1/2 -translate-x-1/2 w-11 h-[5px] rounded-full bg-[#e0e7e4]" />
+
+        {/* Faint concentric rings (desktop) */}
+        <Rings corner="bl" className="hidden lg:block absolute bottom-0 left-0 w-[800px] h-[800px] text-[#0f6b4f]/[0.07] pointer-events-none z-0" />
+        <Rings corner="tr" radii={[120, 190, 260, 330]} className="hidden lg:block absolute top-0 right-0 w-[800px] h-[800px] text-[#0f6b4f]/[0.05] pointer-events-none z-0" />
+
+        {/* Need help? — desktop top-right */}
+        <div className="hidden lg:flex absolute top-[12px] right-[30px] z-20">
+          <button
+            type="button"
+            onClick={() => openHelp(null)}
+            className="min-h-[44px] inline-flex items-center gap-1.5 px-2 text-[12.5px] font-semibold text-[#5a5f5d] hover:text-emerald-700 transition-colors cursor-pointer"
+          >
+            <HelpCircle className="w-[15px] h-[15px]" />
             Need help?
           </button>
         </div>
 
-        <div className="relative lg:flex-1 lg:flex lg:flex-col lg:justify-center lg:max-w-xl w-full">
-          <div className="mt-4 lg:mt-0">
-            <h2 className="text-[1.65rem] sm:text-[1.9rem] font-extrabold text-slate-900 tracking-tight">Welcome back</h2>
-            <p className="mt-1 text-[15px] text-slate-500">Sign in with your college ID to continue</p>
+        <div className="relative z-10 w-full sm:max-w-[440px] sm:mx-auto lg:mx-0 lg:max-w-[356px] lg:flex-1 lg:flex lg:flex-col lg:justify-center lg:py-16">
+          <div>
+            <h2 className="text-[25px] lg:text-[28px] font-extrabold text-[#0b1712] tracking-[-0.025em] leading-tight">Welcome back</h2>
+            <p className="mt-[7px] lg:mt-[6px] text-[14.5px] lg:text-[13.25px] font-medium text-[#5d6461]">Sign in with your college ID to continue</p>
           </div>
 
-          <form onSubmit={handleSignIn} className="space-y-4 mt-6">
-              {/* Roll No / ID — Verify chip lives on the label row, per the mockup */}
+          <form onSubmit={handleSignIn} className="mt-[22px] lg:mt-[26px]">
+              {/* Roll No / ID — Verify chip on the label row */}
               <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="text-sm font-bold text-slate-800">Roll No / ID</label>
+                <div className="flex items-center justify-between mb-[8px] lg:mb-[7px]">
+                  <label className="text-[14px] lg:text-[13.5px] font-bold text-[#13201b]">Roll No / ID</label>
                   <button
                     type="button"
                     onClick={verifyCollegeRecord}
                     disabled={verifying || !identity.trim()}
-                    className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200/70 bg-emerald-50 px-3.5 py-1.5 text-xs font-extrabold text-emerald-700 hover:bg-emerald-100 transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap"
+                    className="group -my-2.5 min-h-[44px] inline-flex items-center pl-2 cursor-pointer disabled:cursor-default"
                   >
-                    {verifying ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
-                    {verifying ? 'Checking…' : 'Verify Record'}
+                    <span className="inline-flex items-center gap-1 h-[26px] lg:h-[25px] rounded-full border border-[#c9eadb] bg-[#e9fbf2] px-3 text-[12px] font-bold text-[#0b5e45] whitespace-nowrap transition-colors group-hover:bg-[#d8f6e7] group-disabled:opacity-60">
+                      {verifying ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" strokeWidth={2.6} />}
+                      {verifying ? 'Checking…' : 'Verify Record'}
+                    </span>
                   </button>
                 </div>
-                <div className="relative">
-                  <Contact className="absolute left-3.5 top-1/2 -translate-y-1/2 w-[18px] h-[18px] text-slate-400 pointer-events-none" />
+                <div className="group relative">
+                  <IdCard className="absolute left-[15px] top-1/2 -translate-y-1/2 w-[19px] h-[19px] text-[#7c8481] group-focus-within:text-[#10a574] pointer-events-none transition-colors" />
                   <input
                     value={identity}
                     onChange={(e) => { setIdentity(e.target.value); verifiedIdRef.current = null; setVerifyState(null); setError(''); }}
                     onBlur={handleIdentityBlur}
                     autoComplete="username"
                     placeholder="e.g. 2201106001 or WDN-001"
-                    className={`min-w-0 w-full rounded-[0.9rem] border bg-slate-50/80 px-3.5 py-3.5 pl-10 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 ${
+                    className={`login-input min-w-0 w-full h-[52px] lg:h-[47px] rounded-[12px] border-[1.5px] pl-[46px] pr-4 text-[15px] lg:text-[14.5px] font-medium text-[#0b1712] outline-none transition placeholder:text-[#9aa29f] placeholder:font-normal ${
                       verifyState && verifyState !== 'notfound'
-                        ? 'border-emerald-500 ring-[3px] ring-emerald-500/10 bg-white'
+                        ? 'border-[#2f9e78] bg-white ring-[3px] ring-[#2f9e78]/[0.14]'
                         : verifyState === 'notfound'
-                          ? 'border-rose-400 ring-[3px] ring-rose-400/10 bg-white'
-                          : 'focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10'
+                          ? 'border-rose-400 bg-white ring-[3px] ring-rose-400/[0.12]'
+                          : 'border-[#e3e8e6] bg-[#f5f7f6] focus:bg-white focus:border-[#2f9e78] focus:ring-[3px] focus:ring-[#2f9e78]/[0.14]'
                     }`}
                   />
                 </div>
@@ -468,7 +485,7 @@ export default function LoginScreen({ onLogin }) {
 
               {/* Live verification against the real college directory */}
               {verifyState === 'notfound' && (
-                <div className="rounded-2xl border border-rose-200 bg-rose-50/80 p-3.5 text-xs text-rose-900">
+                <div className="mt-3 rounded-[12px] border border-rose-200 bg-rose-50/80 p-3.5 text-xs text-rose-900">
                   <p className="flex items-center gap-2 font-bold text-rose-700">
                     <XCircle className="w-4 h-4 shrink-0" />
                     No matching college record
@@ -483,12 +500,12 @@ export default function LoginScreen({ onLogin }) {
               )}
 
               {verifyState && verifyState !== 'notfound' && (
-                <div className="rounded-2xl border border-emerald-200 bg-emerald-50/80 p-3.5 text-xs text-emerald-900">
-                  <p className="flex items-center gap-2 font-bold text-emerald-800">
-                    <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
+                <div className="mt-3 rounded-[12px] border border-[#c9eadb] bg-[#effbf5] p-3.5 text-xs text-emerald-900">
+                  <p className="flex items-center gap-2 font-bold text-[#0b5e45]">
+                    <CheckCircle2 className="w-4 h-4 shrink-0 text-[#10a574]" />
                     Official College Record Verified!
                   </p>
-                  <p className="mt-1.5 text-emerald-700 leading-relaxed font-medium">
+                  <p className="mt-1.5 text-[#0f6b4f] leading-relaxed font-medium">
                     {verifyState.fullName} • {verifyState.role === 'STUDENT' ? (verifyState.department || 'Student') : verifyState.role}
                     {verifyState.hostelBlock ? ` • ${verifyState.hostelBlock}` : ''}
                   </p>
@@ -502,57 +519,60 @@ export default function LoginScreen({ onLogin }) {
                 </div>
               )}
 
-              {/* Password — forgot link sits UNDER the field, per the mockup */}
-              <div>
-                <label className="block text-sm font-bold text-slate-800 mb-2">Password</label>
+              {/* Password — forgot link under the field */}
+              <div className="mt-[16px] lg:mt-[14px]">
+                <label className="block text-[14px] lg:text-[13.5px] font-bold text-[#13201b] mb-[8px] lg:mb-[7px]">Password</label>
                 <PasswordInput
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   autoComplete="current-password"
                   placeholder="Your password"
                   leadingIcon={Lock}
-                  className="w-full rounded-[0.9rem] border border-slate-200 bg-slate-50/80 focus:bg-white px-3.5 py-3.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10"
+                  iconClassName="!left-[15px] !w-[18px] !h-[18px] !text-[#6b716f]"
+                  toggleClassName="absolute right-1 top-1/2 -translate-y-1/2 w-[44px] h-[44px] flex items-center justify-center text-[#5b625f] hover:text-[#0b1712] transition-colors cursor-pointer"
+                  toggleIconClassName="w-[19px] h-[19px]"
+                  className="login-input w-full h-[52px] lg:h-[47px] rounded-[12px] border-[1.5px] border-[#e3e8e6] bg-[#f5f7f6] focus:bg-white !pl-[46px] !pr-12 text-[15px] lg:text-[14.5px] font-medium text-[#0b1712] outline-none transition placeholder:text-[#9aa29f] placeholder:font-normal focus:border-[#2f9e78] focus:ring-[3px] focus:ring-[#2f9e78]/[0.14]"
                 />
-                <div className="flex justify-end mt-2">
+                <div className="flex justify-end -mt-[2px] lg:-mt-[4px]">
                   <button
                     type="button"
                     onClick={() => openHelp(3)}
-                    className="text-[13px] font-bold text-slate-600 hover:text-emerald-700 transition-colors cursor-pointer"
+                    className="min-h-[44px] inline-flex items-center pl-2 text-[13.5px] lg:text-[13px] font-bold text-[#0a6b4a] hover:text-[#065a3d] transition-colors cursor-pointer"
                   >
                     Forgot password?
                   </button>
                 </div>
               </div>
 
-              {error && <p className="text-xs text-rose-600 font-semibold">{error}</p>}
+              {error && <p className="-mt-1 mb-2 text-xs text-rose-600 font-semibold">{error}</p>}
 
               <button
                 type="submit" disabled={authBusy}
-                className="w-full rounded-2xl bg-emerald-600 py-3.5 text-[15px] font-extrabold text-white transition hover:bg-emerald-700 shadow-[0_12px_28px_rgba(5,150,105,0.35)] cursor-pointer flex items-center justify-center gap-2 disabled:opacity-60"
+                className="mt-[10px] lg:mt-[9px] w-full h-[56px] lg:h-[50px] rounded-[14px] lg:rounded-[12px] bg-gradient-to-r from-[#06996b] to-[#047a58] text-[16px] lg:text-[15.5px] font-bold text-white transition hover:brightness-[1.06] shadow-[0_12px_24px_-8px_rgba(4,122,88,0.55)] cursor-pointer flex items-center justify-center gap-2 disabled:opacity-60"
               >
                 <span>{authBusy ? 'Verifying…' : 'Sign In'}</span>
-                {authBusy ? <Loader className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}
+                {authBusy ? <Loader className="w-[18px] h-[18px] animate-spin" /> : <ArrowRight className="w-[18px] h-[18px]" strokeWidth={2.4} />}
               </button>
 
               {/* Secured footer (mobile only — desktop has the © bar below) */}
-              <p className="lg:hidden flex items-center justify-center gap-1.5 text-[11px] text-slate-400 font-semibold pt-1">
-                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+              <p className="lg:hidden flex items-center justify-center gap-1.5 text-[12.5px] text-[#6a6e6d] font-medium pt-[26px]">
+                <ShieldCheck className="w-4 h-4 text-[#23aa7f]" />
                 Secured with your college account
               </p>
             </form>
           </div>
 
-          {/* Desktop © bar (per the mockup) */}
-          <div className="hidden lg:flex items-center justify-between pt-6 border-t border-slate-100 shrink-0 relative">
-            <div className="text-[11px] font-semibold text-slate-400">
+          {/* Desktop © bar */}
+          <div className="hidden lg:flex absolute left-[50px] right-[44px] bottom-[14px] items-center justify-between z-10">
+            <div className="text-[12px] font-medium text-[#a0a6a3]">
               © 2026 CampusDebug OS
             </div>
-            <div className="flex items-center gap-4 text-[11px] font-bold text-slate-400">
-              <button type="button" onClick={() => openHelp(null)} className="hover:text-emerald-700 transition-colors cursor-pointer">Privacy</button>
-              <span className="text-slate-200">•</span>
-              <button type="button" onClick={() => openHelp(null)} className="hover:text-emerald-700 transition-colors cursor-pointer">Terms</button>
-              <span className="text-slate-200">•</span>
-              <button type="button" onClick={() => openHelp(null)} className="hover:text-emerald-700 transition-colors cursor-pointer">Help</button>
+            <div className="flex items-center text-[12px] font-medium text-[#a0a6a3]">
+              <button type="button" onClick={() => openHelp(null)} className="min-h-[44px] px-2 hover:text-emerald-700 transition-colors cursor-pointer">Privacy</button>
+              <span className="text-[#c9cfcc]">·</span>
+              <button type="button" onClick={() => openHelp(null)} className="min-h-[44px] px-2 hover:text-emerald-700 transition-colors cursor-pointer">Terms</button>
+              <span className="text-[#c9cfcc]">·</span>
+              <button type="button" onClick={() => openHelp(null)} className="min-h-[44px] min-w-[44px] pl-2 hover:text-emerald-700 transition-colors cursor-pointer">Help</button>
             </div>
           </div>
         </section>
