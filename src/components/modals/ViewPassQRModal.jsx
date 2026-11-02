@@ -17,23 +17,12 @@ import {
 } from 'lucide-react';
 
 export default function ViewPassQRModal({ isOpen, onClose, pass: passIn }) {
-  const [copied, setCopied] = React.useState(false);
   // Fix 5: the QR is signed by the SERVER and rotates every ~25 s (a ~60 min
   // batch is kept on the phone, so it keeps rotating offline). `pass.token`
   // below is always the CURRENT live QR — never a stored, static one.
   const qrWanted = !!isOpen && !!passIn && (passIn.status === 'APPROVED' || passIn.status === 'USED');
   const qr = useRotatingQr('PASS', passIn?.id, qrWanted);
   const pass = passIn ? { ...passIn, token: qr.token || null } : passIn;
-  // "Copy scan token" lets the user paste the exact QR payload into the
-  // guard's Direct Base64 Token Verification box (mobile debugging).
-  const copyToken = () => {
-    if (navigator?.clipboard && pass?.token) {
-      navigator.clipboard.writeText(pass.token).then(() => {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2500);
-      }).catch(() => {});
-    }
-  };
   if (!isOpen || !pass) return null;
 
   // Only a warden-approved (and not yet used) pass may show a scannable QR.
@@ -194,14 +183,6 @@ export default function ViewPassQRModal({ isOpen, onClose, pass: passIn }) {
                 <span className="text-slate-400">SIGNATURE:</span>
                 <span className="text-emerald-700 truncate ml-1">Ed25519 · server-signed · rotates</span>
               </div>
-
-              <button
-                type="button"
-                onClick={copyToken}
-                className="mt-2 w-full py-2 rounded-lg border border-slate-200 bg-white text-[11px] font-bold text-slate-600 hover:bg-slate-50 transition-colors cursor-pointer"
-              >
-                {copied ? 'Copied ✓' : 'Copy scan token'}
-              </button>
             </div>
           )}
 
@@ -236,13 +217,6 @@ export default function ViewPassQRModal({ isOpen, onClose, pass: passIn }) {
                 the guard scans it once more and your return is registered in the gate register.
               </p>
 
-              <button
-                type="button"
-                onClick={copyToken}
-                className="mt-2 w-full py-2 rounded-lg border border-slate-200 bg-white text-[11px] font-bold text-slate-600 hover:bg-slate-50 transition-colors cursor-pointer"
-              >
-                {copied ? 'Copied ✓' : 'Copy scan token'}
-              </button>
             </div>
           )}
 
