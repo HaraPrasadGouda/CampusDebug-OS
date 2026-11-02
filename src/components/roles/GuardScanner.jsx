@@ -19,7 +19,7 @@ import {
   LogIn,
   Users
 } from 'lucide-react';
-import { verifySignedPassToken, leaveQrFreshness } from '../../utils/crypto';
+import { verifySignedPassToken, leaveQrFreshness, refreshPassPublicKey } from '../../utils/crypto';
 import { noteServerDate, serverNow } from '../../utils/serverClock';
 import { getAllLocal, saveLocal, queueOfflineAction } from '../../utils/db';
 import { getAccessToken } from '../../utils/authClient';
@@ -53,9 +53,12 @@ export default function GuardScanner({ searchQuery = '' }) {
   // online (now, every minute, and the moment the network comes back), so a
   // leave QR can still be checked at the gate with no network.
   useEffect(() => {
-    refreshApprovedLeaves();
-    const iv = setInterval(refreshApprovedLeaves, 60000);
-    const onOnline = () => refreshApprovedLeaves();
+    // Fix 5: the server's PUBLIC gate key is downloaded with the list, so
+    // QRs can be checked offline (the phone holds no signing secret).
+    const refreshGateData = () => { refreshApprovedLeaves(); refreshPassPublicKey(); };
+    refreshGateData();
+    const iv = setInterval(refreshGateData, 60000);
+    const onOnline = () => refreshGateData();
     // Outbox answer for an offline leave exit: synced, or refused (double use / invalid).
     const onLeaveSynced = (e) => {
       const d = e?.detail || {};
@@ -282,6 +285,22 @@ export default function GuardScanner({ searchQuery = '' }) {
         return;
       }
 
+      // Fix 5: the hosteller gate pass QR rotates too — refuse one older
+      // than ~60 s (screenshots / forwarded photos), exit AND return.
+      if (verification.payload.kind !== 'LEAVE') {
+        const { fresh } = leaveQrFreshness(verification.payload, serverNow());
+        if (!fresh) {
+          setScanResult({
+            valid: false,
+            isExpired: true,
+            message: 'QR expired — ask the student to show the live QR in the app (screenshots or old photos are not accepted). Nothing recorded.',
+            payload: verification.payload
+          });
+          playAudioFeedback(false);
+          return;
+        }
+      }
+
       // DAY-SCHOLAR LEAVE branch: a rotating per-leave token never touches
       // the pass state machine — the SERVER checks the leave id is this
       // student's mentor-APPROVED, not-yet-scanned leave and that the QR is
@@ -319,6 +338,7 @@ export default function GuardScanner({ searchQuery = '' }) {
               name: p.name,
               leaveId: p.leaveId,
               issuedAt: p.issuedAt,
+              qrToken: rawToken.trim(),
               scannedAt,
               offline: true,
               method: 'QR',
@@ -365,6 +385,7 @@ export default function GuardScanner({ searchQuery = '' }) {
               name: verification.payload.name,
               leaveId: verification.payload.leaveId,
               issuedAt: verification.payload.issuedAt,
+              qrToken: rawToken.trim(),
               method: 'QR',
               scannedBy: 'Main Gate Guard'
             })
@@ -475,7 +496,9 @@ export default function GuardScanner({ searchQuery = '' }) {
           id: passId,
           ...verification.payload,
           direction: 'RETURN',
-          scannedBy: 'Main Gate Guard'
+          scannedBy: 'Main Gate Guard',
+          qrToken: rawToken.trim(),
+          qrCheckedAt: new Date(serverNow()).toISOString()
         };
         // Minutes/hours past the pass's expected return window, shown to
         // the guard and echoed in the pass-status update event.
@@ -501,7 +524,7 @@ export default function GuardScanner({ searchQuery = '' }) {
           // Offline: record locally and queue for auto-sync
           try {
             await saveLocal('gate_passes', { ...returnedPayload, status: 'RETURNED', statusLabel: 'Returned to Campus', gateCheckInStatus: 'CHECKED_IN', returnedAt: new Date().toISOString(), verifiedAt: new Date().toISOString() });
-            await queueOfflineAction('SCAN_PASS', { ...returnedPayload });
+            await queueOfflineAction('SCAN_PASS', { ...returnedPayload, offlineScan: true });
             registered = true; // optimistic offline registration
           } catch (qErr) {
             console.warn('Offline return queue failed:', qErr);
@@ -582,7 +605,9 @@ export default function GuardScanner({ searchQuery = '' }) {
           verifiedAt: newLog.verifiedAt,
           status: 'USED',
           statusLabel: 'Scanned at Main Gate (Expired)',
-          scannedBy: 'Main Gate Guard'
+          scannedBy: 'Main Gate Guard',
+          qrToken: rawToken.trim(),
+          qrCheckedAt: new Date(serverNow()).toISOString()
         };
 
         await saveLocal('gate_passes', updatedPassData);
@@ -590,16 +615,26 @@ export default function GuardScanner({ searchQuery = '' }) {
         // Sync scan status to backend server so other devices (e.g. laptop) update in real-time
         try {
           const tok = getAccessToken();
-          await fetch('/api/scan-pass', {
+          const er = await fetch('/api/scan-pass', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...(tok ? { Authorization: `Bearer ${tok}` } : {}) },
             body: JSON.stringify({ passData: updatedPassData })
           });
+          // Fix 5: the server re-checks the QR signature; show its refusal.
+          if (er.status === 403) {
+            const ej = await er.json().catch(() => null);
+            if (ej?.qrRejected) {
+              setGateLogs(prev => prev.filter(l => l !== newLog));
+              setScanResult({ valid: false, isExpired: ej.expired || undefined, message: ej.reason || 'QR refused by the server', payload: verification.payload });
+              playAudioFeedback(false);
+              return;
+            }
+          }
         } catch (netErr) {
           console.warn('Offline: scan saved locally & queued for auto-sync:', netErr);
           // Queue the scan so it reaches the server the moment connectivity returns
           try {
-            await queueOfflineAction('SCAN_PASS', updatedPassData);
+            await queueOfflineAction('SCAN_PASS', { ...updatedPassData, offlineScan: true });
           } catch (qErr) {
             console.warn('Outbox queue failed:', qErr);
           }

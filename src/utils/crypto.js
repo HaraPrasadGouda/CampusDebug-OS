@@ -1,224 +1,85 @@
 /**
- * CampusDebug OS — Offline Cryptographic Engine
- * Uses Web Crypto API for tamper-evident, offline-verifiable Gate Pass QR tokens
+ * CampusDebug OS — gate QR checking on the phone (Fix 5).
+ *
+ * Gate QRs (hosteller gate pass + day-scholar leave) are now SIGNED ON THE
+ * SERVER with a private Ed25519 key that never leaves the server
+ * (passSigning.js). This file holds NO secret: the guard phone downloads the
+ * PUBLIC key (GET /api/pass-public-key, saved on the phone for offline use)
+ * and can only CHECK a QR, never make one. Student phones get ready-signed
+ * QRs from POST /api/pass-token (utils/passQr.js).
+ *
+ * Old QRs (v1: HMAC with a key that shipped inside the app, or the unkeyed
+ * FNV fallback) are refused.
+ *
+ * Verification is pure JavaScript (tweetnacl), so it also works when the app
+ * is opened over a LAN IP (no secure context / no crypto.subtle).
  */
+import nacl from 'tweetnacl';
 
-// Institutional Master Seed Key (for demonstration across client & offline guard scanner)
-const MASTER_CAMPUS_SECRET = 'CAMPUS_DEBUG_OS_OFFLINE_SECRET_2026_SECURE_HMAC';
+// Must match passSigning.js on the server.
+export const PASS_QR_DOMAIN = 'CampusDebugOS-GateQR-v2\n';
+const PUBLIC_KEY_STORE = 'campus_gate_qr_public_key';
 
 /**
- * Import the secret key into Web Crypto subtle interface
+ * Rotating QR timing (hosteller pass AND day-scholar leave). The student
+ * phone shows a new QR every LEAVE_QR_ROTATE_MS; the gate (guard phone AND
+ * server) refuses one older than LEAVE_QR_MAX_AGE_MS, so a screenshot or a
+ * forwarded photo stops working within a minute.
  */
-async function getCryptoKey() {
-  const enc = new TextEncoder();
-  return crypto.subtle.importKey(
-    'raw',
-    enc.encode(MASTER_CAMPUS_SECRET),
-    { name: 'HMAC', hash: { name: 'SHA-256' } },
-    false,
-    ['sign', 'verify']
-  );
-}
-
-/**
- * Convert ArrayBuffer to Hex String
- */
-function bufferToHex(buffer) {
-  return Array.from(new Uint8Array(buffer))
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('');
-}
-
-/**
- * Convert Hex String to ArrayBuffer
- */
-function hexToBuffer(hex) {
-  const bytes = new Uint8Array(Math.ceil(hex.length / 2));
-  for (let i = 0; i < bytes.length; i++) {
-    bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
-  }
-  return bytes.buffer;
-}
-
-/**
- * Unicode-safe Base64 — plain btoa throws InvalidCharacterError on any
- * non-ASCII character (student names included).
- */
-function toB64(str) {
-  const bytes = new TextEncoder().encode(str);
-  let bin = '';
-  for (const b of bytes) bin += String.fromCharCode(b);
-  return btoa(bin);
-}
-function fromB64(b64) {
-  const bin = atob(b64);
-  const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
-  return new TextDecoder().decode(bytes);
-}
-
-/**
- * FNV-1a (32-bit) — insecure-context fallback signer. Web Crypto (the real
- * HMAC-SHA256) only exists in a SECURE CONTEXT (https / localhost); when the
- * campus app is opened over a LAN IP — exactly how a phone demo runs —
- * crypto.subtle is undefined and every token build would fail. The gate's
- * server-side scan remains the source of truth either way; the 'fnv-' prefix
- * marks the fallback so the verifier picks the matching algorithm.
- */
-function fnv1aHex(str) {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < str.length; i++) {
-    h ^= str.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return 'fnv-' + (h >>> 0).toString(16).padStart(8, '0');
-}
-
-/**
- * Sign the canonical string with whatever the current context supports.
- */
-async function signCanonical(str) {
-  const enc = new TextEncoder();
-  if (typeof crypto !== 'undefined' && crypto.subtle) {
-    const key = await getCryptoKey();
-    return { alg: 'HMAC-SHA256', signature: bufferToHex(await crypto.subtle.sign('HMAC', key, enc.encode(str))) };
-  }
-  return { alg: 'FNV1A-FALLBACK', signature: fnv1aHex(str) };
-}
-
-/**
- * Generate a cryptographically signed offline Gate Pass token
- * @param {Object} passData - { passId, studentId, name, rollNo, destination, reason, validUntil }
- * @returns {Promise<{ rawToken: string, payload: Object, signature: string }>}
- */
-export async function generateSignedPassToken(passData) {
-  const payload = {
-    ...passData,
-    issuedAt: new Date().toISOString(),
-    issuer: 'CampusDebug-Authority'
-  };
-
-  // Canonicalize string to avoid key-ordering discrepancy
-  const canonicalString = JSON.stringify({
-    passId: payload.passId,
-    studentId: payload.studentId,
-    rollNo: payload.rollNo,
-    destination: payload.destination,
-    reason: payload.reason,
-    validUntil: payload.validUntil,
-    issuedAt: payload.issuedAt
-  });
-
-  const { alg, signature } = await signCanonical(canonicalString);
-
-  const finalTokenObject = {
-    payload,
-    signature,
-    alg,
-    v: 1
-  };
-
-  // Convert to compact Base64 JSON string for QR encoding
-  const rawToken = toB64(JSON.stringify(finalTokenObject));
-
-  return {
-    rawToken,
-    payload,
-    signature
-  };
-}
-
-/**
- * Day-scholar commute credential: ONE long-lived signed QR (their campus ID),
- * no warden approval, no return window. The gate server alternates IN/OUT
- * by today's scan history, so no expiry value is ever embedded.
- * @param {Object} id - { rollNo, name, department }
- */
-export async function generateSignedCommuteToken(id) {
-  const payload = {
-    kind: 'COMMUTE',
-    passId: `ID-${id.rollNo}`,
-    studentId: null,
-    rollNo: id.rollNo,
-    name: id.name,
-    destination: 'Campus premises',
-    reason: `Day-scholar commute${id.department ? ` — ${id.department}` : ''}`,
-    validUntil: null, // deliberately windowless: commutes are not outings
-    issuedAt: new Date().toISOString(),
-    issuer: 'CampusDebug-Authority'
-  };
-
-  // Identical canonical field set to the pass token — one verifier governs both.
-  const canonicalString = JSON.stringify({
-    passId: payload.passId,
-    studentId: payload.studentId,
-    rollNo: payload.rollNo,
-    destination: payload.destination,
-    reason: payload.reason,
-    validUntil: payload.validUntil,
-    issuedAt: payload.issuedAt
-  });
-
-  const { alg, signature } = await signCanonical(canonicalString);
-
-  return {
-    rawToken: toB64(JSON.stringify({ payload, signature, alg, v: 1 })),
-    payload,
-    signature
-  };
-}
-
-/**
- * DAY-SCHOLAR LEAVE QR — rotating and per-leave. Exists only while a mentor
- * APPROVED, not-yet-scanned leave exists; carries THAT leave's id and is
- * re-signed every LEAVE_QR_ROTATE_MS with a fresh issuedAt. The gate (guard
- * device AND server) refuses one older than LEAVE_QR_MAX_AGE_MS, so a
- * screenshot or a forwarded photo stops working within a minute.
- * Its canonical field set is its own (kind + leaveId + identity + issuedAt),
- * so a LEAVE signature can never be replayed as a pass or campus-ID token.
- * @param {Object} d - { leaveId, rollNo, name, department, course, section, issuedAtMs }
- */
-export const LEAVE_QR_ROTATE_MS = 25 * 1000;   // student card makes a new QR
+export const LEAVE_QR_ROTATE_MS = 25 * 1000;   // student card shows a new QR
 export const LEAVE_QR_MAX_AGE_MS = 60 * 1000;  // gate refuses older than this
 export const LEAVE_QR_MAX_FUTURE_MS = 30 * 1000; // allowed clock skew ahead
 
-function leaveCanonical(p) {
-  return JSON.stringify({
-    kind: 'LEAVE',
-    leaveId: p.leaveId,
-    passId: p.passId,
-    rollNo: p.rollNo,
-    name: p.name,
-    department: p.department,
-    course: p.course,
-    section: p.section,
-    issuedAt: p.issuedAt
-  });
+function b64ToBytes(b64) {
+  const bin = atob(b64);
+  return Uint8Array.from(bin, c => c.charCodeAt(0));
+}
+function fromB64(b64) {
+  return new TextDecoder().decode(b64ToBytes(b64));
 }
 
-export async function generateSignedLeaveToken(d) {
-  const leaveId = String(d.leaveId);
-  const payload = {
-    kind: 'LEAVE',
-    leaveId,
-    passId: `LV-${leaveId.replace(/-/g, '').slice(-8).toUpperCase()}`,
-    rollNo: d.rollNo,
-    name: d.name,
-    department: d.department || '',
-    course: d.course || '',
-    section: d.section || '',
-    issuedAt: new Date(Number.isFinite(d.issuedAtMs) ? d.issuedAtMs : Date.now()).toISOString()
-  };
-  const { alg, signature } = await signCanonical(leaveCanonical(payload));
-  return {
-    rawToken: toB64(JSON.stringify({ payload, signature, alg, v: 1 })),
-    payload,
-    signature
-  };
+function readPublicKey() {
+  try {
+    const k = JSON.parse(localStorage.getItem(PUBLIC_KEY_STORE) || 'null');
+    return k && k.publicKey && k.keyId ? k : null;
+  } catch { return null; }
 }
 
 /**
- * Is a LEAVE token's issuedAt inside the gate window? nowMs should be the
- * server-corrected clock (utils/serverClock.serverNow).
+ * Download the server's PUBLIC gate key and keep it on the phone, so QRs can
+ * be checked with no network. Called by the guard screen when online.
+ */
+export async function refreshPassPublicKey() {
+  try {
+    const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timer = ctl ? setTimeout(() => ctl.abort(), 5000) : null;
+    const r = await fetch('/api/pass-public-key', ctl ? { signal: ctl.signal } : undefined);
+    if (timer) clearTimeout(timer);
+    const j = await r.json();
+    if (j?.success && j.publicKey && j.keyId) {
+      try {
+        localStorage.setItem(PUBLIC_KEY_STORE, JSON.stringify({ publicKey: j.publicKey, keyId: j.keyId, savedAt: Date.now() }));
+      } catch { /* storage full / private mode */ }
+      return j;
+    }
+  } catch { /* offline — keep the saved key */ }
+  return null;
+}
+
+/**
+ * REMOVED in Fix 5: phones no longer sign gate passes (the old signing key
+ * shipped inside the app, so anyone could forge a pass). The server signs
+ * (POST /api/pass-token). Kept only so an old import keeps building; it never
+ * signs anything.
+ */
+export async function generateSignedPassToken() {
+  throw new Error('Gate QRs are signed by the server now (POST /api/pass-token).');
+}
+
+/**
+ * Is a token's issuedAt inside the gate window? nowMs should be the
+ * server-corrected clock (utils/serverClock.serverNow). Used for BOTH the
+ * hosteller pass QR and the day-scholar leave QR.
  */
 export function leaveQrFreshness(payload, nowMs = Date.now()) {
   const t = Date.parse(payload && payload.issuedAt);
@@ -228,55 +89,43 @@ export function leaveQrFreshness(payload, nowMs = Date.now()) {
 }
 
 /**
- * Verify a scanned token offline using Web Crypto API (gate passes AND
- * day-scholar commute IDs — same HMAC, same canonical field set).
+ * Verify a scanned token on the guard phone (works offline once the public
+ * key was downloaded). Freshness (60 s) is checked by the caller.
  * @param {string} rawTokenBase64
  * @returns {Promise<{ valid: boolean, kind?: string, payload?: Object, isExpired?: boolean, message: string }>}
  */
 export async function verifySignedPassToken(rawTokenBase64) {
   try {
-    const decodedStr = fromB64(rawTokenBase64);
-    const tokenObj = JSON.parse(decodedStr);
-
-    if (!tokenObj.payload || !tokenObj.signature) {
-      return { valid: false, message: 'Invalid token structure.' };
+    const tokenObj = JSON.parse(fromB64(String(rawTokenBase64 || '').trim()));
+    if (!tokenObj || tokenObj.v !== 2 || tokenObj.alg !== 'Ed25519' || typeof tokenObj.p !== 'string' || typeof tokenObj.s !== 'string') {
+      return { valid: false, message: 'Old or unsigned QR format — not accepted any more. Ask the student to open the app and show the live QR.' };
     }
 
-    const { payload, signature } = tokenObj;
-    const enc = new TextEncoder();
-
-    // LEAVE tokens sign their own field set (incl. kind + leaveId); every
-    // other token keeps the original pass canonical set, unchanged.
-    const canonicalString = payload.kind === 'LEAVE' ? leaveCanonical(payload) : JSON.stringify({
-      passId: payload.passId,
-      studentId: payload.studentId,
-      rollNo: payload.rollNo,
-      destination: payload.destination,
-      reason: payload.reason,
-      validUntil: payload.validUntil,
-      issuedAt: payload.issuedAt
-    });
-
-    // The token's alg marker picks the verifier: the FNV-1a fallback (tokens
-    // minted on an insecure-context device) or the real HMAC-SHA256.
-    let isSignatureValid = false;
-    if (tokenObj.alg === 'FNV1A-FALLBACK' || String(signature).startsWith('fnv-')) {
-      isSignatureValid = signature === fnv1aHex(canonicalString);
-    } else if (typeof crypto !== 'undefined' && crypto.subtle) {
-      const key = await getCryptoKey();
-      isSignatureValid = await crypto.subtle.verify(
-        'HMAC',
-        key,
-        hexToBuffer(signature),
-        enc.encode(canonicalString)
-      );
-    } else {
-      return { valid: false, message: 'This pass was signed on a secure device — verify it at the gate desk or serve the scanner over localhost/https.' };
+    let key = readPublicKey();
+    // No key yet, or the server's key changed: fetch it (only possible online).
+    if ((!key || key.keyId !== tokenObj.kid) && !(typeof navigator !== 'undefined' && navigator.onLine === false)) {
+      await refreshPassPublicKey();
+      key = readPublicKey();
+    }
+    if (!key) {
+      return { valid: false, message: 'This guard phone has not downloaded the gate key yet — connect it to the internet once, then scan again.' };
     }
 
+    const isSignatureValid = nacl.sign.detached.verify(
+      new TextEncoder().encode(PASS_QR_DOMAIN + tokenObj.p),
+      b64ToBytes(tokenObj.s),
+      b64ToBytes(key.publicKey)
+    );
     if (!isSignatureValid) {
-      return { valid: false, message: 'Cryptographic signature mismatch! Tampered or counterfeit pass.' };
+      return {
+        valid: false,
+        message: key.keyId !== tokenObj.kid
+          ? 'Signature mismatch: this QR was signed with a different gate key than the one on this phone. Connect the guard phone to the internet once and scan again.'
+          : 'Cryptographic signature mismatch! Tampered or counterfeit pass.'
+      };
     }
+
+    const payload = JSON.parse(tokenObj.p);
 
     // Check expiry
     const hasReturnWindow = !!payload.validUntil
@@ -291,8 +140,6 @@ export async function verifySignedPassToken(rawTokenBase64) {
     // able to come back IN (the scan is then recorded as LATE, with the
     // lateness flag shipped to the staff register). The caller decides
     // using the isExpired flag once the scan direction is known.
-    // Day-scholar commute tokens carry NO window at all — they are exempt
-    // from expiry semantics by construction.
     if (isExpired) {
       return {
         valid: true,
@@ -308,11 +155,9 @@ export async function verifySignedPassToken(rawTokenBase64) {
       isExpired: false,
       kind: payload.kind || 'PASS',
       payload,
-      message: payload.kind === 'COMMUTE'
-        ? 'Commute ID verified — server decides IN / OUT.'
-        : payload.kind === 'LEAVE'
-          ? 'Leave QR verified — gate checks it is live and approved.'
-          : 'Cryptographically Verified & Active.'
+      message: payload.kind === 'LEAVE'
+        ? 'Leave QR verified — gate checks it is live and approved.'
+        : 'Cryptographically Verified & Active.'
     };
   } catch (err) {
     return { valid: false, message: 'Malformed QR token: ' + err.message };
