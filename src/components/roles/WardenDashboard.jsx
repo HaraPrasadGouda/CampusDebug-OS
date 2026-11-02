@@ -37,7 +37,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
     masterClusters.length > 0 ? masterClusters : INITIAL_CLUSTERS
   );
   const [allTickets, setAllTickets] = useState([]);
-  const [activeTab, setActiveTab] = useState('tickets'); // 'tickets' | 'clusters' | 'passes' | 'sla' | 'register'
+  const [activeTab, setActiveTab] = useState('passes'); // 'tickets' | 'clusters' | 'passes' | 'sla' | 'register'
   const [technicianRoster, setTechnicianRoster] = useState([]);
   const [registerRows, setRegisterRows] = useState([]);
   const [registerOk, setRegisterOk] = useState(false);
@@ -418,7 +418,8 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
     0
   ) || clusters.length;
 
-  // Section switcher chips (layout only): each chip scrolls to its own card.
+  // Section switcher chips (layout only): phone/tablet = tabs (only the active card shows);
+  // laptop (xl) = all cards visible, a chip scrolls to its card.
   const sectionChips = [
     { tab: 'passes', id: 'wd-passes', label: 'Pending Passes', count: pendingPasses.length, dot: 'bg-emerald-500', hot: pendingPasses.length > 0, hotCls: 'bg-emerald-600 text-white' },
     { tab: 'tickets', id: 'wd-tickets', label: 'Student Issues', count: allTickets.length, dot: 'bg-amber-500', hot: false },
@@ -428,8 +429,14 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
   ];
   const jumpToSection = (c) => {
     setActiveTab(c.tab);
-    document.getElementById(c.id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    requestAnimationFrame(() => {
+      const el = document.getElementById(c.id);
+      if (!el) return;
+      const isLaptop = window.matchMedia('(min-width: 1280px)').matches;
+      if (isLaptop || el.getBoundingClientRect().top < 124) el.scrollIntoView({ behavior: isLaptop ? 'smooth' : 'auto', block: 'start' });
+    });
   };
+  const tabCls = (tab) => (activeTab === tab ? '' : 'max-xl:hidden');
   const PREVIEW = { passes: 5, tickets: 4, clusters: 3, register: 6 };
   const shownGateRows = shownRegister.filter(r => {
     const c = String(r.category || '').toUpperCase();
@@ -485,12 +492,13 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
               key={c.id}
               type="button"
               onClick={() => jumpToSection(c)}
-              className="shrink-0 min-h-[44px] inline-flex items-center gap-2 pl-3 pr-2.5 rounded-full bg-white border border-slate-200 hover:border-slate-300 hover:bg-slate-50 text-xs font-bold text-slate-700 whitespace-nowrap shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-colors cursor-pointer"
+              aria-pressed={activeTab === c.tab}
+              className={`shrink-0 min-h-[44px] inline-flex items-center gap-2 pl-3 pr-2.5 rounded-full bg-white border border-slate-200 hover:border-slate-300 hover:bg-slate-50 text-xs font-bold text-slate-700 whitespace-nowrap shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-colors cursor-pointer ${activeTab === c.tab ? 'max-xl:bg-slate-900 max-xl:border-slate-900 max-xl:text-white max-xl:hover:bg-slate-900 max-xl:shadow-md' : ''}`}
             >
-              <span className={`w-2 h-2 rounded-full ${c.dot}`} />
+              <span className={`w-2 h-2 rounded-full ${c.dot} ${activeTab === c.tab ? 'max-xl:ring-2 max-xl:ring-white' : ''}`} />
               {c.label}
               {c.count != null && (
-                <span className={`min-w-[22px] h-[22px] px-1.5 rounded-full text-[11px] font-mono font-extrabold flex items-center justify-center ${c.hot ? c.hotCls : 'bg-slate-100 text-slate-600'}`}>
+                <span className={`min-w-[22px] h-[22px] px-1.5 rounded-full text-[11px] font-mono font-extrabold flex items-center justify-center ${c.hot ? c.hotCls : 'bg-slate-100 text-slate-600'} ${activeTab === c.tab && !c.hot ? 'max-xl:bg-white/20 max-xl:text-white' : ''}`}>
                   {c.count}
                 </span>
               )}
@@ -505,7 +513,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
         <div className="contents xl:flex xl:flex-col xl:gap-4 xl:col-span-7 xl:min-w-0">
 
       {/* --- TAB 0: ALL REPORTED STUDENT ISSUES --- */}
-        <section id="wd-tickets" className="order-2 scroll-mt-[124px] min-w-0 bg-white border-2 border-amber-200 rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm">
+        <section id="wd-tickets" className={`order-2 scroll-mt-[124px] min-w-0 bg-white border-2 border-amber-200 rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm ${tabCls('tickets')}`}>
           <div className="flex items-start justify-between gap-3 border-b border-amber-100 pb-3">
             <div className="min-w-0">
               <h2 className="text-[15px] font-bold text-slate-900 flex items-center gap-2.5">
@@ -655,7 +663,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
             </button>
           )}
         </section>
-        <section id="wd-passes" className="order-1 scroll-mt-[124px] min-w-0 bg-white border-2 border-emerald-300 rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm">
+        <section id="wd-passes" className={`order-1 scroll-mt-[124px] min-w-0 bg-white border-2 border-emerald-300 rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm ${tabCls('passes')}`}>
           <div className="flex items-start justify-between border-b border-emerald-100 pb-3 gap-3">
             <div className="min-w-0">
               <h2 className="text-[15px] font-bold text-slate-900 flex items-center gap-2.5">
@@ -766,7 +774,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
         <div className="contents xl:flex xl:flex-col xl:gap-4 xl:col-span-5 xl:min-w-0">
 
       {/* --- TAB 2: SPATIAL MASTER INCIDENTS (DEDUPLICATION ENGINE) --- */}
-        <section id="wd-clusters" className="order-3 xl:order-2 scroll-mt-[124px] min-w-0 bg-white border-2 border-purple-200 rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm">
+        <section id="wd-clusters" className={`order-3 xl:order-2 scroll-mt-[124px] min-w-0 bg-white border-2 border-purple-200 rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm ${tabCls('clusters')}`}>
           <div className="flex items-start justify-between gap-3 border-b border-purple-100 pb-3">
             <div className="min-w-0">
               <h2 className="text-[15px] font-bold text-slate-900 flex items-center gap-2.5">
@@ -923,7 +931,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
           ['PENDING', 'ASSIGNED', 'IN_PROGRESS', 'ESCALATED_TO_DEAN'].includes(String(t.status || '').toUpperCase()) && t.slaState === 'breached'
         );
         return (
-          <section id="wd-sla" className="order-4 xl:order-1 scroll-mt-[124px] min-w-0 bg-white border-2 border-rose-200 rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm">
+          <section id="wd-sla" className={`order-4 xl:order-1 scroll-mt-[124px] min-w-0 bg-white border-2 border-rose-200 rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm ${tabCls('sla')}`}>
           <div className="flex items-start justify-between gap-3 border-b border-rose-100 pb-3">
             <div className="min-w-0">
               <h2 className="text-[15px] font-bold text-slate-900 flex items-center gap-2.5">
@@ -1037,7 +1045,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
       })()}
         </div>
 
-        <section id="wd-register" className="order-5 xl:col-span-12 scroll-mt-[124px] min-w-0 bg-white border-2 border-slate-300 rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm">
+        <section id="wd-register" className={`order-5 xl:col-span-12 scroll-mt-[124px] min-w-0 bg-white border-2 border-slate-300 rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm ${tabCls('register')}`}>
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 pb-3">
             <div className="min-w-0">
               <h2 className="text-[15px] font-bold text-slate-900 flex items-center gap-2.5">
