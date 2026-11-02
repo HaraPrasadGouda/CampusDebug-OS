@@ -90,7 +90,7 @@ const ROLE_PROFILES = {
         icon: ShieldCheck,
         color: 'text-purple-600',
         label: 'Scanner Device Status',
-        value: 'Paired • Offline HMAC Verification Enabled',
+        value: 'Paired • Offline Signed-QR Verification Enabled',
         live: true
       },
       {

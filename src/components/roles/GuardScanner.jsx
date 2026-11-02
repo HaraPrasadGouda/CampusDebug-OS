@@ -33,7 +33,6 @@ export default function GuardScanner({ searchQuery = '' }) {
   const [leaveStats, setLeaveStats] = useState({ outsToday: 0 });
   // Leave exits this phone let out OFFLINE (sync pending / synced / conflict).
   const [localLeaveUsed, setLocalLeaveUsed] = useState(() => getUsedLeaves());
-  const [tokenInput, setTokenInput] = useState('');
   const [gateLogs, setGateLogs] = useState([
     // Starts EMPTY — the log only shows gates the guard actually verified
     // in this browser's ledger (IndexedDB). No fabricated history.
@@ -115,7 +114,7 @@ export default function GuardScanner({ searchQuery = '' }) {
       setIsScanning(true);
     } catch (err) {
       console.warn('Camera start error:', err);
-      setCameraError('Camera access unavailable or blocked. You can use the instant token tester below.');
+      setCameraError('Camera access unavailable or blocked. Type the pass number in the manual pass entry below.');
       setIsScanning(false);
     }
   };
@@ -826,33 +825,11 @@ export default function GuardScanner({ searchQuery = '' }) {
               </span>
             </div>
             <p className="text-xs text-slate-600 mt-0.5 font-medium">
-              Web Crypto HMAC-SHA256 • Cryptographically secure offline gate verification
+              Signed QR (Ed25519) • Secure offline gate verification
             </p>
           </div>
         </div>
 
-        <div className="flex items-center space-x-2">
-          <button
-            onClick={isScanning ? stopCamera : startCamera}
-            className={`px-4 py-2.5 rounded-xl font-semibold text-xs flex items-center space-x-2 transition-all cursor-pointer shadow-md ${
-              isScanning
-                ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-rose-500/20'
-                : 'bg-emerald-700 hover:bg-emerald-800 text-white shadow-emerald-700/20'
-            }`}
-          >
-            {isScanning ? (
-              <>
-                <CameraOff className="w-4 h-4" />
-                <span>Stop Scanner</span>
-              </>
-            ) : (
-              <>
-                <Camera className="w-4 h-4" />
-                <span>Activate Camera</span>
-              </>
-            )}
-          </button>
-        </div>
       </section>
 
       {/* Main Scanner & Verification Output Grid Container with Equal Heights */}
@@ -864,7 +841,7 @@ export default function GuardScanner({ searchQuery = '' }) {
             <div className="flex items-center justify-between border-b-2 border-slate-100 pb-2">
               <h3 className="text-xs sm:text-sm font-mono uppercase tracking-wider text-slate-700 font-extrabold flex items-center space-x-2">
                 <QrCode className="w-4 h-4 text-emerald-600" />
-                <span>Camera Stream & Token Input</span>
+                <span>Camera Stream & Pass Number</span>
               </h3>
               {isScanning && (
                 <span className="flex items-center space-x-1.5 text-xs font-mono text-emerald-600 font-bold">
@@ -877,6 +854,17 @@ export default function GuardScanner({ searchQuery = '' }) {
             {/* Camera Viewport & Centered Standby Box */}
             <div className="relative bg-slate-50 border-2 border-slate-200 rounded-xl overflow-hidden min-h-[240px] flex flex-col items-center justify-center text-center p-4">
               <div id="guard-reader" className="w-full max-w-[280px]"></div>
+
+              {isScanning && (
+                <button
+                  type="button"
+                  onClick={stopCamera}
+                  className="mt-3 min-h-[44px] px-4 py-2.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-medium text-xs flex items-center justify-center space-x-1.5 transition-all cursor-pointer shadow-sm"
+                >
+                  <CameraOff className="w-3.5 h-3.5" />
+                  <span>Stop Scanner</span>
+                </button>
+              )}
 
               {!isScanning && (
                 <div className="flex flex-col items-center justify-center text-center p-4 sm:p-6 space-y-3 w-full max-w-sm">
@@ -895,7 +883,7 @@ export default function GuardScanner({ searchQuery = '' }) {
                   <button
                     type="button"
                     onClick={startCamera}
-                    className="mt-1 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-medium text-xs flex items-center justify-center space-x-1.5 transition-all cursor-pointer shadow-sm"
+                    className="mt-1 min-h-[44px] px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-medium text-xs flex items-center justify-center space-x-1.5 transition-all cursor-pointer shadow-sm"
                   >
                     <Camera className="w-3.5 h-3.5" />
                     <span>Activate Guard Camera</span>
@@ -908,29 +896,6 @@ export default function GuardScanner({ searchQuery = '' }) {
                   )}
                 </div>
               )}
-            </div>
-          </div>
-
-          {/* Manual Token String Form */}
-          <div className="pt-3 border-t border-slate-100">
-            <label className="block text-[11px] text-slate-500 font-mono mb-1.5">
-              Direct Base64 Token Verification:
-            </label>
-            <div className="flex space-x-2">
-              <input
-                type="text"
-                value={tokenInput}
-                onChange={(e) => setTokenInput(e.target.value)}
-                placeholder="Paste encrypted base64 token string..."
-                className="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs font-mono text-slate-800 focus:outline-none focus:border-emerald-600"
-              />
-              <button
-                type="button"
-                onClick={() => processToken(tokenInput)}
-                className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-900 text-white text-xs font-medium transition-colors cursor-pointer shrink-0 shadow-sm"
-              >
-                Verify
-              </button>
             </div>
           </div>
 
@@ -992,7 +957,7 @@ export default function GuardScanner({ searchQuery = '' }) {
                     Awaiting Gate Pass Scan
                   </h4>
                   <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                    Scan a student's QR code or click one of the simulator buttons to run instantaneous offline cryptographic validation.
+                    Scan a student's QR code or enter the pass number.
                   </p>
                 </div>
               </div>
