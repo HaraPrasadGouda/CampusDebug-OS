@@ -125,6 +125,18 @@ export async function flushOutbox(onNotification) {
         targetBody = { passData: item.pass || item.payload || item };
       } else if (item.actionType === 'WARDEN_APPROVE_PASS') {
         targetEndpoint = item.endpoint || '/api/approve-pass';
+      } else if (item.actionType === 'WARDEN_REJECT_PASS') {
+        // Fix 3: rejection had no mapping (it was POSTed to "/undefined" and
+        // silently deleted). The warden desk records decisions through the
+        // same pass endpoint the approve button uses.
+        targetEndpoint = item.endpoint || '/api/create-pass';
+        targetBody = { passData: item.pass || item.payload || item };
+      } else if (item.actionType === 'MESS_FEEDBACK') {
+        targetEndpoint = item.endpoint || '/api/mess-feedback';
+        targetBody = item.payload || item;
+      } else if (item.actionType === 'ACKNOWLEDGE_NOTICE') {
+        targetEndpoint = item.endpoint || '/api/notices/ack';
+        targetBody = item.payload || item;
       } else if (item.actionType === 'MEAL_RSVP') {
         targetEndpoint = item.endpoint || '/api/meal-rsvp';
       } else if (item.actionType === 'DISPATCH_NOTICE') {
@@ -172,6 +184,14 @@ export async function flushOutbox(onNotification) {
       } else if (item.actionType && !['REQUEST_DOCUMENT','APPLY_CERTIFICATE','REQUEST_GATE_PASS','SCAN_PASS','WARDEN_APPROVE_PASS','MEAL_RSVP','SUBMIT_TICKET','CREATE_TICKET','TECHNICIAN_ACTION','WARDEN_ESCALATE','WARDEN_REASSIGN'].includes(item.actionType)) {
         targetEndpoint = item.endpoint;
         targetBody = item.payload || item;
+      }
+
+      // Fix 3: an action with no known endpoint used to be POSTed to
+      // "/undefined"; the app-shell fallback answered 200 and the action was
+      // deleted as if it had synced. Keep it queued instead of losing it.
+      if (!targetEndpoint) {
+        console.warn(`[SyncEngine] No endpoint for outbox action ${item.actionType} — kept in the queue, not sent.`);
+        continue;
       }
 
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
