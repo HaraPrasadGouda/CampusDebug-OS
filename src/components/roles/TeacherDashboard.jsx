@@ -18,6 +18,9 @@ const statusChips = {
   EXPIRED: { cls: 'bg-slate-50 text-slate-600 border-slate-200', label: 'Expired (16:30 close)' }
 };
 
+const LIST_PREVIEW = 5;
+const SCAN_PREVIEW = 6;
+
 const timeHM = (iso) => (iso ? new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—');
 
 // Server timetable day keys are 'MON'..'SAT' (THUR spelled like the solver).
@@ -33,6 +36,9 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
   // Mentor-scoped day-scholar gate log (server filters to THIS mentor's
   // own mentees — the warden never sees this data, only the mentor does).
   const [dsScans, setDsScans] = useState(null);
+  // Long lists show the first few rows + "View all" (layout only).
+  const [showAllMentees, setShowAllMentees] = useState(false);
+  const [showAllScans, setShowAllScans] = useState(false);
 
   // --- My Teaching Timetable (Phase 2): the solver publishes engagement for
   //     THIS faculty (matched on the FAC-staff roll). Today's classes first.
@@ -207,8 +213,20 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
   const mentees = (queue?.mentees || [])
     .filter(m => !filterText || `${m.full_name} ${m.roll_number}`.toLowerCase().includes(filterText));
 
+  // Section switcher chips (layout only): each chip scrolls to its own card.
+  const ttTodayCount = ttMine ? (ttMine.slots || []).filter(s => s.day === TT_TEACHER_TODAY).length : null;
+  const sectionChips = [
+    { id: 'td-approvals', label: 'Approval Queue', count: pendingLeaves.length, dot: 'bg-amber-500', hot: pendingLeaves.length > 0 },
+    ...(decidedToday.length > 0 ? [{ id: 'td-decisions', label: "Today's Decisions", count: decidedToday.length, dot: 'bg-violet-500' }] : []),
+    { id: 'td-timetable', label: 'Timetable', count: ttTodayCount, dot: 'bg-teal-500' },
+    { id: 'td-mentees', label: 'My Mentees', count: mentees.length, dot: 'bg-cyan-500' },
+    { id: 'td-gatelog', label: 'Gate Log', count: dsScans ? (dsScans.scans || []).length : null, dot: 'bg-blue-500' },
+    { id: 'td-status', label: queue?.onLeaveState?.onLeave ? 'On Leave Today' : 'Present today', count: null, dot: queue?.onLeaveState?.onLeave ? 'bg-amber-500' : 'bg-emerald-500', phoneOnly: true }
+  ];
+  const jumpToSection = (id) => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
   return (
-    <div className="p-4 sm:p-6 space-y-4 max-w-4xl mx-auto w-full">
+    <div className="p-4 sm:p-6 space-y-4 max-w-4xl xl:max-w-6xl 2xl:max-w-none mx-auto w-full">
 
       {/* 0. Wish Card — identical to the student dashboard's greeting banner:
           plain text on mobile, carded with the campus backdrop on desktop */}
@@ -233,8 +251,8 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
       </div>
 
       {/* Header */}
-      <div className="bg-white/90 backdrop-blur-sm border border-slate-200/50 rounded-2xl p-4 sm:p-5 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
+      <div className="bg-white/90 backdrop-blur-sm border border-slate-200/50 rounded-2xl p-4 sm:p-5 shadow-sm flex flex-row items-start sm:items-center justify-between gap-3">
+        <div className="min-w-0">
           <h2 className="text-lg font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
             <GraduationCap className="w-5 h-5 text-cyan-700" />
             Faculty Mentor Console
@@ -245,14 +263,14 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {queue?.pendingCount > 0 && (
-            <span className="text-[11px] font-mono font-bold text-amber-800 bg-amber-100 border border-amber-200 px-2.5 py-1 rounded-full">
+            <span className="hidden sm:inline-block text-[11px] font-mono font-bold text-amber-800 bg-amber-100 border border-amber-200 px-2.5 py-1 rounded-full">
               {queue.pendingCount} Pending
             </span>
           )}
           <button
             type="button"
             onClick={() => load(true)}
-            className="p-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-500 hover:text-slate-800 transition-colors cursor-pointer"
+            className="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-500 hover:text-slate-800 transition-colors cursor-pointer"
             title="Refresh queue"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
@@ -260,129 +278,55 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
         </div>
       </div>
 
-      {/* My Teaching Timetable (Phase 2) — today's engagement sheet */}
-      <div className="bg-white border border-teal-100 rounded-2xl p-4 shadow-sm">
-        <div className="flex items-center justify-between gap-2 mb-2.5">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-xl bg-teal-50 text-teal-700 flex items-center justify-center border border-teal-200">
-              <CalendarDays className="w-4 h-4" />
-            </div>
-            <h3 className="text-sm font-bold text-slate-800">My Teaching Timetable</h3>
-          </div>
-          <span className="text-[10px] font-bold text-slate-500 bg-slate-100 border border-slate-200 rounded-full px-2 py-0.5">
-            Today · {ttMine ? `${(ttMine.slots || []).filter(s => s.day === TT_TEACHER_TODAY).length} classes` : '…'}
-          </span>
+      {/* Section switcher — tap a chip to jump to that section (layout only) */}
+      <nav aria-label="Dashboard sections" className="sticky top-[51px] sm:top-[54px] z-20 -mx-4 sm:-mx-6 px-4 sm:px-6 py-2 bg-[#F1F5F9]/90 backdrop-blur-md">
+        <div className="flex gap-2 overflow-x-auto scrollbar-none -mx-4 px-4 sm:mx-0 sm:px-0 xl:flex-wrap">
+          {sectionChips.map(s => (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => jumpToSection(s.id)}
+              className={`${s.phoneOnly ? 'xl:hidden ' : ''}shrink-0 min-h-[44px] inline-flex items-center gap-2 pl-3 pr-2.5 rounded-full bg-white border border-slate-200 hover:border-slate-300 hover:bg-slate-50 text-xs font-bold text-slate-700 whitespace-nowrap shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-colors cursor-pointer`}
+            >
+              <span className={`w-2 h-2 rounded-full ${s.dot}`} />
+              {s.label}
+              {s.count != null && (
+                <span className={`min-w-[22px] h-[22px] px-1.5 rounded-full text-[11px] font-mono font-extrabold flex items-center justify-center ${s.hot ? 'bg-amber-500 text-white' : 'bg-slate-100 text-slate-600'}`}>
+                  {s.count}
+                </span>
+              )}
+            </button>
+          ))}
         </div>
-        {ttMine && (ttMine.slots || []).filter(s => s.day === TT_TEACHER_TODAY).length > 0 ? (
-          <div className="space-y-1.5">
-            {ttMine.slots
-              .filter(s => s.day === TT_TEACHER_TODAY)
-              .sort((a, b) => a.period - b.period)
-              .map((s, i) => (
-                <div key={`${s.day}-${s.period}-${i}`} className="flex items-center gap-2.5 px-3 py-2 rounded-xl bg-slate-50 border border-slate-100">
-                  <span className="text-[10px] font-black text-teal-700 bg-teal-50 border border-teal-200 rounded-md px-1.5 py-0.5 shrink-0">{s.periodLabel}</span>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-bold text-slate-900 truncate">
-                      {s.subject} <span className={s.kind === 'lab' ? 'text-[9px] font-black text-violet-700' : ''}>{s.kind === 'lab' ? '(LAB)' : ''}</span>
-                    </p>
-                    <p className="text-[10px] text-slate-500 font-medium truncate">{s.sectionLabel || s.departmentLabel}</p>
-                  </div>
-                  <span className="flex items-center gap-1 text-[10px] font-semibold text-slate-500 shrink-0">
-                    <MapPin className="w-3 h-3" />{s.room}
-                  </span>
-                  <span className="text-[10px] font-semibold text-slate-400 shrink-0 hidden sm:block">{s.time}</span>
-                  {s.kind !== 'study' && (markedRec(s) ? (
-                    <span
-                      className="flex items-center gap-1 text-[10px] font-black text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-2 py-1 shrink-0"
-                      title={`LOCKED — ${markedRec(s).takenByName || 'A teacher'} saved this class with ${(markedRec(s).present || []).length} present. Only an admin can unlock it.`}
-                    >
-                      <CheckCircle2 className="w-3 h-3" />
-                      Marked {(markedRec(s).present || []).length}/50 · Locked
-                    </span>
-                  ) : !markOpen(s) ? (
-                    <span
-                      className="flex items-center gap-1 text-[10px] font-bold text-slate-500 bg-slate-100 border border-slate-200 rounded-lg px-2 py-1 shrink-0"
-                      title={`Marking opens at ${openLabel(s)} — 10 minutes before the class starts. No early marking.`}
-                    >
-                      <Clock className="w-3 h-3" />
-                      Opens {openLabel(s)}
-                    </span>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => setMarkSlot(s)}
-                      className="flex items-center gap-1 text-[10px] font-black text-white bg-teal-600 hover:bg-teal-700 rounded-lg px-2 py-1 transition-colors cursor-pointer shrink-0"
-                      title={`Mark attendance for ${s.subject} · ${s.periodLabel}`}
-                    >
-                      <UserCheck className="w-3 h-3" />
-                      Mark
-                    </button>
-                  ))}
-                </div>
-              ))}
-          </div>
-        ) : (
-          <p className="text-xs text-slate-500 font-medium">
-            {ttMine ? 'No classes for you today — enjoy a quieter campus day.' : 'Schedule loads when the server timetable engine is reachable.'}
-          </p>
-        )}
-      </div>
+      </nav>
 
-      {/* On Leave Today — 1-tap delegation */}
-      <div className={`rounded-2xl border p-4 shadow-sm ${queue?.onLeaveState?.onLeave ? 'bg-amber-50/60 border-amber-300' : 'bg-white border-slate-200/50'}`}>
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-start gap-3">
-            {queue?.onLeaveState?.onLeave
-              ? <Coffee className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
-              : <Sun className="w-5 h-5 text-slate-500 mt-0.5 shrink-0" />}
-            <div>
-              <p className="text-sm font-extrabold text-slate-900">
-                {queue?.onLeaveState?.onLeave
-                  ? `On Leave Today — routed to ${queue.onLeaveState.delegatedTo === 'ADMIN' ? 'the ADMIN queue' : queue.onLeaveState.delegatedTo}`
-                  : 'Present today'}
-              </p>
-              <p className="text-[11px] text-slate-500 leading-snug mt-0.5">
-                {queue?.onLeaveState?.onLeave
-                  ? 'Your mentees\' pending requests are delegated. Tap "Back Today" when you return.'
-                  : 'Taking a day off? One tap hands your pending approvals to a present colleague (or the ADMIN queue if none is available) — never the warden.'}
-              </p>
-            </div>
-          </div>
-          <button
-            type="button"
-            disabled={toggling || !queue}
-            onClick={() => toggleAbsent(!(queue?.onLeaveState?.onLeave))}
-            className={`shrink-0 px-4 py-2.5 rounded-xl text-xs font-extrabold transition-colors cursor-pointer disabled:opacity-60 border-2 ${
-              queue?.onLeaveState?.onLeave
-                ? 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600'
-                : 'bg-amber-500 hover:bg-amber-600 text-white border-amber-500'
-            }`}
-          >
-            {toggling ? 'Working…' : queue?.onLeaveState?.onLeave ? 'Back Today' : 'On Leave Today'}
-          </button>
-        </div>
-      </div>
-
+      {/* Sections: phone = one column (Approvals first); laptop (xl) = Approvals + Decisions
+          on the left, Timetable + availability + Mentees on the right, Gate Log full width below */}
+      <div className="flex flex-col gap-4 xl:grid xl:grid-cols-12 xl:items-start">
+        <div className="contents xl:flex xl:flex-col xl:gap-4 xl:col-span-6">
       {/* Search (sidebar search + local input both apply) */}
-      <div className="relative">
+      <div className="order-1 relative">
         <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
         <input
           value={localSearch}
           onChange={(e) => setLocalSearch(e.target.value)}
           placeholder="Search students or reasons…"
-          className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 bg-white/90 text-sm outline-none focus:border-slate-400 transition-colors"
+          className="w-full min-h-[44px] pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 bg-white/90 text-sm outline-none focus:border-slate-400 transition-colors"
         />
       </div>
 
       {/* APPROVAL QUEUE — the always-works path */}
-      <div className="bg-white/90 backdrop-blur-sm border border-slate-200/50 rounded-2xl p-4 sm:p-5 space-y-3 shadow-sm">
-        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-          <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-            <Clock className="w-4 h-4 text-amber-600" />
+      <section id="td-approvals" className="order-2 scroll-mt-[124px] bg-white border-2 border-amber-200 rounded-2xl shadow-sm overflow-hidden">
+        <div className="flex items-center justify-between gap-3 px-4 sm:px-5 py-3 bg-gradient-to-r from-amber-50 to-white border-b border-amber-100">
+          <h3 className="text-[15px] font-bold text-slate-900 flex items-center gap-2.5 min-w-0">
+            <span className="w-9 h-9 rounded-xl bg-amber-100/70 text-amber-700 border border-amber-200 flex items-center justify-center shrink-0">
+              <Clock className="w-4 h-4" />
+            </span>
             Approval Queue
           </h3>
-          <span className="text-[11px] font-mono text-slate-500">{pendingLeaves.length} waiting</span>
+          <span className={`shrink-0 text-[11px] font-mono font-bold px-2.5 py-1 rounded-full border ${pendingLeaves.length > 0 ? 'text-white bg-amber-500 border-amber-500' : 'text-slate-600 bg-slate-50 border-slate-200'}`}>{pendingLeaves.length} waiting</span>
         </div>
+        <div className="p-4 sm:p-5">
 
         {loading && !queue ? (
           <div className="py-8 text-center text-xs text-slate-500 font-semibold">Loading your queue…</div>
@@ -414,14 +358,14 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
                   onChange={(e) => setNoteDraft(e.target.value)}
                   placeholder="Optional note to the student (e.g. come back after the appointment)"
                   maxLength={200}
-                  className="w-full rounded-xl border border-amber-200 bg-white p-2.5 text-xs outline-none focus:border-amber-400 transition-colors"
+                  className="w-full min-h-[44px] rounded-xl border border-amber-200 bg-white p-2.5 text-xs outline-none focus:border-amber-400 transition-colors"
                 />
                 <div className="flex gap-2">
                   <button
                     type="button"
                     disabled={busyId === leave.id}
                     onClick={() => decide(leave.id, 'APPROVED')}
-                    className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-bold text-xs cursor-pointer transition-colors flex items-center justify-center gap-1.5"
+                    className="flex-1 py-2.5 min-h-[44px] rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-bold text-xs cursor-pointer transition-colors flex items-center justify-center gap-1.5"
                   >
                     <CheckCircle2 className="w-4 h-4" /> Approve
                   </button>
@@ -429,7 +373,7 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
                     type="button"
                     disabled={busyId === leave.id}
                     onClick={() => decide(leave.id, 'REJECTED')}
-                    className="flex-1 py-2.5 rounded-xl bg-white hover:bg-rose-50 disabled:opacity-60 text-rose-700 border-2 border-rose-200 font-bold text-xs cursor-pointer transition-colors flex items-center justify-center gap-1.5"
+                    className="flex-1 py-2.5 min-h-[44px] rounded-xl bg-white hover:bg-rose-50 disabled:opacity-60 text-rose-700 border-2 border-rose-200 font-bold text-xs cursor-pointer transition-colors flex items-center justify-center gap-1.5"
                   >
                     <X className="w-4 h-4" /> Reject
                   </button>
@@ -438,124 +382,22 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
             ))}
           </div>
         )}
-      </div>
-
-      {/* My Mentees */}
-      <div className="bg-white/90 backdrop-blur-sm border border-slate-200/50 rounded-2xl p-4 sm:p-5 space-y-3 shadow-sm">
-        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-          <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-            <Users className="w-4 h-4 text-cyan-700" />
-            My Mentees
-          </h3>
-          <span className="text-[11px] font-mono text-slate-500">{mentees.length} students</span>
         </div>
-        {mentees.length === 0 ? (
-          <div className="py-8 text-center text-xs text-slate-500 space-y-1">
-            <Users className="w-8 h-8 text-slate-300 mx-auto" />
-            <p className="font-bold text-slate-600">No mentees assigned to you yet</p>
-            <p className="text-[11px]">The mentor→student mapping is set by the college roster.</p>
-          </div>
-        ) : (
-          <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
-            {mentees.map(m => {
-              const chip = statusChips[m.todayStatus] || statusChips.NO_REQUEST_TODAY;
-              return (
-                <div key={m.id} className="bg-slate-50/60 border border-slate-200 rounded-xl px-3.5 py-3 flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="text-xs font-bold text-slate-900 truncate">
-                      {m.full_name}
-                      <span className="text-[11px] font-normal text-slate-500 font-mono"> ({m.roll_number})</span>
-                    </div>
-                    <div className="text-[11px] text-slate-500 font-medium mt-0.5">{m.department || '—'}</div>
-                  </div>
-                  <span className={`shrink-0 text-[10px] font-extrabold px-2.5 py-1 rounded-full border ${chip.cls}`}>
-                    {chip.label}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      {/* Mentor's Day-Scholar Gate Log — server-scoped to THIS mentor's own
-          mentees. The warden has no access to this data (moved out of the
-          warden register deliberately). Shows LEAVE exits + COMMUTE in/outs. */}
-      <div className="bg-white/90 backdrop-blur-sm border border-slate-200/50 rounded-2xl p-4 sm:p-5 space-y-3 shadow-sm">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
-          <div>
-            <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-              <UserCheck className="w-4 h-4 text-blue-700" />
-              My Day-Scholars&apos; Gate Log
-            </h3>
-            <p className="text-[11px] text-slate-500 mt-0.5">
-              Visible ONLY to you — your own mentees&apos; campus in/out and mentor-approved leave exits, straight from the gate scanner.
-            </p>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            {dsScans && (
-              <span className="text-[11px] font-mono font-bold text-slate-700 bg-slate-50 border border-slate-200 px-2.5 py-1 rounded-full">
-                {dsScans.menteeCount} day scholars
-              </span>
-            )}
-            <button
-              type="button"
-              onClick={loadScans}
-              className="p-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-500 hover:text-slate-800 transition-colors cursor-pointer"
-              title="Refresh gate log"
-            >
-              <RefreshCw className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-        {!dsScans || (dsScans.scans || []).length === 0 ? (
-          <div className="py-8 text-center text-xs text-slate-500 space-y-1">
-            <UserCheck className="w-7 h-7 text-slate-300 mx-auto" />
-            <p className="font-semibold text-slate-600">
-              {dsScans && dsScans.registerOk === false ? 'Gate register not connected yet' : 'No gate scans for your mentees yet'}
-            </p>
-            <p className="text-[11px]">Scans appear here the moment the guard reads a mentee&apos;s Campus-QR.</p>
-          </div>
-        ) : (
-          <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
-            {dsScans.scans.map(row => {
-              const cat = String(row.category || '').toUpperCase();
-              const isLeave = cat === 'LEAVE';
-              return (
-                <div key={row.id} className="bg-slate-50/60 border border-slate-200 rounded-xl px-3.5 py-3 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
-                  <span className={`shrink-0 text-[10px] font-mono font-extrabold px-2.5 py-1 rounded-full w-fit border ${isLeave
-                    ? 'text-amber-800 bg-amber-100 border-amber-200'
-                    : row.direction === 'IN'
-                      ? 'text-emerald-800 bg-emerald-100 border-emerald-200'
-                      : 'text-sky-800 bg-sky-100 border-sky-200'}`}>
-                    {isLeave ? '↑ LEAVE OUT' : row.direction === 'IN' ? '↓ IN' : '↑ OUT'}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="text-xs font-bold text-slate-900 truncate">
-                      {row.student_name || 'Student'}
-                      <span className="text-[11px] font-normal text-slate-500 font-mono"> ({row.student_roll})</span>
-                    </div>
-                    <div className="text-[11px] text-slate-500 font-medium mt-0.5">
-                      {isLeave ? 'Mentor-approved leave exit' : 'Campus commute scan'} • by {row.scanned_by || 'Guard'}
-                    </div>
-                  </div>
-                  <div className="shrink-0 text-[10px] font-mono text-slate-500">
-                    {row.scanned_at ? new Date(row.scanned_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
+      </section>
 
       {/* Today's decided requests (audit trail) */}
       {decidedToday.length > 0 && (
-        <div className="bg-white/90 backdrop-blur-sm border border-slate-200/50 rounded-2xl p-4 sm:p-5 space-y-2 shadow-sm">
-          <h3 className="text-base font-bold text-slate-900 flex items-center gap-2 border-b border-slate-100 pb-3">
-            <ShieldAlert className="w-4 h-4 text-slate-500" />
+        <section id="td-decisions" className="order-3 scroll-mt-[124px] bg-white border border-violet-200 rounded-2xl shadow-sm overflow-hidden">
+          <div className="flex items-center justify-between gap-3 px-4 sm:px-5 py-3 bg-gradient-to-r from-violet-50 to-white border-b border-violet-100">
+          <h3 className="text-[15px] font-bold text-slate-900 flex items-center gap-2.5 min-w-0">
+            <span className="w-9 h-9 rounded-xl bg-violet-100/70 text-violet-700 border border-violet-200 flex items-center justify-center shrink-0">
+              <ShieldAlert className="w-4 h-4" />
+            </span>
             Today's Decisions
           </h3>
+          <span className="shrink-0 text-[11px] font-mono font-bold text-violet-800 bg-violet-50 border border-violet-200 px-2.5 py-1 rounded-full">{decidedToday.length}</span>
+          </div>
+          <div className="p-4 sm:p-5 space-y-2.5">
           {decidedToday.map(l => (
             <div key={l.id} className="flex items-center justify-between gap-2 text-xs">
               <span className="text-slate-700 font-semibold truncate">
@@ -571,8 +413,253 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
               </span>
             </div>
           ))}
-        </div>
+          </div>
+        </section>
       )}
+        </div>
+
+        <div className="contents xl:flex xl:flex-col xl:gap-4 xl:col-span-6">
+      {/* My Teaching Timetable (Phase 2) — today's engagement sheet */}
+      <section id="td-timetable" className="order-4 scroll-mt-[124px] rounded-2xl border border-teal-200 bg-white shadow-sm overflow-hidden">
+        <div className="flex items-center justify-between gap-2 px-4 py-3 bg-gradient-to-r from-teal-50 to-white border-b border-teal-100">
+          <div className="flex items-center gap-2">
+            <div className="w-9 h-9 rounded-xl bg-teal-100/70 text-teal-700 flex items-center justify-center border border-teal-200 shrink-0">
+              <CalendarDays className="w-4 h-4" />
+            </div>
+            <h3 className="text-[15px] font-bold text-slate-900">My Teaching Timetable</h3>
+          </div>
+          <span className="shrink-0 text-[11px] font-bold text-teal-800 bg-teal-50 border border-teal-200 rounded-full px-2.5 py-1">
+            Today · {ttMine ? `${(ttMine.slots || []).filter(s => s.day === TT_TEACHER_TODAY).length} classes` : '…'}
+          </span>
+        </div>
+        {ttMine && (ttMine.slots || []).filter(s => s.day === TT_TEACHER_TODAY).length > 0 ? (
+          <div className="space-y-1.5 p-3 sm:p-4">
+            {ttMine.slots
+              .filter(s => s.day === TT_TEACHER_TODAY)
+              .sort((a, b) => a.period - b.period)
+              .map((s, i) => (
+                <div key={`${s.day}-${s.period}-${i}`} className="flex flex-wrap sm:flex-nowrap items-center gap-x-2.5 gap-y-1.5 px-3 py-2 rounded-xl bg-slate-50 border border-slate-100">
+                  <span className="text-[10px] font-black text-teal-700 bg-teal-50 border border-teal-200 rounded-md px-1.5 py-0.5 shrink-0">{s.periodLabel}</span>
+                  <div className="flex-1 min-w-0 basis-[calc(100%-3rem)] sm:basis-auto">
+                    <p className="text-xs font-bold text-slate-900 truncate">
+                      {s.subject} <span className={s.kind === 'lab' ? 'text-[9px] font-black text-violet-700' : ''}>{s.kind === 'lab' ? '(LAB)' : ''}</span>
+                    </p>
+                    <p className="text-[10px] text-slate-500 font-medium truncate">{s.sectionLabel || s.departmentLabel}<span className="hidden xl:inline 2xl:hidden"> · {s.time}</span></p>
+                  </div>
+                  <span className="flex items-center gap-1 text-[10px] font-semibold text-slate-500 shrink-0 ml-[42px] sm:ml-0">
+                    <MapPin className="w-3 h-3" />{s.room}
+                  </span>
+                  <span className="text-[10px] font-semibold text-slate-400 shrink-0 hidden sm:block xl:hidden 2xl:block">{s.time}</span>
+                  {s.kind !== 'study' && (markedRec(s) ? (
+                    <span
+                      className="flex items-center gap-1 text-[10px] font-black text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-2 py-1 shrink-0 ml-auto sm:ml-0"
+                      title={`LOCKED — ${markedRec(s).takenByName || 'A teacher'} saved this class with ${(markedRec(s).present || []).length} present. Only an admin can unlock it.`}
+                    >
+                      <CheckCircle2 className="w-3 h-3" />
+                      Marked {(markedRec(s).present || []).length}/50 · Locked
+                    </span>
+                  ) : !markOpen(s) ? (
+                    <span
+                      className="flex items-center gap-1 text-[10px] font-bold text-slate-500 bg-slate-100 border border-slate-200 rounded-lg px-2 py-1 shrink-0 ml-auto sm:ml-0"
+                      title={`Marking opens at ${openLabel(s)} — 10 minutes before the class starts. No early marking.`}
+                    >
+                      <Clock className="w-3 h-3" />
+                      Opens {openLabel(s)}
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setMarkSlot(s)}
+                      className="flex items-center gap-1 text-[10px] font-black text-white bg-teal-600 hover:bg-teal-700 rounded-lg px-3 min-h-[44px] transition-colors cursor-pointer shrink-0 ml-auto sm:ml-0"
+                      title={`Mark attendance for ${s.subject} · ${s.periodLabel}`}
+                    >
+                      <UserCheck className="w-3 h-3" />
+                      Mark
+                    </button>
+                  ))}
+                </div>
+              ))}
+          </div>
+        ) : (
+          <p className="text-xs text-slate-500 font-medium px-4 py-4">
+            {ttMine ? 'No classes for you today — enjoy a quieter campus day.' : 'Schedule loads when the server timetable engine is reachable.'}
+          </p>
+        )}
+      </section>
+
+      {/* On Leave Today — 1-tap delegation */}
+      <section id="td-status" className={`order-7 xl:order-4 scroll-mt-[124px] rounded-2xl border p-4 shadow-sm ${queue?.onLeaveState?.onLeave ? 'bg-amber-50/60 border-amber-300' : 'bg-white border-slate-200/50'}`}>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-start gap-3">
+            {queue?.onLeaveState?.onLeave
+              ? <Coffee className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
+              : <Sun className="w-5 h-5 text-slate-500 mt-0.5 shrink-0" />}
+            <div>
+              <p className="text-sm font-extrabold text-slate-900">
+                {queue?.onLeaveState?.onLeave
+                  ? `On Leave Today — routed to ${queue.onLeaveState.delegatedTo === 'ADMIN' ? 'the ADMIN queue' : queue.onLeaveState.delegatedTo}`
+                  : 'Present today'}
+              </p>
+              <p className="text-[11px] text-slate-500 leading-snug mt-0.5">
+                {queue?.onLeaveState?.onLeave
+                  ? 'Your mentees\' pending requests are delegated. Tap "Back Today" when you return.'
+                  : 'Taking a day off? One tap hands your pending approvals to a present colleague (or the ADMIN queue if none is available) — never the warden.'}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            disabled={toggling || !queue}
+            onClick={() => toggleAbsent(!(queue?.onLeaveState?.onLeave))}
+            className={`shrink-0 px-4 py-2.5 min-h-[44px] rounded-xl text-xs font-extrabold transition-colors cursor-pointer disabled:opacity-60 border-2 ${
+              queue?.onLeaveState?.onLeave
+                ? 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600'
+                : 'bg-amber-500 hover:bg-amber-600 text-white border-amber-500'
+            }`}
+          >
+            {toggling ? 'Working…' : queue?.onLeaveState?.onLeave ? 'Back Today' : 'On Leave Today'}
+          </button>
+        </div>
+      </section>
+
+      {/* My Mentees */}
+      <section id="td-mentees" className="order-5 scroll-mt-[124px] bg-white border border-cyan-200 rounded-2xl shadow-sm overflow-hidden">
+        <div className="flex items-center justify-between gap-3 px-4 sm:px-5 py-3 bg-gradient-to-r from-cyan-50 to-white border-b border-cyan-100">
+          <h3 className="text-[15px] font-bold text-slate-900 flex items-center gap-2.5 min-w-0">
+            <span className="w-9 h-9 rounded-xl bg-cyan-100/70 text-cyan-700 border border-cyan-200 flex items-center justify-center shrink-0">
+              <Users className="w-4 h-4" />
+            </span>
+            My Mentees
+          </h3>
+          <span className="shrink-0 text-[11px] font-mono font-bold text-cyan-800 bg-cyan-50 border border-cyan-200 px-2.5 py-1 rounded-full">{mentees.length} students</span>
+        </div>
+        <div className="p-4 sm:p-5 space-y-3">
+        {mentees.length === 0 ? (
+          <div className="py-8 text-center text-xs text-slate-500 space-y-1">
+            <Users className="w-8 h-8 text-slate-300 mx-auto" />
+            <p className="font-bold text-slate-600">No mentees assigned to you yet</p>
+            <p className="text-[11px]">The mentor→student mapping is set by the college roster.</p>
+          </div>
+        ) : (
+          <div className={`space-y-2 pr-1 ${showAllMentees || filterText ? 'max-h-96 overflow-y-auto' : ''}`}>
+            {(showAllMentees || filterText ? mentees : mentees.slice(0, LIST_PREVIEW)).map(m => {
+              const chip = statusChips[m.todayStatus] || statusChips.NO_REQUEST_TODAY;
+              return (
+                <div key={m.id} className="bg-slate-50/60 border border-slate-200 rounded-xl px-3.5 py-3 flex flex-wrap sm:flex-nowrap items-center justify-between gap-x-3 gap-y-2">
+                  <div className="min-w-0 basis-full sm:basis-auto">
+                    <div className="text-xs font-bold text-slate-900 truncate">
+                      {m.full_name}
+                      <span className="text-[11px] font-normal text-slate-500 font-mono"> ({m.roll_number})</span>
+                    </div>
+                    <div className="text-[11px] text-slate-500 font-medium mt-0.5">{m.department || '—'}</div>
+                  </div>
+                  <span className={`shrink-0 text-[10px] font-extrabold px-2.5 py-1 rounded-full border ${chip.cls}`}>
+                    {chip.label}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {mentees.length > LIST_PREVIEW && !filterText && (
+          <button
+            type="button"
+            onClick={() => setShowAllMentees(v => !v)}
+            className="w-full min-h-[44px] rounded-xl border border-cyan-200 bg-cyan-50/50 hover:bg-cyan-50 text-cyan-800 text-xs font-bold transition-colors cursor-pointer"
+          >
+            {showAllMentees ? 'Show less' : `View all (${mentees.length})`}
+          </button>
+        )}
+        </div>
+      </section>
+        </div>
+
+      {/* Mentor's Day-Scholar Gate Log — server-scoped to THIS mentor's own
+          mentees. The warden has no access to this data (moved out of the
+          warden register deliberately). Shows LEAVE exits + COMMUTE in/outs. */}
+      <section id="td-gatelog" className="order-6 xl:col-span-12 scroll-mt-[124px] bg-white border border-blue-200 rounded-2xl shadow-sm overflow-hidden">
+        <div className="flex items-start justify-between gap-3 px-4 sm:px-5 py-3 bg-gradient-to-r from-blue-50 to-white border-b border-blue-100">
+          <div className="flex items-start gap-2.5 min-w-0">
+            <span className="w-9 h-9 rounded-xl bg-blue-100/70 text-blue-700 border border-blue-200 flex items-center justify-center shrink-0">
+              <UserCheck className="w-4 h-4" />
+            </span>
+            <div className="min-w-0">
+            <h3 className="text-[15px] font-bold text-slate-900 leading-9">
+              My Day-Scholars&apos; Gate Log
+            </h3>
+            <p className="text-[11px] text-slate-500 -mt-1 leading-snug">
+              Visible ONLY to you — your own mentees&apos; campus in/out and mentor-approved leave exits, straight from the gate scanner.
+            </p>
+            {dsScans && (
+              <span className="inline-block mt-1.5 text-[11px] font-mono font-bold text-blue-800 bg-blue-50 border border-blue-200 px-2.5 py-1 rounded-full">
+                {dsScans.menteeCount} day scholars
+              </span>
+            )}
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={loadScans}
+              className="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl border border-blue-200 bg-white hover:bg-blue-50 text-slate-500 hover:text-slate-800 transition-colors cursor-pointer"
+              title="Refresh gate log"
+            >
+              <RefreshCw className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+        <div className="p-4 sm:p-5 space-y-3">
+        {!dsScans || (dsScans.scans || []).length === 0 ? (
+          <div className="py-8 text-center text-xs text-slate-500 space-y-1">
+            <UserCheck className="w-7 h-7 text-slate-300 mx-auto" />
+            <p className="font-semibold text-slate-600">
+              {dsScans && dsScans.registerOk === false ? 'Gate register not connected yet' : 'No gate scans for your mentees yet'}
+            </p>
+            <p className="text-[11px]">Scans appear here the moment the guard reads a mentee&apos;s Campus-QR.</p>
+          </div>
+        ) : (
+          <div className={`space-y-2 pr-1 xl:grid xl:grid-cols-2 xl:gap-2 xl:space-y-0 ${showAllScans ? 'max-h-96 overflow-y-auto' : ''}`}>
+            {(showAllScans ? dsScans.scans : dsScans.scans.slice(0, SCAN_PREVIEW)).map(row => {
+              const cat = String(row.category || '').toUpperCase();
+              const isLeave = cat === 'LEAVE';
+              return (
+                <div key={row.id} className="bg-slate-50/60 border border-slate-200 rounded-xl px-3.5 py-3 flex flex-wrap sm:flex-nowrap items-center gap-x-3 gap-y-1.5 sm:gap-3">
+                  <span className={`shrink-0 text-[10px] font-mono font-extrabold px-2.5 py-1 rounded-full w-fit border ${isLeave
+                    ? 'text-amber-800 bg-amber-100 border-amber-200'
+                    : row.direction === 'IN'
+                      ? 'text-emerald-800 bg-emerald-100 border-emerald-200'
+                      : 'text-sky-800 bg-sky-100 border-sky-200'}`}>
+                    {isLeave ? '↑ LEAVE OUT' : row.direction === 'IN' ? '↓ IN' : '↑ OUT'}
+                  </span>
+                  <div className="min-w-0 flex-1 basis-full order-last sm:order-none sm:basis-auto">
+                    <div className="text-xs font-bold text-slate-900 truncate">
+                      {row.student_name || 'Student'}
+                      <span className="text-[11px] font-normal text-slate-500 font-mono"> ({row.student_roll})</span>
+                    </div>
+                    <div className="text-[11px] text-slate-500 font-medium mt-0.5">
+                      {isLeave ? 'Mentor-approved leave exit' : 'Campus commute scan'} • by {row.scanned_by || 'Guard'}
+                    </div>
+                  </div>
+                  <div className="shrink-0 ml-auto sm:ml-0 text-[10px] font-mono text-slate-500">
+                    {row.scanned_at ? new Date(row.scanned_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {dsScans && (dsScans.scans || []).length > SCAN_PREVIEW && (
+          <button
+            type="button"
+            onClick={() => setShowAllScans(v => !v)}
+            className="w-full min-h-[44px] rounded-xl border border-blue-200 bg-blue-50/50 hover:bg-blue-50 text-blue-800 text-xs font-bold transition-colors cursor-pointer"
+          >
+            {showAllScans ? 'Show less' : `View all (${dsScans.scans.length})`}
+          </button>
+        )}
+        </div>
+      </section>
+      </div>
 
       {/* Phase 3: attendance marking overlay, opened from a timetable row */}
       <AttendanceMarkModal
