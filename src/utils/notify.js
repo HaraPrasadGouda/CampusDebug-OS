@@ -13,7 +13,7 @@
 //   activated + app in background → system notification via SW polling
 //   unactivated                 → real SMS from the gateway SIM (server)
 // ---------------------------------------------------------------------
-import { getStoredProfile } from './authClient';
+import { getStoredProfile, getStoredSession } from './authClient';
 
 const SEEN_KEY = 'campusdebug_last_seen_notices';
 const POLL_INTERVAL = 20000; // 20s — cheap, honest, catches notice dispatch fast
@@ -21,6 +21,9 @@ const POLL_INTERVAL = 20000; // 20s — cheap, honest, catches notice dispatch f
 let pollingTimer = null;
 let visibilityHandler = null;
 let inFlight = false;
+// Set while a sign-out is telling the server to forget this device; the
+// next login's subscribe waits for it so the two requests can't cross.
+let pendingDeviceRelease = null;
 
 function readSeenMap() {
     try {
@@ -91,6 +94,16 @@ async function ensureWebPushSubscription(profile) {
         }
 
         const roll = profile?.rollNumber || profile?.identity;
+        // No signed-in account → don't register. (A roll-less device would be
+        // filed under 'global' and receive every account's alerts.)
+        if (!roll) return { ok: false, message: 'Sign in to turn on background alerts' };
+        // A sign-out may still be removing this device on the server — let
+        // it finish first, then make sure the same account is still signed in.
+        if (pendingDeviceRelease) await pendingDeviceRelease;
+        const current = getStoredProfile();
+        if ((current?.rollNumber || current?.identity) !== roll) {
+            return { ok: false, message: 'Signed out — background alerts not registered' };
+        }
         const res = await fetch('/api/push/subscribe', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -180,6 +193,59 @@ export async function disableBackgroundAlerts() {
     } catch (err) {
         return { ok: false, message: `Could not turn off: ${err.message}` };
     }
+}
+
+// Sign-out: tell the server to stop sending the signed-out account's alerts
+// to THIS device. Fire-and-forget — logout never waits on it and an offline
+// logout still completes. The browser subscription and the Settings choice
+// (opt-out flag) are left alone, so the next login re-registers this device
+// automatically, with no new permission prompt.
+export function releasePushDeviceOnSignOut() {
+    if (typeof window === 'undefined') return Promise.resolve();
+    // Read the login token NOW — the caller clears the session right after.
+    const stored = getStoredSession();
+    const token = stored?.session?.access_token || null;
+    const refreshToken = stored?.session?.refresh_token || null;
+    const task = (async () => {
+        const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        const timer = ctrl ? setTimeout(() => ctrl.abort(), 8000) : null;
+        try {
+            if (!('serviceWorker' in navigator)) return;
+            const reg = await navigator.serviceWorker.getRegistration();
+            const sub = reg?.pushManager ? await reg.pushManager.getSubscription() : null;
+            if (!sub) return;
+            const send = (bearer) => fetch('/api/push/unsubscribe', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}) },
+                body: JSON.stringify({ endpoint: sub.endpoint }),
+                signal: ctrl?.signal
+            });
+            let res = await send(token);
+            // Token expired while the app sat open → refresh once and retry.
+            if (res.status === 401 && refreshToken) {
+                const r = await fetch('/api/auth/refresh', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ refreshToken }),
+                    signal: ctrl?.signal
+                });
+                const data = r.ok ? await r.json().catch(() => null) : null;
+                if (data?.session?.access_token) res = await send(data.session.access_token);
+            }
+            console.log(`[notify] sign-out: device ${res.ok ? 'removed from' : 'NOT removed from'} push routing (HTTP ${res.status})`);
+        } catch (err) {
+            // Offline / timeout: the next login on this device moves the
+            // device to that account anyway (server keeps one account per device).
+            console.warn('[notify] sign-out: could not remove device from push routing:', err && err.message);
+        } finally {
+            if (timer) clearTimeout(timer);
+        }
+    })();
+    const tracked = task.finally(() => {
+        if (pendingDeviceRelease === tracked) pendingDeviceRelease = null;
+    });
+    pendingDeviceRelease = tracked;
+    return tracked;
 }
 
 export async function requestNotificationPermission() {

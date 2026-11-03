@@ -284,6 +284,22 @@ async function pushToRolls(rollNumbers, { title, body }) {
     return delivered;
 }
 
+// One device = one current account: when a device registers for a roll,
+// drop the same endpoint from every OTHER roll key (a student logging in on
+// a phone previously used by someone else takes that phone over).
+function detachEndpointFromOtherRolls(endpoint, keepKey) {
+    const movedFrom = [];
+    for (const key of Object.keys(pushSubscriptions)) {
+        if (key === keepKey) continue;
+        const list = pushSubscriptions[key].filter(s => s.endpoint !== endpoint);
+        if (list.length === pushSubscriptions[key].length) continue;
+        movedFrom.push(key);
+        if (list.length) pushSubscriptions[key] = list;
+        else delete pushSubscriptions[key];
+    }
+    return movedFrom;
+}
+
 function pushEverything({ title, body }) {
     return pushToRolls(Object.keys(pushSubscriptions), { title, body });
 }
@@ -2394,6 +2410,11 @@ app.post('/api/push/subscribe', authenticateUser, (req, res) => {
         const key = (supabase ? req.user?.rollNumber : rollNumber) || 'global';
         const entries = pushSubscriptions[key] || [];
         const alreadyKnown = entries.some(s => s.endpoint === subscription.endpoint);
+        const movedFrom = detachEndpointFromOtherRolls(subscription.endpoint, key);
+        if (movedFrom.length) {
+            console.log(`🔔 [PUSH] device moved to ${key} (removed from ${movedFrom.length} other account(s))`);
+            if (alreadyKnown) savePushSubs();
+        }
         if (!alreadyKnown) {
             entries.push(subscription);
             pushSubscriptions[key] = entries;
