@@ -36,6 +36,7 @@ import {
 import AiCategoryChip from '../AiCategoryChip';
 import { getTodayMenuKey, getTodayMenu, getTomorrowMenu, isFeastDay, getTodayDayLabel, getMealStatus, fmtDuration, MEAL_ORDER } from '../../data/messMenu';
 import { isLeaveWindowOpen } from '../../utils/leaveWindow';
+import { leaveNumber } from '../../utils/passNumber';
 
 export default function StudentDashboard({
   activities = [],
@@ -212,6 +213,8 @@ export default function StudentDashboard({
       footer: 'Awaiting Mentor Sign-off', footerDot: 'bg-amber-500', action: 'View QR →'
     };
   })() : null;
+  // Leave number (LV-xxxxxx) = the card title, like the hosteller's GP number.
+  const leaveNo = leaveCard ? leaveNumber(dayLeave.id) : '';
   const mealOrder = isDayScholar ? dayScholarMealOrder : MEAL_ORDER;
   // Live meal-slot engine: what's being served right now / what's next
   const mealStatus = getMealStatus(new Date(), mealOrder);
@@ -618,8 +621,8 @@ export default function StudentDashboard({
         </div>
 
         <div className="[grid-area:main] min-w-0 mt-1.5 lg:mt-3 lg:flex lg:flex-col lg:justify-center">
-          <div className={`${leaveCard ? 'text-[15px] lg:text-xl 2xl:text-2xl' : 'text-[15px] lg:text-[26px]'} leading-tight font-bold lg:font-extrabold text-slate-900 font-mono tracking-tight break-words group-hover:text-amber-900 transition-colors`}>
-            {leaveCard ? 'Day-Scholar Leave' : cardPass ? cardPass.id : 'No Active Pass'}
+          <div className={`${leaveCard && !leaveNo ? 'text-[15px] lg:text-xl 2xl:text-2xl' : 'text-[15px] lg:text-[26px]'} leading-tight font-bold lg:font-extrabold text-slate-900 font-mono tracking-tight break-words group-hover:text-amber-900 transition-colors`}>
+            {leaveCard ? (leaveNo || 'Day-Scholar Leave') : cardPass ? cardPass.id : 'No Active Pass'}
           </div>
           <p className="text-[11px] lg:text-[12.5px] text-slate-600 font-medium mt-0.5 lg:mt-1 max-lg:line-clamp-2 max-lg:break-words lg:truncate">
             {leaveCard
