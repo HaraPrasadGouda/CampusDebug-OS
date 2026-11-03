@@ -4,10 +4,11 @@ import {
 } from 'lucide-react';
 import { getAccessToken } from '../../utils/authClient';
 import AttendanceMarkModal from '../modals/AttendanceMarkModal';
+import { leaveNumber } from '../../utils/passNumber';
 
 // Day-scholar leave mentor console. scoped server-side: a TEACHER's queue
-// only ever contains their own mentees (+ leaves routed to them by the
-// absence delegation system) — ADMIN sees everything, TEACHER sees theirs.
+// only ever contains their own mentees (+ leaves routed to them while they
+// cover for an absent mentor). The admin is not part of the leave flow.
 
 const statusChips = {
   NO_REQUEST_TODAY: { cls: 'bg-slate-50 text-slate-600 border-slate-200', label: 'No request today' },
@@ -39,6 +40,12 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
   // Long lists show the first few rows + "View all" (layout only).
   const [showAllMentees, setShowAllMentees] = useState(false);
   const [showAllScans, setShowAllScans] = useState(false);
+  // Mentor-created leave (keypad-phone day scholars): which mentee row has the
+  // reason box open, the draft, and the last error for that row.
+  const [mlRoll, setMlRoll] = useState(null);
+  const [mlReason, setMlReason] = useState('');
+  const [mlBusy, setMlBusy] = useState(false);
+  const [mlErr, setMlErr] = useState('');
 
   // --- My Teaching Timetable (Phase 2): the solver publishes engagement for
   //     THIS faculty (matched on the FAC-staff roll). Today's classes first.
@@ -127,7 +134,7 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
       if (j?.success) {
         setNoteDraft('');
         if (onNotification) onNotification(
-          action === 'APPROVED' ? 'Approved — the student must show their Campus-QR at the gate; nothing auto-approved.' : 'Request rejected — the student has been notified.',
+          action === 'APPROVED' ? `Approved — leave number ${leaveNumber(j.leave?.id)} sent to the student. They tell the guard this number (or show the Campus-QR).` : 'Request rejected — the student has been notified.',
           'success'
         );
         load(false);
@@ -140,6 +147,31 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
     setBusyId(null);
   };
 
+  // Mentor creates a leave for a mentee who has no smartphone. The server
+  // records it as APPROVED by this mentor and SMSes the LV number.
+  const createLeave = async (roll) => {
+    setMlBusy(true); setMlErr('');
+    try {
+      const tok = getAccessToken();
+      const r = await fetch('/api/leave-requests/mentor-create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(tok ? { Authorization: `Bearer ${tok}` } : {}) },
+        body: JSON.stringify({ studentRoll: roll, reason: mlReason })
+      });
+      const j = await r.json();
+      if (j?.success) {
+        setMlRoll(null); setMlReason('');
+        if (onNotification) onNotification(`Leave ${j.number} approved — SMS sent to the student. Tell them the number too.`, 'success');
+        load(false);
+      } else {
+        setMlErr(j?.error || 'Leave was not created.');
+      }
+    } catch {
+      setMlErr('Offline — leave not created.');
+    }
+    setMlBusy(false);
+  };
+
   const toggleAbsent = async (onLeave) => {
     setToggling(true);
     try {
@@ -147,16 +179,16 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
       const r = await fetch('/api/leave-requests/teacher-absent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(tok ? { Authorization: `Bearer ${tok}` } : {}) },
-        body: JSON.stringify({ onLeave, delegate: 'AUTO' })
+        body: JSON.stringify({ onLeave })
       });
       const j = await r.json();
       if (j?.success) {
         if (onNotification) onNotification(
-          j.onLeave
-            ? (j.delegatedTo === 'ADMIN'
-              ? 'Marked On Leave — your pending approvals escalated to the ADMIN queue.'
-              : `Marked On Leave — pending approvals delegate to ${j.delegatedTo}.`)
-            : 'Welcome back — your mentees\' pending requests are yours again.',
+          j.message || (j.onLeave
+            ? (j.delegatedTo
+              ? `Marked On Leave — ${j.delegatedTo} handles your mentees' leaves today.`
+              : 'Marked On Leave — no other teacher is present, so requests stay in your queue.')
+            : 'Welcome back — your mentees\' pending requests are yours again.'),
           'success'
         );
         load(false);
@@ -212,11 +244,96 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
     .filter(l => !filterText || `${l.student_name} ${l.student_roll} ${l.reason}`.toLowerCase().includes(filterText));
   const mentees = (queue?.mentees || [])
     .filter(m => !filterText || `${m.full_name} ${m.roll_number}`.toLowerCase().includes(filterText));
+  // Covering today: absent mentors whose day scholars the server handed to me.
+  const coverGroups = (queue?.covering || []).map(g => ({
+    ...g,
+    mentees: (g.mentees || []).filter(m => !filterText || `${m.full_name} ${m.roll_number}`.toLowerCase().includes(filterText))
+  })).filter(g => g.mentees.length > 0);
+
+  // One mentee row (status chip, LV number chip, "Create leave" + reason box).
+  // Used for my own mentees and, with `covering`, for an absent mentor's
+  // day scholars I am covering today (their live leave id comes from the server).
+  const renderMenteeRow = (m, covering = false) => {
+    const chip = statusChips[m.todayStatus] || statusChips.NO_REQUEST_TODAY;
+    const isDS = String(m.resident_type || '').toLowerCase() === 'dayscholar';
+    const canCreate = isDS && ['NO_REQUEST_TODAY', 'REJECTED', 'EXPIRED'].includes(m.todayStatus || 'NO_REQUEST_TODAY');
+    const liveLeave = m.todayStatus !== 'APPROVED_NOT_OUT' ? null
+      : covering ? (m.liveLeaveId ? { id: m.liveLeaveId } : null)
+        : (queue?.leaves || []).find(l => l.student_roll === m.roll_number && l.status === 'APPROVED' && !l.scanned_at);
+    const formOpen = mlRoll === m.roll_number;
+    return (
+      <div key={m.id} className="bg-slate-50/60 border border-slate-200 rounded-xl px-3.5 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+          <div className="min-w-0 grow basis-full sm:basis-[15rem]">
+            <div className="text-xs font-bold text-slate-900 truncate">
+              {m.full_name}
+              <span className="text-[11px] font-normal text-slate-500 font-mono"> ({m.roll_number})</span>
+            </div>
+            <div className="text-[11px] text-slate-500 font-medium mt-0.5">{m.department || '—'}</div>
+          </div>
+          <div className="flex flex-1 sm:flex-none sm:ml-auto items-center justify-between sm:justify-end gap-2">
+            <span className={`shrink-0 text-[10px] font-extrabold px-2.5 py-1 rounded-full border ${chip.cls}`}>
+              {chip.label}
+            </span>
+            {liveLeave && (
+              <span className="shrink-0 font-mono text-[11px] font-extrabold text-emerald-800 bg-emerald-50 border border-emerald-300 px-2.5 py-1 rounded-lg" title="Leave number — the student tells the guard this">
+                {leaveNumber(liveLeave.id)}
+              </span>
+            )}
+            {canCreate && !formOpen && (
+              <button
+                type="button"
+                onClick={() => { setMlRoll(m.roll_number); setMlReason(''); setMlErr(''); }}
+                className="shrink-0 min-h-[44px] px-3.5 rounded-xl border border-cyan-300 bg-white text-cyan-800 text-xs font-bold hover:bg-cyan-50 active:scale-[0.98] transition"
+              >
+                Create leave
+              </button>
+            )}
+          </div>
+        </div>
+        {formOpen && (
+          <div className="mt-3 pt-3 border-t border-slate-200 space-y-2">
+            <label className="block text-[11px] font-bold text-slate-600" htmlFor={`ml-${m.roll_number}`}>
+              Reason (student has no smartphone — leave is approved at once, number goes by SMS)
+            </label>
+            <input
+              id={`ml-${m.roll_number}`}
+              type="text"
+              value={mlReason}
+              onChange={e => setMlReason(e.target.value)}
+              placeholder="e.g. Fever, going home"
+              maxLength={200}
+              className="w-full min-h-[44px] px-3 rounded-xl border border-slate-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-cyan-400"
+            />
+            {mlErr && <p className="text-[11px] font-bold text-rose-600">{mlErr}</p>}
+            <div className="flex gap-2">
+              <button
+                type="button"
+                disabled={mlBusy || mlReason.trim().length < 5}
+                onClick={() => createLeave(m.roll_number)}
+                className="flex-1 sm:flex-none min-h-[44px] px-4 rounded-xl bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
+              >
+                {mlBusy ? 'Creating…' : 'Approve & send SMS'}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setMlRoll(null); setMlErr(''); }}
+                className="min-h-[44px] px-4 rounded-xl border border-slate-300 bg-white text-slate-700 text-xs font-bold hover:bg-slate-50 transition"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   // Section switcher chips (layout only): each chip scrolls to its own card.
   const ttTodayCount = ttMine ? (ttMine.slots || []).filter(s => s.day === TT_TEACHER_TODAY).length : null;
   const sectionChips = [
     { id: 'td-approvals', label: 'Approval Queue', count: pendingLeaves.length, dot: 'bg-amber-500', hot: pendingLeaves.length > 0 },
+    ...(coverGroups.length > 0 ? [{ id: 'td-covering', label: 'Covering', count: coverGroups.reduce((n, g) => n + g.mentees.length, 0), dot: 'bg-indigo-500', hot: true }] : []),
     ...(decidedToday.length > 0 ? [{ id: 'td-decisions', label: "Today's Decisions", count: decidedToday.length, dot: 'bg-violet-500' }] : []),
     { id: 'td-timetable', label: 'Timetable', count: ttTodayCount, dot: 'bg-teal-500' },
     { id: 'td-mentees', label: 'My Mentees', count: mentees.length, dot: 'bg-cyan-500' },
@@ -385,6 +502,31 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
         </div>
       </section>
 
+      {/* Covering for an absent mentor — today only: their day scholars, with
+          "Create leave" (keypad-phone students). Their pending requests are
+          already in the Approval Queue above. */}
+      {coverGroups.map(g => (
+        <section key={g.mentorRoll} id="td-covering" className="order-2 scroll-mt-[124px] bg-white border-2 border-indigo-200 rounded-2xl shadow-sm overflow-hidden">
+          <div className="flex items-center justify-between gap-3 px-4 sm:px-5 py-3 bg-gradient-to-r from-indigo-50 to-white border-b border-indigo-100">
+            <h3 className="text-[15px] font-bold text-slate-900 flex items-center gap-2.5 min-w-0">
+              <span className="w-9 h-9 rounded-xl bg-indigo-100/70 text-indigo-700 border border-indigo-200 flex items-center justify-center shrink-0">
+                <UserCheck className="w-4 h-4" />
+              </span>
+              <span className="min-w-0">Covering for {g.mentorName}</span>
+            </h3>
+            <span className="shrink-0 text-[11px] font-mono font-bold text-indigo-800 bg-indigo-50 border border-indigo-200 px-2.5 py-1 rounded-full">{g.mentees.length} students</span>
+          </div>
+          <div className="p-4 sm:p-5 space-y-3">
+            <p className="text-[11px] text-slate-500 leading-snug">
+              {g.mentorName} is on leave today. Their day scholars' requests come to you — approve them in the queue, or create a leave here for a student without a smartphone.
+            </p>
+            <div className="space-y-2">
+              {g.mentees.map(m => renderMenteeRow(m, true))}
+            </div>
+          </div>
+        </section>
+      ))}
+
       {/* Today's decided requests (audit trail) */}
       {decidedToday.length > 0 && (
         <section id="td-decisions" className="order-3 scroll-mt-[124px] bg-white border border-violet-200 rounded-2xl shadow-sm overflow-hidden">
@@ -497,13 +639,15 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
             <div>
               <p className="text-sm font-extrabold text-slate-900">
                 {queue?.onLeaveState?.onLeave
-                  ? `On Leave Today — routed to ${queue.onLeaveState.delegatedTo === 'ADMIN' ? 'the ADMIN queue' : queue.onLeaveState.delegatedTo}`
+                  ? (queue.onLeaveState.delegatedTo ? `On Leave Today — covered by ${queue.onLeaveState.delegatedTo}` : 'On Leave Today — no colleague present')
                   : 'Present today'}
               </p>
               <p className="text-[11px] text-slate-500 leading-snug mt-0.5">
                 {queue?.onLeaveState?.onLeave
-                  ? 'Your mentees\' pending requests are delegated. Tap "Back Today" when you return.'
-                  : 'Taking a day off? One tap hands your pending approvals to a present colleague (or the ADMIN queue if none is available) — never the warden.'}
+                  ? (queue.onLeaveState.delegatedTo
+                    ? 'Your substitute approves, rejects and creates leaves for your mentees today. Tap "Back Today" when you return.'
+                    : 'Nobody else is present, so your mentees\' requests stay in your queue. Tap "Back Today" when you return.')
+                  : 'Taking a day off? One tap hands your mentees\' leaves to a present colleague for today — approve, reject and create.'}
               </p>
             </div>
           </div>
@@ -542,23 +686,7 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
           </div>
         ) : (
           <div className={`space-y-2 pr-1 ${showAllMentees || filterText ? 'max-h-96 overflow-y-auto' : ''}`}>
-            {(showAllMentees || filterText ? mentees : mentees.slice(0, LIST_PREVIEW)).map(m => {
-              const chip = statusChips[m.todayStatus] || statusChips.NO_REQUEST_TODAY;
-              return (
-                <div key={m.id} className="bg-slate-50/60 border border-slate-200 rounded-xl px-3.5 py-3 flex flex-wrap sm:flex-nowrap items-center justify-between gap-x-3 gap-y-2">
-                  <div className="min-w-0 basis-full sm:basis-auto">
-                    <div className="text-xs font-bold text-slate-900 truncate">
-                      {m.full_name}
-                      <span className="text-[11px] font-normal text-slate-500 font-mono"> ({m.roll_number})</span>
-                    </div>
-                    <div className="text-[11px] text-slate-500 font-medium mt-0.5">{m.department || '—'}</div>
-                  </div>
-                  <span className={`shrink-0 text-[10px] font-extrabold px-2.5 py-1 rounded-full border ${chip.cls}`}>
-                    {chip.label}
-                  </span>
-                </div>
-              );
-            })}
+            {(showAllMentees || filterText ? mentees : mentees.slice(0, LIST_PREVIEW)).map(m => renderMenteeRow(m))}
           </div>
         )}
         {mentees.length > LIST_PREVIEW && !filterText && (
