@@ -23,6 +23,7 @@ export default {
       fontFamily: {
         mono: ['JetBrains Mono', 'Fira Code', 'monospace'],
         sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
+        display: ['Montserrat', 'Inter', 'system-ui', '-apple-system', 'sans-serif'],
       }
     },
   },
