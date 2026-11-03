@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import {
   CheckCircle2, X, Users, Coffee, RefreshCw, Clock, LogOut, Search, GraduationCap, ShieldAlert, Sun, CalendarDays, MapPin, UserCheck
 } from 'lucide-react';
@@ -38,7 +39,8 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
   // own mentees — the warden never sees this data, only the mentor does).
   const [dsScans, setDsScans] = useState(null);
   // Long lists show the first few rows + "View all" (layout only).
-  const [showAllMentees, setShowAllMentees] = useState(false);
+  // My Mentees is kept separate: a summary card, the list opens on tap.
+  const [menteesOpen, setMenteesOpen] = useState(false);
   const [showAllScans, setShowAllScans] = useState(false);
   // Mentor-created leave (keypad-phone day scholars): which mentee row has the
   // reason box open, the draft, and the last error for that row.
@@ -46,6 +48,11 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
   const [mlReason, setMlReason] = useState('');
   const [mlBusy, setMlBusy] = useState(false);
   const [mlErr, setMlErr] = useState('');
+  // One "Create leave for student" button opens a picker (replaces the
+  // per-row buttons); after success it shows the LV number.
+  const [mlOpen, setMlOpen] = useState(false);
+  const [mlQuery, setMlQuery] = useState('');
+  const [mlDone, setMlDone] = useState(null);
 
   // --- My Teaching Timetable (Phase 2): the solver publishes engagement for
   //     THIS faculty (matched on the FAC-staff roll). Today's classes first.
@@ -55,6 +62,13 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
   // HARD LOCK state: `${sectionKey}|${period}` -> the saved record. A class
   // that appears here shows a "Marked ✓ Locked" chip instead of a Mark button.
   const [ttMarked, setTtMarked] = useState({});
+
+  useEffect(() => {
+    if (!menteesOpen && !mlOpen) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') { setMenteesOpen(false); setMlOpen(false); } };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [menteesOpen, mlOpen]);
 
   const todayKey = () => {
     const d = new Date();
@@ -160,6 +174,7 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
       });
       const j = await r.json();
       if (j?.success) {
+        setMlDone({ number: j.number, roll });
         setMlRoll(null); setMlReason('');
         if (onNotification) onNotification(`Leave ${j.number} approved — SMS sent to the student. Tell them the number too.`, 'success');
         load(false);
@@ -250,21 +265,27 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
     mentees: (g.mentees || []).filter(m => !filterText || `${m.full_name} ${m.roll_number}`.toLowerCase().includes(filterText))
   })).filter(g => g.mentees.length > 0);
 
-  // One mentee row (status chip, LV number chip, "Create leave" + reason box).
-  // Used for my own mentees and, with `covering`, for an absent mentor's
-  // day scholars I am covering today (their live leave id comes from the server).
+  // Who may get a mentor-created leave (rule unchanged): day scholars with
+  // no live request today. Others show why, greyed, in the picker.
+  const canCreateFor = (m) => String(m.resident_type || '').toLowerCase() === 'dayscholar'
+    && ['NO_REQUEST_TODAY', 'REJECTED', 'EXPIRED'].includes(m.todayStatus || 'NO_REQUEST_TODAY');
+  const notEligibleWhy = (m) => (String(m.resident_type || '').toLowerCase() !== 'dayscholar'
+    ? 'Hosteller — warden handles'
+    : m.todayStatus === 'PENDING' ? 'Already pending today' : 'Already approved today');
+
+  // One mentee row (status chip + LV number chip). Used for my own mentees and,
+  // with `covering`, for an absent mentor's day scholars I am covering today
+  // (their live leave id comes from the server). Leaves are created from the
+  // single "Create leave for student" button, not per row.
   const renderMenteeRow = (m, covering = false) => {
     const chip = statusChips[m.todayStatus] || statusChips.NO_REQUEST_TODAY;
-    const isDS = String(m.resident_type || '').toLowerCase() === 'dayscholar';
-    const canCreate = isDS && ['NO_REQUEST_TODAY', 'REJECTED', 'EXPIRED'].includes(m.todayStatus || 'NO_REQUEST_TODAY');
     const liveLeave = m.todayStatus !== 'APPROVED_NOT_OUT' ? null
       : covering ? (m.liveLeaveId ? { id: m.liveLeaveId } : null)
         : (queue?.leaves || []).find(l => l.student_roll === m.roll_number && l.status === 'APPROVED' && !l.scanned_at);
-    const formOpen = mlRoll === m.roll_number;
     return (
       <div key={m.id} className="bg-slate-50/60 border border-slate-200 rounded-xl px-3.5 py-3">
-        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-          <div className="min-w-0 grow basis-full sm:basis-[15rem]">
+        <div className="flex flex-wrap sm:flex-nowrap items-center justify-between gap-x-3 gap-y-2">
+          <div className="min-w-0 grow basis-full sm:basis-0">
             <div className="text-xs font-bold text-slate-900 truncate">
               {m.full_name}
               <span className="text-[11px] font-normal text-slate-500 font-mono"> ({m.roll_number})</span>
@@ -275,59 +296,32 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
             <span className={`shrink-0 text-[10px] font-extrabold px-2.5 py-1 rounded-full border ${chip.cls}`}>
               {chip.label}
             </span>
+            <span className="flex items-center justify-end shrink-0 sm:w-[6.5rem]">
             {liveLeave && (
               <span className="shrink-0 font-mono text-[11px] font-extrabold text-emerald-800 bg-emerald-50 border border-emerald-300 px-2.5 py-1 rounded-lg" title="Leave number — the student tells the guard this">
                 {leaveNumber(liveLeave.id)}
               </span>
             )}
-            {canCreate && !formOpen && (
-              <button
-                type="button"
-                onClick={() => { setMlRoll(m.roll_number); setMlReason(''); setMlErr(''); }}
-                className="shrink-0 min-h-[44px] px-3.5 rounded-xl border border-cyan-300 bg-white text-cyan-800 text-xs font-bold hover:bg-cyan-50 active:scale-[0.98] transition"
-              >
-                Create leave
-              </button>
-            )}
+            </span>
           </div>
         </div>
-        {formOpen && (
-          <div className="mt-3 pt-3 border-t border-slate-200 space-y-2">
-            <label className="block text-[11px] font-bold text-slate-600" htmlFor={`ml-${m.roll_number}`}>
-              Reason (student has no smartphone — leave is approved at once, number goes by SMS)
-            </label>
-            <input
-              id={`ml-${m.roll_number}`}
-              type="text"
-              value={mlReason}
-              onChange={e => setMlReason(e.target.value)}
-              placeholder="e.g. Fever, going home"
-              maxLength={200}
-              className="w-full min-h-[44px] px-3 rounded-xl border border-slate-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-cyan-400"
-            />
-            {mlErr && <p className="text-[11px] font-bold text-rose-600">{mlErr}</p>}
-            <div className="flex gap-2">
-              <button
-                type="button"
-                disabled={mlBusy || mlReason.trim().length < 5}
-                onClick={() => createLeave(m.roll_number)}
-                className="flex-1 sm:flex-none min-h-[44px] px-4 rounded-xl bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
-              >
-                {mlBusy ? 'Creating…' : 'Approve & send SMS'}
-              </button>
-              <button
-                type="button"
-                onClick={() => { setMlRoll(null); setMlErr(''); }}
-                className="min-h-[44px] px-4 rounded-xl border border-slate-300 bg-white text-slate-700 text-xs font-bold hover:bg-slate-50 transition"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        )}
       </div>
     );
   };
+
+  // Picker list for "Create leave for student": my mentees + the day scholars
+  // I cover today; eligible first, then the rest (greyed, with the reason).
+  const mlPool = [
+    ...(queue?.mentees || []),
+    ...(queue?.covering || []).flatMap(g => (g.mentees || []).map(m => ({ ...m, coverFor: g.mentorName })))
+  ];
+  const mlQ = mlQuery.trim().toLowerCase();
+  const mlList = mlPool
+    .filter(m => !mlQ || `${m.full_name} ${m.roll_number}`.toLowerCase().includes(mlQ))
+    .sort((p, q) => Number(canCreateFor(q)) - Number(canCreateFor(p)));
+  const mlPicked = mlPool.find(m => m.roll_number === mlRoll) || null;
+  const openCreateLeave = () => { setMlOpen(true); setMlQuery(''); setMlRoll(null); setMlReason(''); setMlErr(''); setMlDone(null); };
+  const closeCreateLeave = () => { setMlOpen(false); setMlRoll(null); setMlErr(''); setMlDone(null); };
 
   // Section switcher chips (layout only): each chip scrolls to its own card.
   const ttTodayCount = ttMine ? (ttMine.slots || []).filter(s => s.day === TT_TEACHER_TODAY).length : null;
@@ -340,7 +334,13 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
     { id: 'td-gatelog', label: 'Gate Log', count: dsScans ? (dsScans.scans || []).length : null, dot: 'bg-blue-500' },
     { id: 'td-status', label: queue?.onLeaveState?.onLeave ? 'On Leave Today' : 'Present today', count: null, dot: queue?.onLeaveState?.onLeave ? 'bg-amber-500' : 'bg-emerald-500', phoneOnly: true }
   ];
-  const jumpToSection = (id) => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  const jumpToSection = (id) => (id === 'td-mentees'
+    ? setMenteesOpen(true)
+    : document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  // Summary tiles for the collapsed My Mentees card (existing status labels).
+  const menteeStats = ['PENDING', 'APPROVED_NOT_OUT', 'OUT', 'NO_REQUEST_TODAY'].map(k => ({
+    k, ...statusChips[k], n: mentees.filter(m => (m.todayStatus || 'NO_REQUEST_TODAY') === k).length
+  }));
 
   return (
     <div className="p-4 sm:p-6 space-y-4 max-w-4xl xl:max-w-6xl 2xl:max-w-none mx-auto w-full">
@@ -367,9 +367,46 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
         </div>
       </div>
 
+      {/* Present today / On Leave Today — 1-tap delegation (top of the console, full width) */}
+      <section id="td-status" className={`scroll-mt-[124px] rounded-2xl border px-4 py-3 sm:py-3.5 shadow-sm ${queue?.onLeaveState?.onLeave ? 'bg-amber-50/60 border-amber-300' : 'bg-white border-slate-200/50'}`}>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-start gap-3">
+            {queue?.onLeaveState?.onLeave
+              ? <Coffee className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
+              : <Sun className="w-5 h-5 text-slate-500 mt-0.5 shrink-0" />}
+            <div>
+              <p className="text-sm font-extrabold text-slate-900">
+                {queue?.onLeaveState?.onLeave
+                  ? (queue.onLeaveState.delegatedTo ? `On Leave Today — covered by ${queue.onLeaveState.delegatedTo}` : 'On Leave Today — no colleague present')
+                  : 'Present today'}
+              </p>
+              <p className="text-[11px] text-slate-500 leading-snug mt-0.5">
+                {queue?.onLeaveState?.onLeave
+                  ? (queue.onLeaveState.delegatedTo
+                    ? 'Your substitute approves, rejects and creates leaves for your mentees today. Tap "Back Today" when you return.'
+                    : 'Nobody else is present, so your mentees\' requests stay in your queue. Tap "Back Today" when you return.')
+                  : 'Taking a day off? One tap hands your mentees\' leaves to a present colleague for today — approve, reject and create.'}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            disabled={toggling || !queue}
+            onClick={() => toggleAbsent(!(queue?.onLeaveState?.onLeave))}
+            className={`shrink-0 px-4 py-2.5 min-h-[44px] rounded-xl text-xs font-extrabold transition-colors cursor-pointer disabled:opacity-60 border-2 ${
+              queue?.onLeaveState?.onLeave
+                ? 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600'
+                : 'bg-amber-500 hover:bg-amber-600 text-white border-amber-500'
+            }`}
+          >
+            {toggling ? 'Working…' : queue?.onLeaveState?.onLeave ? 'Back Today' : 'On Leave Today'}
+          </button>
+        </div>
+      </section>
+
       {/* Header */}
-      <div className="bg-white/90 backdrop-blur-sm border border-slate-200/50 rounded-2xl p-4 sm:p-5 shadow-sm flex flex-row items-start sm:items-center justify-between gap-3">
-        <div className="min-w-0">
+      <div className="bg-white/90 backdrop-blur-sm border border-slate-200/50 rounded-2xl p-4 sm:p-5 shadow-sm flex flex-row flex-wrap sm:flex-nowrap items-start sm:items-center justify-between gap-3">
+        <div className="min-w-0 basis-full sm:basis-auto sm:flex-1">
           <h2 className="text-lg font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
             <GraduationCap className="w-5 h-5 text-cyan-700" />
             Faculty Mentor Console
@@ -378,12 +415,20 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
             Day-scholar leave approvals are YOURS to make — every decision is explicit, nothing auto-approves.
           </p>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto">
           {queue?.pendingCount > 0 && (
             <span className="hidden sm:inline-block text-[11px] font-mono font-bold text-amber-800 bg-amber-100 border border-amber-200 px-2.5 py-1 rounded-full">
               {queue.pendingCount} Pending
             </span>
           )}
+          <button
+            type="button"
+            onClick={openCreateLeave}
+            className="flex-1 sm:flex-none min-h-[44px] px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold shadow-sm transition-colors cursor-pointer flex items-center justify-center gap-1.5 whitespace-nowrap"
+          >
+            <UserCheck className="w-4 h-4" />
+            Create leave for student
+          </button>
           <button
             type="button"
             onClick={() => load(true)}
@@ -397,7 +442,7 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
 
       {/* Section switcher — tap a chip to jump to that section (layout only) */}
       <nav aria-label="Dashboard sections" className="sticky top-[51px] sm:top-[54px] z-20 -mx-4 sm:-mx-6 px-4 sm:px-6 py-2 bg-[#F1F5F9]/90 backdrop-blur-md">
-        <div className="flex gap-2 overflow-x-auto scrollbar-none -mx-4 px-4 sm:mx-0 sm:px-0 xl:flex-wrap">
+        <div className="flex gap-2 overflow-x-auto scrollbar-none -mx-4 pl-4 pr-16 sm:mx-0 sm:pl-0 xl:pr-0 xl:flex-wrap [mask-image:linear-gradient(to_right,#000_calc(100%_-_64px),rgba(0,0,0,0.12))] [-webkit-mask-image:linear-gradient(to_right,#000_calc(100%_-_64px),rgba(0,0,0,0.12))] xl:[mask-image:none] xl:[-webkit-mask-image:none]">
           {sectionChips.map(s => (
             <button
               key={s.id}
@@ -417,12 +462,8 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
         </div>
       </nav>
 
-      {/* Sections: phone = one column (Approvals first); laptop (xl) = Approvals + Decisions
-          on the left, Timetable + availability + Mentees on the right, Gate Log full width below */}
-      <div className="flex flex-col gap-4 xl:grid xl:grid-cols-12 xl:items-start">
-        <div className="contents xl:flex xl:flex-col xl:gap-4 xl:col-span-6">
       {/* Search (sidebar search + local input both apply) */}
-      <div className="order-1 relative">
+      <div className="relative">
         <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
         <input
           value={localSearch}
@@ -432,8 +473,13 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
         />
       </div>
 
+      {/* Sections: phone = one column (Approvals first); laptop (xl) = two equal-height
+          columns — Approvals + Decisions + Gate Log on the left, Timetable + availability +
+          My Mentees (summary; the list opens on tap) on the right */}
+      <div className="flex flex-col gap-4 xl:grid xl:grid-cols-12 xl:items-stretch">
+        <div className="contents xl:flex xl:flex-col xl:gap-4 xl:col-span-6">
       {/* APPROVAL QUEUE — the always-works path */}
-      <section id="td-approvals" className="order-2 scroll-mt-[124px] bg-white border-2 border-amber-200 rounded-2xl shadow-sm overflow-hidden">
+      <section id="td-approvals" className="order-2 xl:grow xl:flex xl:flex-col scroll-mt-[124px] bg-white border-2 border-amber-200 rounded-2xl shadow-sm overflow-hidden">
         <div className="flex items-center justify-between gap-3 px-4 sm:px-5 py-3 bg-gradient-to-r from-amber-50 to-white border-b border-amber-100">
           <h3 className="text-[15px] font-bold text-slate-900 flex items-center gap-2.5 min-w-0">
             <span className="w-9 h-9 rounded-xl bg-amber-100/70 text-amber-700 border border-amber-200 flex items-center justify-center shrink-0">
@@ -443,12 +489,12 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
           </h3>
           <span className={`shrink-0 text-[11px] font-mono font-bold px-2.5 py-1 rounded-full border ${pendingLeaves.length > 0 ? 'text-white bg-amber-500 border-amber-500' : 'text-slate-600 bg-slate-50 border-slate-200'}`}>{pendingLeaves.length} waiting</span>
         </div>
-        <div className="p-4 sm:p-5">
+        <div className="p-4 sm:p-5 xl:flex-1 xl:flex xl:flex-col">
 
         {loading && !queue ? (
           <div className="py-8 text-center text-xs text-slate-500 font-semibold">Loading your queue…</div>
         ) : pendingLeaves.length === 0 ? (
-          <div className="py-8 text-center text-xs text-slate-500 space-y-1">
+          <div className="py-8 text-center text-xs text-slate-500 space-y-1 xl:my-auto">
             <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto" />
             <p className="font-bold text-slate-600">Queue is clear</p>
             <p className="text-[11px]">New mentee requests appear here instantly (plus a push if Background Alerts are on).</p>
@@ -558,11 +604,52 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
           </div>
         </section>
       )}
+      {/* My Mentees — kept separate: a summary card here, the full list opens
+          only on tap (bottom sheet on phone, side panel on laptop) */}
+      <section id="td-mentees" className="order-5 xl:grow xl:flex xl:flex-col scroll-mt-[124px] bg-white border border-cyan-200 rounded-2xl shadow-sm overflow-hidden">
+        <div className="flex items-center justify-between gap-3 px-4 sm:px-5 py-3 bg-gradient-to-r from-cyan-50 to-white border-b border-cyan-100">
+          <h3 className="text-[15px] font-bold text-slate-900 flex items-center gap-2.5 min-w-0">
+            <span className="w-9 h-9 rounded-xl bg-cyan-100/70 text-cyan-700 border border-cyan-200 flex items-center justify-center shrink-0">
+              <Users className="w-4 h-4" />
+            </span>
+            My Mentees
+          </h3>
+          <span className="shrink-0 text-[11px] font-mono font-bold text-cyan-800 bg-cyan-50 border border-cyan-200 px-2.5 py-1 rounded-full">{mentees.length} students</span>
+        </div>
+        <div className="p-4 sm:p-5 flex flex-col gap-3 xl:flex-1 xl:justify-center">
+        {mentees.length === 0 ? (
+          <div className="py-8 text-center text-xs text-slate-500 space-y-1">
+            <Users className="w-8 h-8 text-slate-300 mx-auto" />
+            <p className="font-bold text-slate-600">No mentees assigned to you yet</p>
+            <p className="text-[11px]">The mentor→student mapping is set by the college roster.</p>
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {menteeStats.map(s => (
+                <div key={s.k} className={`min-h-[60px] rounded-xl border px-3 py-2 flex flex-col justify-center ${s.cls}`}>
+                  <p className="text-2xl font-extrabold font-mono leading-none">{s.n}</p>
+                  <p className="text-[10px] font-bold mt-1 leading-tight">{s.label}</p>
+                </div>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={() => setMenteesOpen(true)}
+              className="w-full min-h-[44px] rounded-xl border border-cyan-200 bg-cyan-50/50 hover:bg-cyan-50 text-cyan-800 text-xs font-bold transition-colors cursor-pointer flex items-center justify-center gap-2"
+            >
+              <Users className="w-4 h-4" />
+              {`View all (${mentees.length})`}
+            </button>
+          </>
+        )}
+        </div>
+      </section>
         </div>
 
         <div className="contents xl:flex xl:flex-col xl:gap-4 xl:col-span-6">
       {/* My Teaching Timetable (Phase 2) — today's engagement sheet */}
-      <section id="td-timetable" className="order-4 scroll-mt-[124px] rounded-2xl border border-teal-200 bg-white shadow-sm overflow-hidden">
+      <section id="td-timetable" className="order-4 xl:grow scroll-mt-[124px] rounded-2xl border border-teal-200 bg-white shadow-sm overflow-hidden">
         <div className="flex items-center justify-between gap-2 px-4 py-3 bg-gradient-to-r from-teal-50 to-white border-b border-teal-100">
           <div className="flex items-center gap-2">
             <div className="w-9 h-9 rounded-xl bg-teal-100/70 text-teal-700 flex items-center justify-center border border-teal-200 shrink-0">
@@ -629,83 +716,11 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
         )}
       </section>
 
-      {/* On Leave Today — 1-tap delegation */}
-      <section id="td-status" className={`order-7 xl:order-4 scroll-mt-[124px] rounded-2xl border p-4 shadow-sm ${queue?.onLeaveState?.onLeave ? 'bg-amber-50/60 border-amber-300' : 'bg-white border-slate-200/50'}`}>
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-start gap-3">
-            {queue?.onLeaveState?.onLeave
-              ? <Coffee className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
-              : <Sun className="w-5 h-5 text-slate-500 mt-0.5 shrink-0" />}
-            <div>
-              <p className="text-sm font-extrabold text-slate-900">
-                {queue?.onLeaveState?.onLeave
-                  ? (queue.onLeaveState.delegatedTo ? `On Leave Today — covered by ${queue.onLeaveState.delegatedTo}` : 'On Leave Today — no colleague present')
-                  : 'Present today'}
-              </p>
-              <p className="text-[11px] text-slate-500 leading-snug mt-0.5">
-                {queue?.onLeaveState?.onLeave
-                  ? (queue.onLeaveState.delegatedTo
-                    ? 'Your substitute approves, rejects and creates leaves for your mentees today. Tap "Back Today" when you return.'
-                    : 'Nobody else is present, so your mentees\' requests stay in your queue. Tap "Back Today" when you return.')
-                  : 'Taking a day off? One tap hands your mentees\' leaves to a present colleague for today — approve, reject and create.'}
-              </p>
-            </div>
-          </div>
-          <button
-            type="button"
-            disabled={toggling || !queue}
-            onClick={() => toggleAbsent(!(queue?.onLeaveState?.onLeave))}
-            className={`shrink-0 px-4 py-2.5 min-h-[44px] rounded-xl text-xs font-extrabold transition-colors cursor-pointer disabled:opacity-60 border-2 ${
-              queue?.onLeaveState?.onLeave
-                ? 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600'
-                : 'bg-amber-500 hover:bg-amber-600 text-white border-amber-500'
-            }`}
-          >
-            {toggling ? 'Working…' : queue?.onLeaveState?.onLeave ? 'Back Today' : 'On Leave Today'}
-          </button>
-        </div>
-      </section>
-
-      {/* My Mentees */}
-      <section id="td-mentees" className="order-5 scroll-mt-[124px] bg-white border border-cyan-200 rounded-2xl shadow-sm overflow-hidden">
-        <div className="flex items-center justify-between gap-3 px-4 sm:px-5 py-3 bg-gradient-to-r from-cyan-50 to-white border-b border-cyan-100">
-          <h3 className="text-[15px] font-bold text-slate-900 flex items-center gap-2.5 min-w-0">
-            <span className="w-9 h-9 rounded-xl bg-cyan-100/70 text-cyan-700 border border-cyan-200 flex items-center justify-center shrink-0">
-              <Users className="w-4 h-4" />
-            </span>
-            My Mentees
-          </h3>
-          <span className="shrink-0 text-[11px] font-mono font-bold text-cyan-800 bg-cyan-50 border border-cyan-200 px-2.5 py-1 rounded-full">{mentees.length} students</span>
-        </div>
-        <div className="p-4 sm:p-5 space-y-3">
-        {mentees.length === 0 ? (
-          <div className="py-8 text-center text-xs text-slate-500 space-y-1">
-            <Users className="w-8 h-8 text-slate-300 mx-auto" />
-            <p className="font-bold text-slate-600">No mentees assigned to you yet</p>
-            <p className="text-[11px]">The mentor→student mapping is set by the college roster.</p>
-          </div>
-        ) : (
-          <div className={`space-y-2 pr-1 ${showAllMentees || filterText ? 'max-h-96 overflow-y-auto' : ''}`}>
-            {(showAllMentees || filterText ? mentees : mentees.slice(0, LIST_PREVIEW)).map(m => renderMenteeRow(m))}
-          </div>
-        )}
-        {mentees.length > LIST_PREVIEW && !filterText && (
-          <button
-            type="button"
-            onClick={() => setShowAllMentees(v => !v)}
-            className="w-full min-h-[44px] rounded-xl border border-cyan-200 bg-cyan-50/50 hover:bg-cyan-50 text-cyan-800 text-xs font-bold transition-colors cursor-pointer"
-          >
-            {showAllMentees ? 'Show less' : `View all (${mentees.length})`}
-          </button>
-        )}
-        </div>
-      </section>
-        </div>
 
       {/* Mentor's Day-Scholar Gate Log — server-scoped to THIS mentor's own
           mentees. The warden has no access to this data (moved out of the
           warden register deliberately). Shows LEAVE exits + COMMUTE in/outs. */}
-      <section id="td-gatelog" className="order-6 xl:col-span-12 scroll-mt-[124px] bg-white border border-blue-200 rounded-2xl shadow-sm overflow-hidden">
+      <section id="td-gatelog" className="order-6 xl:grow xl:flex xl:flex-col scroll-mt-[124px] bg-white border border-blue-200 rounded-2xl shadow-sm overflow-hidden">
         <div className="flex items-start justify-between gap-3 px-4 sm:px-5 py-3 bg-gradient-to-r from-blue-50 to-white border-b border-blue-100">
           <div className="flex items-start gap-2.5 min-w-0">
             <span className="w-9 h-9 rounded-xl bg-blue-100/70 text-blue-700 border border-blue-200 flex items-center justify-center shrink-0">
@@ -736,17 +751,19 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
             </button>
           </div>
         </div>
-        <div className="p-4 sm:p-5 space-y-3">
+        <div className="p-4 sm:p-5 space-y-3 xl:flex-1 xl:flex xl:flex-col">
         {!dsScans || (dsScans.scans || []).length === 0 ? (
-          <div className="py-8 text-center text-xs text-slate-500 space-y-1">
-            <UserCheck className="w-7 h-7 text-slate-300 mx-auto" />
-            <p className="font-semibold text-slate-600">
+          <div className="py-3 flex flex-col items-center justify-center text-center gap-1.5 text-slate-500 xl:my-auto">
+            <span className="w-12 h-12 rounded-full bg-blue-50 border border-blue-100 text-blue-500 flex items-center justify-center mb-1">
+              <UserCheck className="w-6 h-6" />
+            </span>
+            <p className="text-sm font-bold text-slate-700">
               {dsScans && dsScans.registerOk === false ? 'Gate register not connected yet' : 'No gate scans for your mentees yet'}
             </p>
-            <p className="text-[11px]">Scans appear here the moment the guard reads a mentee&apos;s Campus-QR.</p>
+            <p className="text-[11px] max-w-xs">Scans appear here the moment the guard reads a mentee&apos;s Campus-QR.</p>
           </div>
         ) : (
-          <div className={`space-y-2 pr-1 xl:grid xl:grid-cols-2 xl:gap-2 xl:space-y-0 ${showAllScans ? 'max-h-96 overflow-y-auto' : ''}`}>
+          <div className={`space-y-2 pr-1 ${showAllScans ? 'max-h-96 overflow-y-auto' : ''}`}>
             {(showAllScans ? dsScans.scans : dsScans.scans.slice(0, SCAN_PREVIEW)).map(row => {
               const cat = String(row.category || '').toUpperCase();
               const isLeave = cat === 'LEAVE';
@@ -787,7 +804,204 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
         )}
         </div>
       </section>
+        </div>
+
       </div>
+
+      {/* My Mentees list — opens only on tap. Phone: bottom sheet; laptop: side panel */}
+      {menteesOpen && createPortal(
+        <div className="fixed inset-0 z-[70]" role="dialog" aria-modal="true" aria-labelledby="td-mentees-panel-title">
+          <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-[2px]" onClick={() => setMenteesOpen(false)} />
+          <div className="absolute inset-x-0 bottom-0 max-h-[88dvh] sm:inset-y-0 sm:left-auto sm:right-0 sm:max-h-none sm:w-[34rem] bg-white rounded-t-3xl sm:rounded-none sm:rounded-l-3xl shadow-2xl flex flex-col overflow-hidden">
+            <div className="sm:hidden mx-auto mt-2 h-1.5 w-10 rounded-full bg-slate-300" />
+            <div className="flex items-center justify-between gap-3 px-4 sm:px-5 py-3 bg-gradient-to-r from-cyan-50 to-white border-b border-cyan-100">
+              <h3 id="td-mentees-panel-title" className="text-[15px] font-bold text-slate-900 flex items-center gap-2.5 min-w-0">
+                <span className="w-9 h-9 rounded-xl bg-cyan-100/70 text-cyan-700 border border-cyan-200 flex items-center justify-center shrink-0">
+                  <Users className="w-4 h-4" />
+                </span>
+                My Mentees
+              </h3>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="text-[11px] font-mono font-bold text-cyan-800 bg-cyan-50 border border-cyan-200 px-2.5 py-1 rounded-full">{mentees.length} students</span>
+                <button
+                  type="button"
+                  onClick={() => setMenteesOpen(false)}
+                  aria-label="Close"
+                  className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-500 hover:text-slate-800 transition-colors cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+            <div className="px-4 sm:px-5 pt-3">
+            <div className="relative">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <input
+                value={localSearch}
+                onChange={(e) => setLocalSearch(e.target.value)}
+                placeholder="Search students or reasons…"
+                className="w-full min-h-[44px] pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 bg-white/90 text-sm outline-none focus:border-slate-400 transition-colors"
+              />
+            </div>
+            </div>
+            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 sm:p-5 pb-[max(1rem,env(safe-area-inset-bottom))]">
+            {mentees.length === 0 ? (
+              <div className="py-8 text-center text-xs text-slate-500 space-y-1">
+                <Users className="w-8 h-8 text-slate-300 mx-auto" />
+                <p className="font-bold text-slate-600">No mentees assigned to you yet</p>
+                <p className="text-[11px]">The mentor→student mapping is set by the college roster.</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {mentees.map(m => renderMenteeRow(m))}
+              </div>
+            )}
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Create leave for student — one picker for my mentees + today's covered
+          day scholars (keypad-phone students). Phone: full-height bottom sheet;
+          laptop: centred modal. Same createLeave() call as before. */}
+      {mlOpen && createPortal(
+        <div className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center sm:p-4" role="dialog" aria-modal="true" aria-labelledby="td-create-leave-title">
+          <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-[2px]" onClick={closeCreateLeave} />
+          <div className="relative w-full sm:max-w-lg h-[92dvh] sm:h-auto sm:max-h-[85vh] bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-200/80 flex flex-col overflow-hidden">
+            <div className="px-4 sm:px-5 py-3.5 border-b border-slate-100 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-10 h-10 rounded-2xl bg-slate-900 flex items-center justify-center text-white shrink-0">
+                  <UserCheck className="w-5 h-5" />
+                </div>
+                <div className="min-w-0">
+                  <h3 id="td-create-leave-title" className="text-base font-bold text-slate-900">Create leave for student</h3>
+                  <p className="text-xs text-slate-500">For keypad-phone students without the app</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={closeCreateLeave}
+                aria-label="Close"
+                className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-500 hover:text-slate-800 transition-colors cursor-pointer shrink-0"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {mlDone ? (
+              <div className="p-5 sm:p-6 text-center space-y-3 overflow-y-auto">
+                <CheckCircle2 className="w-10 h-10 text-emerald-600 mx-auto" />
+                <div className="text-2xl font-extrabold font-mono tracking-wide text-slate-900">{mlDone.number}</div>
+                <p className="text-xs text-slate-600 font-medium leading-relaxed">
+                  {`Leave ${mlDone.number} approved — SMS sent to the student. Tell them the number too.`}
+                </p>
+                <button
+                  type="button"
+                  onClick={closeCreateLeave}
+                  className="w-full min-h-[44px] rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-colors cursor-pointer"
+                >
+                  Done
+                </button>
+              </div>
+            ) : mlPicked ? (
+              <div className="p-4 sm:p-5 space-y-3 overflow-y-auto">
+                <div className="bg-emerald-50/60 border border-emerald-200 rounded-xl p-3.5 flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="text-sm font-bold text-slate-900 truncate">{mlPicked.full_name}</div>
+                    <div className="text-[11px] font-mono text-slate-500 mt-0.5 truncate">{mlPicked.roll_number} • {mlPicked.department || '—'}</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => { setMlRoll(null); setMlErr(''); }}
+                    className="min-h-[44px] px-3 text-[11px] font-bold text-emerald-700 hover:text-emerald-900 cursor-pointer shrink-0"
+                  >
+                    Change
+                  </button>
+                </div>
+                <label className="block text-[11px] font-bold text-slate-600" htmlFor="ml-reason">
+                  Reason (student has no smartphone — leave is approved at once, number goes by SMS)
+                </label>
+                <input
+                  id="ml-reason"
+                  type="text"
+                  value={mlReason}
+                  onChange={e => setMlReason(e.target.value)}
+                  placeholder="e.g. Fever, going home"
+                  maxLength={200}
+                  autoFocus
+                  className="w-full min-h-[44px] px-3 rounded-xl border border-slate-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-cyan-400"
+                />
+                {mlErr && <p className="text-[11px] font-bold text-rose-600">{mlErr}</p>}
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    disabled={mlBusy || mlReason.trim().length < 5}
+                    onClick={() => createLeave(mlPicked.roll_number)}
+                    className="flex-1 min-h-[44px] px-4 rounded-xl bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
+                  >
+                    {mlBusy ? 'Creating…' : 'Approve & send SMS'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setMlRoll(null); setMlErr(''); }}
+                    className="min-h-[44px] px-4 rounded-xl border border-slate-300 bg-white text-slate-700 text-xs font-bold hover:bg-slate-50 transition"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="px-4 sm:px-5 pt-3 pb-2">
+                  <div className="relative">
+                    <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                    <input
+                      value={mlQuery}
+                      onChange={(e) => setMlQuery(e.target.value)}
+                      placeholder="Name or roll number"
+                      aria-label="Find the student"
+                      className="w-full min-h-[44px] pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 bg-slate-50 text-sm outline-none focus:border-slate-400 transition-colors"
+                    />
+                  </div>
+                </div>
+                <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 sm:px-5 pb-[max(1rem,env(safe-area-inset-bottom))] space-y-2">
+                  {mlList.length === 0 ? (
+                    <p className="py-8 text-center text-xs text-slate-500">No student matched that name or roll number.</p>
+                  ) : mlList.map(m => {
+                    const ok = canCreateFor(m);
+                    const chip = statusChips[m.todayStatus] || statusChips.NO_REQUEST_TODAY;
+                    return (
+                      <button
+                        key={`${m.coverFor || 'mine'}-${m.roll_number}`}
+                        type="button"
+                        disabled={!ok}
+                        onClick={() => { setMlRoll(m.roll_number); setMlReason(''); setMlErr(''); }}
+                        className={`w-full min-h-[56px] text-left rounded-xl border px-3.5 py-2.5 flex items-center justify-between gap-3 transition-colors ${ok
+                          ? 'bg-white border-slate-200 hover:bg-emerald-50 hover:border-emerald-300 cursor-pointer'
+                          : 'bg-slate-50 border-slate-100 opacity-60 cursor-not-allowed'}`}
+                      >
+                        <span className="min-w-0">
+                          <span className="block text-xs font-bold text-slate-900 truncate">
+                            {m.full_name} <span className="text-[11px] font-normal text-slate-500 font-mono">({m.roll_number})</span>
+                          </span>
+                          <span className="block text-[11px] text-slate-500 font-medium mt-0.5 truncate">
+                            {m.coverFor ? `Covering for ${m.coverFor}` : (m.department || '—')}
+                          </span>
+                        </span>
+                        <span className={`shrink-0 text-[10px] font-extrabold px-2.5 py-1 rounded-full border ${ok ? chip.cls : 'bg-slate-100 text-slate-500 border-slate-200'}`}>
+                          {ok ? chip.label : notEligibleWhy(m)}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </div>
+        </div>,
+        document.body
+      )}
 
       {/* Phase 3: attendance marking overlay, opened from a timetable row */}
       <AttendanceMarkModal
