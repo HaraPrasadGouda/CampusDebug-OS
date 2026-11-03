@@ -3809,6 +3809,34 @@ function saveTeacherAbsence() {
     } catch (e) { console.warn('teacher_absence save skipped:', e.message); }
 }
 const teacherAbsenceDB = loadTeacherAbsence();
+// Old files may still say delegated: 'ADMIN' (the admin escalation is gone):
+// treat that as "no substitute" so the leave stays with the mentor.
+Object.keys(teacherAbsenceDB.delegated || {}).forEach(k => {
+    if (String(teacherAbsenceDB.delegated[k] || '').toUpperCase() === 'ADMIN') teacherAbsenceDB.delegated[k] = null;
+});
+// Today's absence state (a new day starts with everyone present).
+function absenceToday() {
+    if (teacherAbsenceDB.date !== localDayKey()) {
+        teacherAbsenceDB.date = localDayKey();
+        teacherAbsenceDB.absent = {};
+        teacherAbsenceDB.delegated = {};
+        saveTeacherAbsence();
+    }
+    return teacherAbsenceDB;
+}
+// The substitute teacher covering this mentor today, or null when the
+// mentor is present (or absent with no colleague present).
+function substituteFor(mentorRoll) {
+    const m = String(mentorRoll || '').trim();
+    if (!m) return null;
+    const a = absenceToday();
+    return a.absent[m] ? (a.delegated[m] || null) : null;
+}
+// Mentors who are absent today and handed their mentees to this teacher.
+function mentorsCoveredBy(myRoll) {
+    const a = absenceToday();
+    return Object.keys(a.absent || {}).filter(m => a.absent[m] && String(a.delegated[m] || '') === String(myRoll || ''));
+}
 
 // Local midnight + the 16:30 gate-close cutoff (leaves die at day end).
 function localStartOfDayISO(d = new Date()) {
@@ -3852,6 +3880,111 @@ async function profileByRoll(roll) {
     return data || null;
 }
 
+// Leave decision -> student. SMS (keypad phones) carries the LV number the
+// student SPEAKS at the gate, like the hostel GP SMS. Push keeps the QR text
+// and adds the number. Used by mentor approve/reject AND mentor-created leaves.
+function leaveApprovedSmsText(updated) {
+    const num = leaveNumber(updated.id);
+    const by = String(updated.decided_by_name || 'your mentor').slice(0, 30);
+    const note = updated.mentor_note ? ` Note: ${String(updated.mentor_note).slice(0, 60)}` : '';
+    return `CampusDebug OS: Leave ${num} APPROVED by ${by} till 4:30 PM today. Tell the guard number ${num} at the gate. Carry your ID card.${note}`;
+}
+function notifyLeaveDecision(studentRoll, updated, action) {
+    (async () => {
+        try {
+            const prof = await profileByRoll(studentRoll);
+            const num = leaveNumber(updated.id);
+            const text = action === 'APPROVED'
+                ? leaveApprovedSmsText(updated)
+                : `CampusDebug OS: Your day-scholar leave was REJECTED by ${updated.decided_by_name || 'your mentor'}.${updated.mentor_note ? ` Note: ${updated.mentor_note}` : ''} Stay in classes.`;
+            const delivery = await notifyStudent(studentRoll, prof?.phone_number, text);
+            if (delivery.mode === 'push') {
+                await pushToRolls([studentRoll], {
+                    title: action === 'APPROVED' ? '✅ Leave Approved' : '❌ Leave Rejected',
+                    body: action === 'APPROVED' ? `${num} · Show your Campus QR (or tell the guard ${num}) at the gate — exit is one-way (back next working day).` : (updated.mentor_note || 'Stay in classes.')
+                }).catch(() => {});
+            }
+        } catch { /* non-blocking */ }
+    })();
+}
+
+// Mentor creates a day-scholar leave FOR a mentee (keypad-phone students who
+// can't use the app): created already APPROVED by this mentor — same row shape
+// as an approved student request, so the guard list / LV lookup / scan /
+// expiry all work unchanged. The student gets the LV number by SMS.
+// TEACHER: own mentees only. ADMIN: any day scholar. College hours only.
+// Mentor (or today's substitute teacher when the mentor is absent) creates
+// an already-APPROVED leave for a day-scholar mentee. TEACHER only — the
+// admin is not part of the leave flow.
+app.post('/api/leave-requests/mentor-create', authenticateUser, requireRole('TEACHER'), async (req, res) => {
+    try {
+        if (!supabase) return res.status(503).json({ success: false, error: 'Database offline' });
+        await expireStaleLeaves();
+        if (!leaveWindowOpen()) {
+            return res.status(400).json({ success: false, error: `Leave can be created only between ${LEAVE_WINDOW_LABEL} (college hours).` });
+        }
+        const myRoll = String(req.user?.rollNumber || req.user?.profile?.roll_number || '').trim();
+        const role = String(req.user?.role || req.user?.profile?.role || '').toUpperCase();
+        const studentRoll = String(req.body?.studentRoll || '').trim();
+        const reason = String(req.body?.reason || '').trim();
+        if (!studentRoll) return res.status(400).json({ success: false, error: 'Pick the student' });
+        if (reason.length < 5) return res.status(400).json({ success: false, error: 'Write a short reason (min 5 characters)' });
+        const stu = await profileByRoll(studentRoll);
+        if (!stu || String(stu.role || '').toUpperCase() !== 'STUDENT') return res.status(404).json({ success: false, error: 'Student not found' });
+        const stuMentor = String(stu.mentor_roll || '').trim();
+        const isMentor = !!myRoll && stuMentor.toUpperCase() === myRoll.toUpperCase();
+        const isSubstitute = !!myRoll && !isMentor && substituteFor(stuMentor) === myRoll;
+        if (role !== 'TEACHER' || (!isMentor && !isSubstitute)) {
+            return res.status(403).json({ success: false, error: 'This student is not your mentee (and you are not covering for their mentor today)' });
+        }
+        if (String(stu.resident_type || '').toLowerCase() !== 'dayscholar') {
+            return res.status(400).json({ success: false, error: 'Day-scholar leave is for day scholars — hostellers use the gate pass flow.' });
+        }
+        // Same rules as a student request: one live leave, one exit per day.
+        const { data: live } = await supabase.from('leave_requests')
+            .select('id, status')
+            .eq('student_roll', stu.roll_number)
+            .or('status.eq.PENDING,and(status.eq.APPROVED,scanned_at.is.null)')
+            .limit(1).maybeSingle();
+        if (live) {
+            return res.status(409).json({ success: false, error: live.status === 'PENDING'
+                ? 'This student already asked for leave — approve it from your queue.'
+                : `This student already has an approved leave today (${leaveNumber(live.id)}).` });
+        }
+        const { count: outCount, error: outErr } = await supabase.from('pass_scans')
+            .select('id', { count: 'exact' })
+            .eq('category', 'LEAVE')
+            .eq('student_roll', stu.roll_number)
+            .eq('direction', 'EXIT')
+            .gte('scanned_at', localStartOfDayISO());
+        if (!outErr && (outCount || 0) > 0) {
+            return res.status(409).json({ success: false, error: 'This student already left campus on a leave today.' });
+        }
+
+        const now = new Date().toISOString();
+        const { data: created, error: insErr } = await supabase.from('leave_requests').insert({
+            student_id: stu.id,
+            student_roll: stu.roll_number,
+            student_name: stu.full_name,
+            resident_type: stu.resident_type,
+            mentor_roll: stu.mentor_roll || null,
+            routed_to: isSubstitute ? myRoll : null,
+            reason,
+            status: 'APPROVED',
+            created_at: now,
+            decided_by: myRoll || role,
+            decided_by_name: req.user?.name || null,
+            decided_at: now,
+            mentor_note: null
+        }).select('*').single();
+        if (insErr) return res.status(500).json({ success: false, error: insErr.message });
+        notifyLeaveDecision(stu.roll_number, created, 'APPROVED');
+        return res.json({ success: true, leave: created, number: leaveNumber(created.id), smsText: leaveApprovedSmsText(created) });
+    } catch (e) {
+        return res.status(500).json({ success: false, error: e.message });
+    }
+});
+
 // Student applies: one-way leave to their mentor.
 app.post('/api/leave-requests', authenticateUser, requireRole('STUDENT'), async (req, res) => {
     try {
@@ -3890,12 +4023,15 @@ app.post('/api/leave-requests', authenticateUser, requireRole('STUDENT'), async 
         }
 
         const now = new Date().toISOString();
+        // Mentor absent today → the request goes straight to the substitute.
+        const substitute = substituteFor(myProfile.mentor_roll);
         const { data: created, error: insErr } = await supabase.from('leave_requests').insert({
             student_id: myProfile.id,
             student_roll: myProfile.roll_number,
             student_name: myProfile.full_name,
             resident_type: myProfile.resident_type,
             mentor_roll: myProfile.mentor_roll || null,
+            routed_to: substitute,
             reason,
             status: 'PENDING',
             created_at: now
@@ -3904,7 +4040,7 @@ app.post('/api/leave-requests', authenticateUser, requireRole('STUDENT'), async 
 
         // Mentor heads-up (push if the teacher device is registered; the
         // dashboard QUEUE is the always-works path — never auto-approve).
-        const mentorRoll = myProfile.mentor_roll;
+        const mentorRoll = substitute || myProfile.mentor_roll;
         if (mentorRoll) {
             (async () => {
                 try {
@@ -3942,35 +4078,66 @@ app.get('/api/leave-requests/mine', authenticateUser, async (req, res) => {
     }
 });
 
-// Mentor/admin queue: a TEACHER sees their mentees' leaves (+ anything the
-// absence system routed to them); an ADMIN sees everything.
-app.get('/api/leave-requests/queue', authenticateUser, requireRole('TEACHER', 'ADMIN'), async (req, res) => {
+// Mentor queue (TEACHER only): their mentees' leaves + anything routed to
+// them as today's substitute, plus a "covering" list of the absent mentors'
+// day-scholar mentees (so the substitute can create leaves for them).
+app.get('/api/leave-requests/queue', authenticateUser, requireRole('TEACHER'), async (req, res) => {
     try {
         if (!supabase) return res.status(503).json({ success: false, error: 'Database offline' });
         await expireStaleLeaves();
         const role = String(req.user?.role || req.user?.profile?.role || '').toUpperCase();
         const myRoll = String(req.user?.rollNumber || req.user?.profile?.roll_number || '').trim();
         let leaves, mentees, error;
-        if (role === 'TEACHER') {
-            ({ data: leaves, error } = await supabase.from('leave_requests')
-                .select('*')
-                .or(`mentor_roll.eq.${myRoll},routed_to.eq.${myRoll}`)
-                .order('created_at', { ascending: false }).limit(200));
-            ({ data: mentees } = await supabase.from('profiles')
-                .select('id, roll_number, full_name, department, resident_type, mentor_roll')
-                .eq('role', 'STUDENT').eq('mentor_roll', myRoll)
-                .order('roll_number').limit(500));
-            // Only my leaves drive mentee state; derive from the same rows.
-        } else {
-            ({ data: leaves, error } = await supabase.from('leave_requests')
-                .select('*').order('created_at', { ascending: false }).limit(300));
-            mentees = [];
-        }
+        ({ data: leaves, error } = await supabase.from('leave_requests')
+            .select('*')
+            .or(`mentor_roll.eq.${myRoll},routed_to.eq.${myRoll}`)
+            .order('created_at', { ascending: false }).limit(200));
+        ({ data: mentees } = await supabase.from('profiles')
+            .select('id, roll_number, full_name, department, resident_type, mentor_roll')
+            .eq('role', 'STUDENT').eq('mentor_roll', myRoll)
+            .order('roll_number').limit(500));
+        // Only my leaves drive mentee state; derive from the same rows.
         if (error) return res.status(500).json({ success: false, error: error.message });
-        const myState = role === 'TEACHER' ? {
-            onLeave: !!teacherAbsenceDB.absent[myRoll],
-            delegatedTo: teacherAbsenceDB.delegated[myRoll] || null
-        } : null;
+        const absence = absenceToday();
+        const myState = {
+            onLeave: !!absence.absent[myRoll],
+            delegatedTo: absence.delegated[myRoll] || null
+        };
+        // Covering today: absent mentors who handed their mentees to me.
+        // Day scholars only (leave is a day-scholar flow) with today's state.
+        const covering = [];
+        for (const mentorRoll of mentorsCoveredBy(myRoll)) {
+            const mentorProf = await profileByRoll(mentorRoll);
+            const { data: cm } = await supabase.from('profiles')
+                .select('id, roll_number, full_name, department, resident_type, mentor_roll')
+                .eq('role', 'STUDENT').eq('mentor_roll', mentorRoll)
+                .order('roll_number').limit(500);
+            const ds = (cm || []).filter(r => String(r.resident_type || '').toLowerCase() === 'dayscholar');
+            const rolls = ds.map(r => r.roll_number).filter(Boolean);
+            const latest = {};
+            for (let i = 0; i < rolls.length; i += 100) {
+                const { data: ls } = await supabase.from('leave_requests')
+                    .select('*').in('student_roll', rolls.slice(i, i + 100))
+                    .gte('created_at', localStartOfDayISO())
+                    .order('created_at', { ascending: false }).limit(300);
+                (ls || []).forEach(l => {
+                    const k = String(l.student_roll || '');
+                    if (!latest[k] || (l.created_at || '') > (latest[k].created_at || '')) latest[k] = l;
+                });
+            }
+            covering.push({
+                mentorRoll,
+                mentorName: mentorProf?.full_name || mentorRoll,
+                mentees: ds.map(mm => {
+                    const l = latest[String(mm.roll_number || '')];
+                    return {
+                        ...mm,
+                        todayStatus: teacherStateFromLeave(l),
+                        liveLeaveId: l && l.status === 'APPROVED' && !l.scanned_at ? l.id : null
+                    };
+                })
+            });
+        }
         // Mentee today-state map: latest leave per mentee roll.
         const todayStart = new Date(localStartOfDayISO()).getTime();
         const stateByRoll = {};
@@ -3987,7 +4154,8 @@ app.get('/api/leave-requests/queue', authenticateUser, requireRole('TEACHER', 'A
                 ...mm,
                 todayStatus: teacherStateFromLeave(stateByRoll[String(mm.roll_number || '')])
             })),
-            pendingCount: (leaves || []).filter(l => l.status === 'PENDING').length
+            pendingCount: (leaves || []).filter(l => l.status === 'PENDING').length,
+            covering
         });
     } catch (e) {
         return res.status(500).json({ success: false, error: e.message });
@@ -4052,9 +4220,10 @@ function teacherStateFromLeave(l) {
     return l.status; // REJECTED / EXPIRED
 }
 
-// Approve / reject. TEACHER (own mentees or routed-to-me) + ADMIN only —
-// the warden is deliberately excluded from ALL leave decisions.
-app.post('/api/leave-requests/:id/decide', authenticateUser, requireRole('TEACHER', 'ADMIN', 'DEAN'), async (req, res) => {
+// Approve / reject. TEACHER only: the mentor, or the substitute teacher the
+// leave is routed to while the mentor is absent. Admin / dean / warden are
+// not part of leave decisions.
+app.post('/api/leave-requests/:id/decide', authenticateUser, requireRole('TEACHER'), async (req, res) => {
     try {
         if (!supabase) return res.status(503).json({ success: false, error: 'Database offline' });
         const action = String(req.body?.action || '').toUpperCase();
@@ -4068,10 +4237,8 @@ app.post('/api/leave-requests/:id/decide', authenticateUser, requireRole('TEACHE
             .select('*').eq('id', String(req.params.id)).maybeSingle();
         if (lErr || !leave) return res.status(404).json({ success: false, error: 'Leave request not found' });
         if (leave.status !== 'PENDING') return res.status(409).json({ success: false, error: `Already ${leave.status.toLowerCase()} — nothing to decide` });
-        if (role === 'TEACHER') {
-            const can = String(leave.mentor_roll || '') === myRoll || String(leave.routed_to || '') === myRoll;
-            if (!can) return res.status(403).json({ success: false, error: 'This student is not your mentee (and not routed to you)' });
-        }
+        const can = role === 'TEACHER' && !!myRoll && (String(leave.mentor_roll || '') === myRoll || String(leave.routed_to || '') === myRoll);
+        if (!can) return res.status(403).json({ success: false, error: 'This student is not your mentee (and not routed to you)' });
         // NO AUTO-APPROVAL — every decision is an explicit human tap here.
         const now = new Date().toISOString();
         const { data: updated, error: uErr } = await supabase.from('leave_requests').update({
@@ -4085,21 +4252,7 @@ app.post('/api/leave-requests/:id/decide', authenticateUser, requireRole('TEACHE
 
         // Tell the student immediately: activated → push, else SMS to the
         // student's own phone (parent SMS is reserved for the gate scan).
-        (async () => {
-            try {
-                const prof = await profileByRoll(leave.student_roll);
-                const text = action === 'APPROVED'
-                    ? `CampusDebug OS: Your day-scholar leave was APPROVED by ${updated.decided_by_name || 'your mentor'}. Show your Campus QR at the gate before leaving.${updated.mentor_note ? ` Note: ${updated.mentor_note}` : ''}`
-                    : `CampusDebug OS: Your day-scholar leave was REJECTED by ${updated.decided_by_name || 'your mentor'}.${updated.mentor_note ? ` Note: ${updated.mentor_note}` : ''} Stay in classes.`;
-                const delivery = await notifyStudent(leave.student_roll, prof?.phone_number, text);
-                if (delivery.mode === 'push') {
-                    await pushToRolls([leave.student_roll], {
-                        title: action === 'APPROVED' ? '✅ Leave Approved' : '❌ Leave Rejected',
-                        body: action === 'APPROVED' ? 'Show your Campus QR at the gate — exit is one-way (back next working day).' : (updated.mentor_note || 'Stay in classes.')
-                    }).catch(() => {});
-                }
-            } catch { /* non-blocking */ }
-        })();
+        notifyLeaveDecision(leave.student_roll, updated, action);
         return res.json({ success: true, leave: updated });
     } catch (e) {
         return res.status(500).json({ success: false, error: e.message });
@@ -4560,54 +4713,76 @@ app.post('/api/leave-scan', authenticateUser, requireRole('GUARD', 'WARDEN', 'AD
     }
 });
 
-// Teacher "On Leave Today" 1-tap: delegates their PENDING approvals to an
-// active colleague; if none is available it escalates to the ADMIN queue
-// (never the warden). Coming back online re-routes pending leaves to them.
-app.post('/api/leave-requests/teacher-absent', authenticateUser, requireRole('TEACHER', 'ADMIN'), async (req, res) => {
+// Teacher "On Leave Today" 1-tap: hands their mentees to a substitute — the
+// lowest-numbered colleague who is present today. The substitute gets the
+// PENDING leaves, every new request, and can create leaves for those day
+// scholars. Never the admin, never the warden. If literally no colleague is
+// present, nothing moves: the leaves stay in the mentor's own queue.
+// Coming back pulls the pending leaves home.
+app.post('/api/leave-requests/teacher-absent', authenticateUser, requireRole('TEACHER'), async (req, res) => {
     try {
         if (!supabase) return res.status(503).json({ success: false, error: 'Database offline' });
-        if (teacherAbsenceDB.date !== localDayKey()) {
-            teacherAbsenceDB.date = localDayKey();
-            teacherAbsenceDB.absent = {};
-            teacherAbsenceDB.delegated = {};
-        }
+        const absence = absenceToday();
         const myRoll = String(req.user?.rollNumber || req.user?.profile?.roll_number || '').trim();
         const wantsAbsence = !!req.body?.onLeave;
         if (!myRoll) return res.status(400).json({ success: false, error: 'Roll unknown' });
 
         let delegatedTo = null;
+        let message;
         if (wantsAbsence) {
-            const asked = String(req.body?.delegate || 'AUTO').toUpperCase();
-            if (asked === 'ADMIN') {
-                delegatedTo = 'ADMIN';
+            // Pick the lowest-numbered colleague who is present today.
+            const { data: colleagues } = await supabase.from('profiles')
+                .select('roll_number, full_name')
+                .eq('role', 'TEACHER')
+                .neq('roll_number', myRoll)
+                .order('roll_number').limit(100);
+            const present = (colleagues || []).find(c => !absence.absent[String(c.roll_number || '').trim()]);
+            delegatedTo = present ? String(present.roll_number).trim() : null;
+            absence.absent[myRoll] = true;
+            absence.delegated[myRoll] = delegatedTo;
+            if (delegatedTo) {
+                // Re-route today's still-PENDING mentee leaves to the substitute.
+                await supabase.from('leave_requests')
+                    .update({ routed_to: delegatedTo })
+                    .eq('status', 'PENDING')
+                    .eq('mentor_roll', myRoll);
+                // I was covering for someone else: that cover moves on too.
+                for (const m of Object.keys(absence.delegated)) {
+                    if (m !== myRoll && absence.absent[m] && absence.delegated[m] === myRoll) {
+                        absence.delegated[m] = delegatedTo;
+                        await supabase.from('leave_requests')
+                            .update({ routed_to: delegatedTo })
+                            .eq('status', 'PENDING')
+                            .eq('mentor_roll', m);
+                    }
+                }
+                message = `Marked On Leave — ${present.full_name || delegatedTo} (${delegatedTo}) handles your mentees' leaves today.`;
             } else {
-                // Pick the lowest-numbered colleague who is present today.
-                const { data: colleagues } = await supabase.from('profiles')
-                    .select('roll_number, full_name')
-                    .eq('role', 'TEACHER')
-                    .neq('roll_number', myRoll)
-                    .order('roll_number').limit(100);
-                const present = (colleagues || []).find(c => !teacherAbsenceDB.absent[String(c.roll_number || '').trim()]);
-                delegatedTo = present ? String(present.roll_number).trim() : 'ADMIN';
+                // Nobody present: anything I was covering goes back to its
+                // own mentor's queue (never the admin).
+                for (const m of Object.keys(absence.delegated)) {
+                    if (m !== myRoll && absence.delegated[m] === myRoll) {
+                        absence.delegated[m] = null;
+                        await supabase.from('leave_requests')
+                            .update({ routed_to: null })
+                            .eq('status', 'PENDING')
+                            .eq('mentor_roll', m);
+                    }
+                }
+                message = 'Marked On Leave — but no other teacher is present today, so leave requests stay in your own queue.';
             }
-            teacherAbsenceDB.absent[myRoll] = true;
-            teacherAbsenceDB.delegated[myRoll] = delegatedTo;
-            // Re-route today's still-PENDING mentee leaves to the delegate.
-            await supabase.from('leave_requests')
-                .update({ routed_to: delegatedTo })
-                .eq('status', 'PENDING')
-                .eq('mentor_roll', myRoll);
         } else {
-            delete teacherAbsenceDB.absent[myRoll];
-            delete teacherAbsenceDB.delegated[myRoll];
+            delete absence.absent[myRoll];
+            delete absence.delegated[myRoll];
             // Back on my seat: pull my still-PENDING leaves home.
             await supabase.from('leave_requests')
                 .update({ routed_to: null })
                 .eq('status', 'PENDING')
                 .eq('mentor_roll', myRoll);
+            message = 'Welcome back — your mentees\' leave requests come to you again.';
         }
         saveTeacherAbsence();
-        return res.json({ success: true, onLeave: !!teacherAbsenceDB.absent[myRoll], delegatedTo: teacherAbsenceDB.delegated[myRoll] || null });
+        return res.json({ success: true, onLeave: !!absence.absent[myRoll], delegatedTo: absence.delegated[myRoll] || null, message });
     } catch (e) {
         return res.status(500).json({ success: false, error: e.message });
     }
@@ -4616,12 +4791,7 @@ app.post('/api/leave-requests/teacher-absent', authenticateUser, requireRole('TE
 app.get('/api/leave-requests/teacher-absent', authenticateUser, async (req, res) => {
     const myRoll = String(req.user?.rollNumber || req.user?.profile?.roll_number || '').trim();
     const role = String(req.user?.role || req.user?.profile?.role || '').toUpperCase();
-    if (teacherAbsenceDB.date !== localDayKey()) {
-        teacherAbsenceDB.date = localDayKey();
-        teacherAbsenceDB.absent = {};
-        teacherAbsenceDB.delegated = {};
-        saveTeacherAbsence();
-    }
+    absenceToday();
     return res.json({
         success: true,
         onLeave: !!teacherAbsenceDB.absent[myRoll],
