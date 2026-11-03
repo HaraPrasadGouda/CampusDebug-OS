@@ -20,6 +20,7 @@ import {
   UserCheck,
   ClipboardList
 } from 'lucide-react';
+import AiCategoryChip from '../AiCategoryChip';
 import { generateSignedPassToken } from '../../utils/crypto';
 import { getAllLocal, saveLocal, queueOfflineAction } from '../../utils/db';
 import { getAccessToken } from '../../utils/authClient';
@@ -624,6 +625,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                       <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-100 text-amber-800 font-semibold">
                         {t.category}
                       </span>
+                      <AiCategoryChip ticket={t} />
                       <span className="text-[10px] text-slate-500 font-mono flex items-center gap-1">
                         <MapPin className="w-3 h-3 text-slate-400" />
                         {t.location}
