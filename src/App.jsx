@@ -408,7 +408,7 @@ export default function App() {
               : pass.status === 'USED'
                 ? 'Scanned at Main Gate (Expired)'
                 : pass.status === 'APPROVED'
-                  ? 'Warden Approved (HMAC Signed)'
+                  ? 'Warden Approved (Signed)'
                   : pass.status === 'REJECTED'
                     ? 'Rejected by Warden'
                     : 'Pending Warden Approval',

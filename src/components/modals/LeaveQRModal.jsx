@@ -6,6 +6,7 @@ import { getStoredProfile, getAccessToken } from '../../utils/authClient';
 import { pickTodaysLeave, saveLeaveSnapshot, readLeaveSnapshot } from '../../utils/dayScholarLeave';
 import { isLeaveWindowOpen, LEAVE_WINDOW_MSG } from '../../utils/leaveWindow';
 import ScannableQR from '../ScannableQR';
+import { leaveNumber } from '../../utils/passNumber';
 
 /**
  * DAY-SCHOLAR LEAVE (Phase 1) — replaces the old IN/OUT commute alternation.
@@ -168,6 +169,13 @@ export default function LeaveQRModal({ isOpen, onClose, onToast }) {
           {state.phase === 'READY' && (
             <>
               {statusChip()}
+
+              {/* Leave number: the guard can type it if the QR scan fails. */}
+              {live && (
+                <p data-testid="leave-number" className="text-[11px] text-slate-600 text-center leading-snug">
+                  Leave No: <span className="font-mono font-extrabold text-slate-900 tracking-wide">{leaveNumber(live.id)}</span> · tell the guard this number if the QR scan fails
+                </p>
+              )}
 
               {/* Apply — hidden while a live request exists or already OUT
                   (after a REJECTED/EXPIRED request the student may apply again;

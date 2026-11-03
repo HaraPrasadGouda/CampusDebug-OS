@@ -737,7 +737,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                 <span>Student Gate Pass Authorization Queue</span>
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                Approving automatically generates the cryptographic HMAC-SHA256 token for offline guard verification.
+                Approving creates the signed gate QR (Ed25519) that guard phones can check offline.
               </p>
             </div>
             <button

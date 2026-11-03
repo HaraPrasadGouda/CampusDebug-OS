@@ -8,6 +8,7 @@ import { fileURLToPath } from 'url';
 import { createClient } from '@supabase/supabase-js';
 import { MEAL_WINDOWS, MEAL_ORDER, RSVP_CUTOFF_MINUTES } from './src/data/messMenu.js';
 import { initPassSigning, passPublicKeyInfo, verifyPassQr, passQrFresh, signPassQrBatch, PASS_QR_ROTATE_MS, PASS_QR_MAX_AGE_MS } from './passSigning.js';
+import { leaveNumber, normalizePassNumber } from './src/utils/passNumber.js';
 
 dotenv.config();
 
@@ -4268,6 +4269,73 @@ app.get('/api/leave-scan/approved', authenticateUser, requireRole('GUARD', 'WARD
     }
 });
 
+// Guard phone's OFFLINE pass-number list (manual entry with no network):
+// ONLY approved, not-yet-used hostel gate passes + today's approved,
+// not-yet-scanned day-scholar leaves. Minimal fields — no phone numbers.
+// GUARD role only.
+async function branchByRoll(rolls) {
+    const out = {};
+    const list = [...new Set((rolls || []).map(r => String(r || '').trim()).filter(Boolean))];
+    if (!supabase || list.length === 0) return out;
+    try {
+        const { data } = await supabase.from('profiles')
+            .select('roll_number, department').in('roll_number', list.slice(0, 1000));
+        for (const p of data || []) out[String(p.roll_number).toLowerCase()] = p.department || null;
+    } catch { /* branch is a readout only */ }
+    return out;
+}
+app.get('/api/guard/pass-cache', authenticateUser, requireRole('GUARD'), async (req, res) => {
+    try {
+        const nowMs = Date.now();
+        const notExpired = (v) => !v || !Number.isFinite(Date.parse(v)) || Date.parse(v) > nowMs;
+        const passes = [];
+        const seen = new Set();
+        // Hostel gate passes: server memory first, then the Supabase table.
+        for (const p of gatePassesDB) {
+            const num = String(p.id || '').toUpperCase();
+            if (!/^GP-\d{6}$/.test(num) || String(p.status || '').toUpperCase() !== 'APPROVED' || !notExpired(p.validUntil)) continue;
+            seen.add(num);
+            passes.push({ kind: 'PASS', number: num, name: p.name || 'Student', rollNo: p.rollNo || '', destination: p.destination || '', reason: p.reason || '', passType: p.passType || 'Day Pass', validUntil: p.validUntil || null, status: 'APPROVED' });
+        }
+        if (supabase && gpSupabaseOk) {
+            try {
+                const { data: rows, error } = await supabase.from('gate_passes')
+                    .select('*, student:profiles(full_name, roll_number)')
+                    .eq('status', 'APPROVED').limit(500);
+                if (error) gpDisableSupabase(error);
+                for (const row of rows || []) {
+                    const num = String(row.pass_ref || '').toUpperCase();
+                    // A pass this server already moved on (exit recorded in memory) is not offered.
+                    const mem = gatePassesDB.find(p => String(p.id || '').toUpperCase() === num);
+                    if (!num || seen.has(num) || (mem && String(mem.status || '').toUpperCase() !== 'APPROVED') || !notExpired(row.valid_until)) continue;
+                    seen.add(num);
+                    passes.push({ kind: 'PASS', number: num, name: row.student?.full_name || 'Student', rollNo: row.student?.roll_number || '', destination: row.destination || '', reason: row.reason || '', passType: row.pass_category === 'MEDICAL' ? 'Medical Outing' : row.pass_category === 'HOME_LEAVE' ? 'Home Leave' : 'Day Pass', validUntil: row.valid_until || null, status: 'APPROVED' });
+                }
+            } catch (e) { /* memory list still goes out */ }
+        }
+        // Day-scholar leaves (same rule as the offline leave-QR list).
+        let leaves = [];
+        if (supabase) {
+            await expireStaleLeaves();
+            const { data, error } = await supabase.from('leave_requests')
+                .select('id, student_roll, student_name, reason, status')
+                .eq('status', 'APPROVED').is('scanned_at', null)
+                .gte('created_at', localStartOfDayISO())
+                .limit(500);
+            if (!error) leaves = data || [];
+        }
+        const gateCloseAt = gateCloseISO();
+        const branches = await branchByRoll([...passes.map(p => p.rollNo), ...leaves.map(l => l.student_roll)]);
+        for (const p of passes) p.branch = branches[String(p.rollNo).toLowerCase()] || null;
+        for (const l of leaves) {
+            passes.push({ kind: 'LEAVE', number: leaveNumber(l.id), leaveId: l.id, name: l.student_name || 'Student', rollNo: l.student_roll, branch: branches[String(l.student_roll || '').toLowerCase()] || null, destination: 'One-way leave', reason: l.reason || '', validUntil: gateCloseAt, status: 'APPROVED' });
+        }
+        return res.json({ success: true, serverTime: new Date().toISOString(), gateCloseAt, passes });
+    } catch (e) {
+        return res.status(500).json({ success: false, error: e.message });
+    }
+});
+
 app.post('/api/leave-scan', authenticateUser, requireRole('GUARD', 'WARDEN', 'ADMIN', 'DEAN'), async (req, res) => {
     try {
         if (!supabase) return res.status(503).json({ success: false, error: 'Leave register offline' });
@@ -4288,11 +4356,15 @@ app.post('/api/leave-scan', authenticateUser, requireRole('GUARD', 'WARDEN', 'AD
         // Fix 5: the QR must carry a valid SERVER signature (Ed25519) and say
         // exactly this roll / leave / issue time. Forged, tampered and old
         // (app-signed HMAC) QRs stop here.
-        const qrCheck = verifyPassQr(req.body.qrToken);
-        if (!qrCheck.ok || qrCheck.payload?.kind !== 'LEAVE'
+        // Pass-number entry (guard typed the LV- number and checked the ID
+        // card, no QR): there is no QR to check; every leave rule below
+        // (approved, this student's, not used, one-way) still applies.
+        const manualEntry = String(req.body.method || '').toUpperCase() === 'MANUAL' && !req.body.qrToken;
+        const qrCheck = manualEntry ? { ok: true } : verifyPassQr(req.body.qrToken);
+        if (!manualEntry && (!qrCheck.ok || qrCheck.payload?.kind !== 'LEAVE'
             || String(qrCheck.payload.leaveId) !== leaveId
             || String(qrCheck.payload.rollNo || '').trim().toLowerCase() !== roll.toLowerCase()
-            || String(qrCheck.payload.issuedAt || '') !== String(req.body.issuedAt || '')) {
+            || String(qrCheck.payload.issuedAt || '') !== String(req.body.issuedAt || ''))) {
             return res.status(403).json({ success: false, qrRejected: true, reason: qrCheck.ok ? 'QR does not match this scan (roll / leave / time). Nothing recorded.' : qrCheck.reason });
         }
         // Offline sync: the guard phone checked this QR without network and
@@ -4309,7 +4381,7 @@ app.post('/api/leave-scan', authenticateUser, requireRole('GUARD', 'WARDEN', 'AD
         }
         const issuedMs = Date.parse(String(req.body.issuedAt || ''));
         const qrAgeMs = refMs - issuedMs;
-        if (!Number.isFinite(issuedMs) || qrAgeMs > LEAVE_QR_MAX_AGE_MS || qrAgeMs < -LEAVE_QR_MAX_FUTURE_MS) {
+        if (!manualEntry && (!Number.isFinite(issuedMs) || qrAgeMs > LEAVE_QR_MAX_AGE_MS || qrAgeMs < -LEAVE_QR_MAX_FUTURE_MS)) {
             return res.status(403).json({ success: false, expired: true, reason: 'QR expired — ask the student to show the live QR in the app (screenshots or old photos are not accepted). Nothing recorded.' });
         }
         const prof = await profileByRoll(roll);
@@ -6547,9 +6619,55 @@ app.get('/api/students/search', authenticateUser, requireRole('WARDEN', 'ADMIN',
 // only speak their GP number). Normalizes input ("984163" -> "GP-984163"),
 // resolves the AUTHORITATIVE record (server memory first, then Supabase row
 // joined with profile), and tells the client which gate actions are legal.
+// Manual lookup of a day-scholar LEAVE number (today's leaves only — a
+// leave is valid on the day it was asked for).
+async function leaveLookupByNumber(num, res) {
+    if (!supabase) return res.status(503).json({ success: false, error: 'Leave register offline' });
+    await expireStaleLeaves();
+    const { data, error } = await supabase.from('leave_requests')
+        .select('id, student_roll, student_name, reason, status, scanned_at')
+        .gte('created_at', localStartOfDayISO())
+        .limit(1000);
+    if (error) return res.status(500).json({ success: false, error: error.message });
+    const hits = (data || []).filter(l => leaveNumber(l.id) === num);
+    if (hits.length === 0) return res.status(404).json({ success: false, error: `No leave found with number ${num} today` });
+    if (hits.length > 1) return res.status(409).json({ success: false, error: `Two leaves share number ${num} — scan the student's QR instead` });
+    const l = hits[0];
+    const status = String(l.status || '').toUpperCase();
+    const branches = await branchByRoll([l.student_roll]);
+    const exitAllowed = status === 'APPROVED' && !l.scanned_at;
+    const at = l.scanned_at ? new Date(l.scanned_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+    return res.json({
+        success: true,
+        pass: {
+            kind: 'LEAVE',
+            id: num,
+            leaveId: l.id,
+            name: l.student_name || 'Student',
+            rollNo: l.student_roll || '',
+            branch: branches[String(l.student_roll || '').toLowerCase()] || null,
+            destination: 'One-way leave',
+            passType: 'Day-scholar leave',
+            reason: l.reason || '',
+            status,
+            statusLabel: status,
+            validUntil: gateCloseISO(),
+            exitAllowed,
+            returnAllowed: false,
+            blockedReason: exitAllowed ? null
+                : (status === 'OUT' || l.scanned_at) ? `Leave already used — the student left at ${at}. One-way leave, no second exit.`
+                : status === 'PENDING' ? 'Mentor approval still pending — this leave is not valid at the gate yet.'
+                : `This leave is ${status} — not valid at the gate.`
+        }
+    });
+}
+
 app.get('/api/pass-lookup', authenticateUser, requireRole('GUARD', 'ADMIN', 'WARDEN', 'DEAN'), async (req, res) => {
     try {
         let raw = String(req.query.id || '').trim().toUpperCase().replace(/\s+/g, '');
+        // Day-scholar leave number (LV-xxxxxx, derived from the leave id).
+        const lvNum = normalizePassNumber(raw);
+        if (/^LV-[A-Z0-9]{1,12}$/.test(lvNum)) return leaveLookupByNumber(lvNum, res);
         if (/^\d{6}$/.test(raw)) raw = `GP-${raw}`;
         if (!/^GP-\d{6}$/.test(raw)) {
             return res.status(400).json({ success: false, error: 'Enter the 6-digit pass number (e.g. GP-984163)' });
@@ -6657,10 +6775,21 @@ app.post('/api/scan-pass', authenticateUser, requireRole('GUARD', 'ADMIN', 'WARD
             passData.destination = sp.destination;
             passData.validUntil = sp.validUntil;
         }
+        // Exit the guard marked OFFLINE from a typed pass number (phone's
+        // cached list): verifiedAt is the real scan time on that phone.
+        const manualOffline = passData.manualOffline === true && direction === 'EXIT';
+        if (manualOffline) {
+            const t = Date.parse(String(passData.verifiedAt || ''));
+            if (!Number.isFinite(t) || t > Date.now() + 5 * 60000 || t < Date.now() - 24 * 3600000) {
+                return res.status(400).json({ success: false, offlineSync: true, reason: 'Offline scan time is out of range (must be within the last 24 h). Nothing recorded.' });
+            }
+        }
         delete passData.qrToken;
         delete passData.qrCheckedAt;
         delete passData.offlineScan;
         delete passData.kind;
+        delete passData.manualOffline;
+        delete passData.branch;
 
         // Authoritative current status: server memory first, then Supabase.
         // A pass must be APPROVED for EXIT and USED for RETURN — the state
@@ -6700,6 +6829,24 @@ app.post('/api/scan-pass', authenticateUser, requireRole('GUARD', 'ADMIN', 'WARD
             });
         }
 
+        // Same pass let out OFFLINE on two guard phones: the second phone's
+        // sync is refused as a DOUBLE USE, logged for the warden.
+        if (manualOffline && (currentStatus === 'USED' || currentStatus === 'RETURNED')) {
+            if (currentVerifiedAtMs && currentVerifiedAtMs === Date.parse(passData.verifiedAt)) {
+                return res.json({ success: true, offlineSync: true, alreadySynced: true, status: currentStatus, verifiedAt: passData.verifiedAt });
+            }
+            const firstOutAt = currentVerifiedAtMs ? new Date(currentVerifiedAtMs).toISOString() : null;
+            recordLeaveScanConflict({
+                kind: 'PASS', leaveId: passData.id, rollNo: passData.rollNo, studentName: passData.name,
+                scannedAt: passData.verifiedAt, firstOutAt,
+                scannedBy: String(passData.scannedBy || 'Main Gate Guard'),
+                syncedBy: String(req.user?.rollNumber || req.user?.profile?.roll_number || '')
+            });
+            return res.status(409).json({
+                success: false, offlineSync: true, conflict: true, firstOutAt,
+                reason: `${passData.name || 'Student'} — DOUBLE USE: gate pass ${passData.id} was already used at another gate${firstOutAt ? ` at ${new Date(firstOutAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}. This offline exit was not recorded; flagged for the warden.`
+            });
+        }
         if (direction === 'EXIT' && currentStatus !== 'APPROVED') {
             const reason = currentStatus === 'USED'
                 ? 'Already exited — pass was used at the gate'
