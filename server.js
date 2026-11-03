@@ -1742,16 +1742,25 @@ app.get('/api/meal-rsvp', authenticateUser, async (req, res) => {
 
 // POST — the 1-tap RSVP toggle. Row-level per student (no global plate pool,
 // no fake seeds). Cutoff enforced here on the server, not just in the UI.
-app.post('/api/meal-rsvp', async (req, res) => {
+// Fix 1 (auth): login required. A student can only RSVP for THEMSELVES
+// (identity from the token, body studentId ignored); WARDEN/ADMIN/DEAN may
+// still pass a studentId as before.
+app.post('/api/meal-rsvp', authenticateUser, async (req, res) => {
   try {
     const { studentId, mealType, status } = req.body || {};
     if (supabase) {
       if (isMealCutoffPassed(String(mealType || '').toLowerCase())) {
         return res.status(400).json({ success: false, error: 'RSVP cutoff passed for this meal (locks 3 hrs before cooking)' });
       }
+      const rsvpRole = String(req.user?.role || '').toUpperCase();
+      let sid = studentId;
+      if (!['WARDEN', 'ADMIN', 'DEAN'].includes(rsvpRole) || !sid) {
+        const me = await findProfileByIdOrRoll(req.user.id, req.user.rollNumber);
+        if (!me?.id) return res.status(400).json({ success: false, error: 'No college profile linked to this account' });
+        sid = me.id;
+      }
       // `student_id` in the DB is the profile UUID. Older offline flushes sent
       // roll numbers — resolve them to a real profile id.
-      let sid = studentId;
       if (sid && !/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(String(sid))) {
         const { data: prof } = await supabase.from('profiles')
           .select('id').ilike('roll_number', String(sid).trim()).maybeSingle();
@@ -1983,13 +1992,24 @@ function persistNotices() {
     }
 }
 
-app.get('/api/notices', (req, res) => {
+// Fix 1 (auth): reading notices needs a login; the SMS recipients' phone
+// numbers stay visible to staff only (others see the same entries, without
+// the number, so counts in the UI do not change).
+const NOTICE_STAFF_ROLES = ['ADMIN', 'DEAN', 'WARDEN'];
+app.get('/api/notices', authenticateUser, (req, res) => {
     // Newest first; cap the payload so 3s polling stays cheap.
-    const notices = [...noticesDB].sort((a, b) => b.createdAt - a.createdAt).slice(0, 100);
+    let notices = [...noticesDB].sort((a, b) => b.createdAt - a.createdAt).slice(0, 100);
+    const isStaff = NOTICE_STAFF_ROLES.includes(String(req.user?.role || '').toUpperCase());
+    if (supabase && !isStaff) {
+        notices = notices.map(n => Array.isArray(n.smsDispatchedTo)
+            ? { ...n, smsDispatchedTo: n.smsDispatchedTo.map(({ phone, ...rest }) => rest) }
+            : n);
+    }
     res.json({ success: true, notices });
 });
 
-app.post('/api/notices', async (req, res) => {
+// Fix 1 (auth): publishing a notice (push + SMS fan-out) is ADMIN/DEAN/WARDEN only.
+app.post('/api/notices', authenticateUser, requireRole(...NOTICE_STAFF_ROLES), async (req, res) => {
     try {
         const { title, content, target = 'All Students', category = 'General', urgency = 'Normal', source = 'Admin Desk', smsPhones = [], targetBlock = null, audience = 'hostel', campusFilter = null, showOn = null } = req.body || {};
         if (!title || !content) {
@@ -2328,13 +2348,16 @@ app.get('/api/push/public-key', (req, res) => {
     res.json({ success: true, publicKey: VAPID_PUBLIC_KEY });
 });
 
-app.post('/api/push/subscribe', (req, res) => {
+// Fix 1 (auth): login required; the device is registered under the roll
+// number of the signed-in account (body rollNumber is only used when the
+// server runs without Supabase, i.e. offline dev mode).
+app.post('/api/push/subscribe', authenticateUser, (req, res) => {
     try {
         const { rollNumber, subscription } = req.body || {};
         if (!subscription || !subscription.endpoint) {
             return res.status(400).json({ success: false, error: 'subscription payload required' });
         }
-        const key = rollNumber || 'global';
+        const key = (supabase ? req.user?.rollNumber : rollNumber) || 'global';
         const entries = pushSubscriptions[key] || [];
         const alreadyKnown = entries.some(s => s.endpoint === subscription.endpoint);
         if (!alreadyKnown) {
@@ -2352,7 +2375,7 @@ app.post('/api/push/subscribe', (req, res) => {
 // Settings toggle OFF: remove one device's subscription everywhere it may be
 // keyed (the client unsubscribes from the browser first, this just cleans the
 // routing file so a turned-off device stops receiving pushes).
-app.post('/api/push/unsubscribe', (req, res) => {
+app.post('/api/push/unsubscribe', authenticateUser, (req, res) => {
     try {
         const { endpoint } = req.body || {};
         if (!endpoint) return res.status(400).json({ success: false, error: 'endpoint required' });
@@ -3351,7 +3374,8 @@ app.post('/api/admin/bulk-ingest-teachers', authenticateUser, requireRole('ADMIN
 // ----------------------------------------------------
 // 9. MESS FEEDBACK SENTIMENT AI ENDPOINT
 // ----------------------------------------------------
-app.post('/api/analyze-feedback', async (req, res) => {
+// Fix 1 (auth): login required (runs the local AI model — no anonymous use).
+app.post('/api/analyze-feedback', authenticateUser, async (req, res) => {
     try {
         const { feedbackText } = req.body;
         if (!feedbackText) {
@@ -3472,11 +3496,70 @@ async function resolveProfileIdForPass(passData) {
 }
 
 // Gate Pass Creation & Local Sync
-app.post('/api/create-pass', (req, res) => {
-    const { passData } = req.body;
-    if (!passData || !passData.id) {
+// Fix 1 (auth): a login is required. WARDEN / ADMIN / DEAN keep full control
+// exactly as before (the warden desk creates passes on a student's behalf, and
+// the 1-tap approve re-posts the APPROVED pass here). Every other role can only
+// file a PENDING request for THEMSELVES: identity comes from the login token,
+// status/token/signature fields in the body are ignored.
+const PASS_STAFF_ROLES = ['WARDEN', 'ADMIN', 'DEAN'];
+const SELF_PASS_FIELDS = ['id', 'passId', 'destination', 'reason', 'passType', 'priority', 'validUntil', 'createdAt', 'createdAtMs'];
+
+app.post('/api/create-pass', authenticateUser, async (req, res) => {
+    const { passData: rawPass } = req.body || {};
+    if (!rawPass || !rawPass.id) {
         return res.status(400).json({ success: false, error: 'passData is required' });
     }
+    const role = String(req.user?.role || '').toUpperCase();
+    // Without Supabase (offline dev mode) there is no real identity to enforce,
+    // so that mode keeps its old behaviour.
+    const selfOnly = !!supabase && !PASS_STAFF_ROLES.includes(role);
+    const myRoll = String(req.user?.rollNumber || '').trim();
+    const isMine = (p) => String(p?.rollNo || p?.studentId || '').trim().toLowerCase() === myRoll.toLowerCase();
+
+    let passData = rawPass;
+    if (selfOnly) {
+        if (!myRoll) {
+            return res.status(403).json({ success: false, error: 'No college record linked to this account' });
+        }
+        const existing = gatePassesDB.find(p => p.id === rawPass.id);
+        if (existing && !isMine(existing)) {
+            return res.status(403).json({ success: false, error: 'This pass belongs to another student' });
+        }
+        // Replay of a request the warden already decided (e.g. offline outbox
+        // flush) — keep the warden's decision, report success, change nothing.
+        if (existing && String(existing.status || 'PENDING').toUpperCase() !== 'PENDING') {
+            return res.json({ success: true, unchanged: true, gatePasses: gatePassesDB.filter(isMine) });
+        }
+        if (!existing && gpSupabaseOk) {
+            try {
+                const { data: rows } = await supabase
+                    .from('gate_passes')
+                    .select('student_id, status')
+                    .eq('pass_ref', String(rawPass.id))
+                    .limit(1);
+                if (rows && rows.length) {
+                    const myProfileId = req.user?.profile?.id || await resolveProfileIdForPass({ rollNo: myRoll });
+                    if (String(rows[0].student_id) !== String(myProfileId)) {
+                        return res.status(403).json({ success: false, error: 'This pass belongs to another student' });
+                    }
+                    if (String(rows[0].status || 'PENDING').toUpperCase() !== 'PENDING') {
+                        return res.json({ success: true, unchanged: true, gatePasses: gatePassesDB.filter(isMine) });
+                    }
+                }
+            } catch (lookupErr) {
+                console.warn('create-pass ownership lookup skipped:', lookupErr.message);
+            }
+        }
+        passData = {};
+        for (const k of SELF_PASS_FIELDS) {
+            if (rawPass[k] !== undefined) passData[k] = rawPass[k];
+        }
+        passData.studentId = myRoll;
+        passData.rollNo = myRoll;
+        passData.name = req.user?.profile?.full_name || rawPass.name || req.user?.name || '';
+        passData.status = 'PENDING';
+    }
+
     const existingIdx = gatePassesDB.findIndex(p => p.id === passData.id);
     if (existingIdx >= 0) {
         gatePassesDB[existingIdx] = { ...gatePassesDB[existingIdx], ...passData };
@@ -3495,8 +3578,10 @@ app.post('/api/create-pass', (req, res) => {
     // column; the row itself uses a UUID primary key + real profile FK.
     // If Supabase fallback is active, persistence stays in-memory + JSON.
 
-    return res.json({ success: true, gatePasses: gatePassesDB });
+    // Students get back only their own passes (not every student's ledger).
+    return res.json({ success: true, gatePasses: selfOnly ? gatePassesDB.filter(isMine) : gatePassesDB });
 });
+
 
 // Gate Register reader — every EXIT/RETURN scan log (with late-return flag).
 // Referenced by the warden/admin Gate Register tab and useful for the guard
@@ -6618,7 +6703,9 @@ async function cascadeStatus({ masterId, ticketId, status, note, actor = '' }) {
 // ----------------------------------------------------
 // 9c. API ROUTE: GET /api/technician/tickets (Technician Work Queue)
 // ----------------------------------------------------
-app.get('/api/technician/tickets', async (req, res) => {
+// Fix 1 (auth): technicians have no app login yet, so these routes are driven
+// from the warden desk — login required, WARDEN/ADMIN/DEAN only.
+app.get('/api/technician/tickets', authenticateUser, requireRole('WARDEN', 'ADMIN', 'DEAN'), async (req, res) => {
     try {
         const techId = req.query.techId || '';
         const techName = req.query.techName || '';
@@ -6722,7 +6809,9 @@ app.get('/api/technician/tickets', async (req, res) => {
 //     action ∈ ASSIGN | ACCEPT | START | ADD_NOTE | RESOLVE | CLOSE
 //     target: { masterId } (master incident) or { ticketId } (standalone)
 // ----------------------------------------------------
-app.post('/api/technician/action', async (req, res) => {
+// Fix 1 (auth): technicians have no app login yet, so these routes are driven
+// from the warden desk — login required, WARDEN/ADMIN/DEAN only.
+app.post('/api/technician/action', authenticateUser, requireRole('WARDEN', 'ADMIN', 'DEAN'), async (req, res) => {
     try {
         const { masterId, ticketId, action, note = '', techName = '', techId = '' } = req.body;
         const allowed = ['ASSIGN', 'ACCEPT', 'START', 'ADD_NOTE', 'RESOLVE', 'CLOSE'];
