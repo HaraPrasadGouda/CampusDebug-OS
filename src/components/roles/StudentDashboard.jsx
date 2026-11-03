@@ -35,6 +35,7 @@ import {
 } from 'lucide-react';
 import AiCategoryChip from '../AiCategoryChip';
 import { getTodayMenuKey, getTodayMenu, isFeastDay, getTodayDayLabel, getMealStatus, fmtDuration, MEAL_ORDER } from '../../data/messMenu';
+import { isLeaveWindowOpen } from '../../utils/leaveWindow';
 
 export default function StudentDashboard({
   activities = [],
@@ -633,7 +634,7 @@ export default function StudentDashboard({
             {leaveCard
               ? leaveCard.footer
               : !cardPass
-              ? (isDayScholar ? 'Tap to request leave from your mentor' : 'Tap to request a new gate pass')
+              ? (isDayScholar ? (isLeaveWindowOpen() ? 'Tap to request leave from your mentor' : 'Leave requests: 9:00 AM – 4:30 PM') : 'Tap to request a new gate pass')
               : isPassReturned
                 ? (isDayScholar ? 'Visit Complete — Pass Closed' : 'Round Trip Complete — Pass Closed')
                 : isPassUsed
