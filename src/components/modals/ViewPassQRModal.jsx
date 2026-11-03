@@ -1,5 +1,6 @@
 import React from 'react';
 import ScannableQR from '../ScannableQR';
+import { useRotatingQr } from '../../utils/passQr';
 import {
   QrCode,
   X,
@@ -15,18 +16,13 @@ import {
   LogIn
 } from 'lucide-react';
 
-export default function ViewPassQRModal({ isOpen, onClose, pass }) {
-  const [copied, setCopied] = React.useState(false);
-  // "Copy scan token" lets the user paste the exact QR payload into the
-  // guard's Direct Base64 Token Verification box (mobile debugging).
-  const copyToken = () => {
-    if (navigator?.clipboard && pass?.token) {
-      navigator.clipboard.writeText(pass.token).then(() => {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2500);
-      }).catch(() => {});
-    }
-  };
+export default function ViewPassQRModal({ isOpen, onClose, pass: passIn }) {
+  // Fix 5: the QR is signed by the SERVER and rotates every ~25 s (a ~60 min
+  // batch is kept on the phone, so it keeps rotating offline). `pass.token`
+  // below is always the CURRENT live QR — never a stored, static one.
+  const qrWanted = !!isOpen && !!passIn && (passIn.status === 'APPROVED' || passIn.status === 'USED');
+  const qr = useRotatingQr('PASS', passIn?.id, qrWanted);
+  const pass = passIn ? { ...passIn, token: qr.token || null } : passIn;
   if (!isOpen || !pass) return null;
 
   // Only a warden-approved (and not yet used) pass may show a scannable QR.
@@ -35,7 +31,7 @@ export default function ViewPassQRModal({ isOpen, onClose, pass }) {
   const isReturned = pass.status === 'RETURNED';
   // Return leg: after EXIT the pass stays scannable for the REST OF THE DAY —
   // the guard scans the same QR a second time to register the RETURN.
-  const canShowReturnQR = isUsed && !!pass.token;
+  const canShowReturnQR = isUsed && (!!pass.token || qr.stage === 'LOADING' || qr.stage === 'OFFLINE');
   const qrCaption = [pass.id, pass.name && `${pass.name}${pass.rollNo ? ` (${pass.rollNo})` : ''}`].filter(Boolean).join(' • ');
 
   return (
@@ -64,7 +60,7 @@ export default function ViewPassQRModal({ isOpen, onClose, pass }) {
               </h3>
               <p className="text-xs text-slate-500">
                 {isApproved && !isUsed
-                  ? 'Warden Approved • HMAC-SHA256 Signed'
+                  ? 'Warden Approved • Server-Signed QR'
                   : canShowReturnQR
                     ? 'Exit Registered • Same QR Logs Your Return'
                     : isReturned
@@ -188,17 +184,9 @@ export default function ViewPassQRModal({ isOpen, onClose, pass }) {
 
               {/* Signature Hash Preview */}
               <div className="w-full mt-2.5 px-3 py-1.5 bg-white rounded-lg text-[10px] font-mono text-slate-500 truncate flex items-center justify-between border border-slate-200">
-                <span className="text-slate-400">HMAC-SIG:</span>
-                <span className="text-emerald-700 truncate ml-1">{pass.signature || 'HMAC-SHA256-VERIFIED'}</span>
+                <span className="text-slate-400">SIGNATURE:</span>
+                <span className="text-emerald-700 truncate ml-1">Ed25519 · server-signed · rotates</span>
               </div>
-
-              <button
-                type="button"
-                onClick={copyToken}
-                className="mt-2 w-full py-2 rounded-lg border border-slate-200 bg-white text-[11px] font-bold text-slate-600 hover:bg-slate-50 transition-colors cursor-pointer"
-              >
-                {copied ? 'Copied ✓' : 'Copy scan token'}
-              </button>
             </div>
           )}
 
@@ -237,13 +225,6 @@ export default function ViewPassQRModal({ isOpen, onClose, pass }) {
               </div>
               </div>
 
-              <button
-                type="button"
-                onClick={copyToken}
-                className="mt-2 w-full py-2 rounded-lg border border-slate-200 bg-white text-[11px] font-bold text-slate-600 hover:bg-slate-50 transition-colors cursor-pointer"
-              >
-                {copied ? 'Copied ✓' : 'Copy scan token'}
-              </button>
             </div>
           )}
 
@@ -261,6 +242,16 @@ export default function ViewPassQRModal({ isOpen, onClose, pass }) {
               <p className="text-xs text-slate-600 font-medium leading-relaxed">
                 Your pass is approved and cryptographically signed by the warden. The secure QR
                 arrives on this device within seconds — close this popup and reopen it if it hasn't yet.
+              </p>
+            </div>
+          )}
+
+          {/* Fix 5: no live QR on this phone and no network to fetch one. */}
+          {(isApproved || isUsed) && !pass.token && qr.stage === 'OFFLINE' && (
+            <div className="bg-amber-50 border border-amber-300 rounded-xl px-4 py-3 text-center">
+              <p className="text-xs font-extrabold text-amber-800">No internet — live QR needs a refresh</p>
+              <p className="text-[11px] text-slate-600 font-medium leading-relaxed mt-1">
+                Connect for a moment to load your live QR (it changes every few seconds), or tell the guard your pass number {pass.id}.
               </p>
             </div>
           )}

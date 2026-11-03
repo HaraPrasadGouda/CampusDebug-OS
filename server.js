@@ -7,6 +7,7 @@ import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import { createClient } from '@supabase/supabase-js';
 import { MEAL_WINDOWS, MEAL_ORDER, RSVP_CUTOFF_MINUTES } from './src/data/messMenu.js';
+import { initPassSigning, passPublicKeyInfo, verifyPassQr, passQrFresh, signPassQrBatch, PASS_QR_ROTATE_MS, PASS_QR_MAX_AGE_MS } from './passSigning.js';
 
 dotenv.config();
 
@@ -28,6 +29,8 @@ app.use(express.static(path.join(__dirname, 'dist')));
 const SUPABASE_URL = (process.env.SUPABASE_URL || '').trim();
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || '';
 const HMAC_SECRET = process.env.HMAC_SECRET || '';
+// Gate QR signing key (Ed25519, PASS_SIGNING_PRIVATE_KEY) — see passSigning.js.
+initPassSigning();
 
 let supabase = null;
 let supabaseAuth = null;
@@ -4098,6 +4101,106 @@ function recordLeaveScanConflict(entry) {
     } catch (e) { console.warn('leave conflict log write skipped:', e.message); }
 }
 
+// ----------------------------------------------------
+// Fix 5: gate QRs are signed HERE (Ed25519, private key only on the server).
+// ----------------------------------------------------
+// Public key for guard phones (they CHECK QRs offline with it; it cannot make one).
+app.get('/api/pass-public-key', (req, res) => {
+    return res.json({ success: true, ...passPublicKeyInfo() });
+});
+
+// Student asks for a batch of signed, rotating QRs for their OWN approved
+// gate pass (hosteller; also the return leg while the pass is USED) or their
+// OWN approved, not-yet-scanned leave today (day scholar). Each token has its
+// own issuedAt, 25 s apart, so the QR keeps rotating if the phone goes offline.
+app.post('/api/pass-token', authenticateUser, requireRole('STUDENT'), async (req, res) => {
+    try {
+        const kind = String(req.body?.kind || '').toUpperCase();
+        const id = String(req.body?.id || '').trim();
+        if (!['PASS', 'LEAVE'].includes(kind) || !/^[A-Za-z0-9-]{1,64}$/.test(id)) {
+            return res.status(400).json({ success: false, error: 'kind (PASS or LEAVE) and id are required' });
+        }
+        const myRoll = String(req.user?.rollNumber || req.user?.rollNo || '').trim().toLowerCase();
+        if (!myRoll) return res.status(403).json({ success: false, error: 'No college record linked to this account' });
+        const isMine = (r) => !!r && String(r).trim().toLowerCase() === myRoll;
+
+        let base = null;
+        if (kind === 'PASS') {
+            let info = null;
+            const mem = gatePassesDB.find(p => String(p.id) === id) || null;
+            if (mem) {
+                info = {
+                    status: String(mem.status || '').toUpperCase(),
+                    owner: mem.rollNo || mem.studentId,
+                    studentId: mem.studentId || null,
+                    name: mem.name, rollNo: mem.rollNo, destination: mem.destination,
+                    reason: mem.reason, passType: mem.passType, validUntil: mem.validUntil
+                };
+            } else if (supabase && gpSupabaseOk) {
+                const { data: row, error } = await supabase
+                    .from('gate_passes')
+                    .select('*, student:profiles(full_name, roll_number)')
+                    .eq('pass_ref', id.toUpperCase())
+                    .maybeSingle();
+                if (error) gpDisableSupabase(error);
+                if (row) {
+                    const enumStatus = String(row.status || '').toUpperCase();
+                    const labelU = String(row.status_label || '').toUpperCase();
+                    info = {
+                        status: enumStatus === 'USED' && labelU.includes('RETURNED') ? 'RETURNED' : enumStatus,
+                        owner: row.student?.roll_number,
+                        studentId: null,
+                        name: row.student?.full_name, rollNo: row.student?.roll_number, destination: row.destination,
+                        reason: row.reason,
+                        passType: row.pass_category === 'MEDICAL' ? 'Medical Outing' : row.pass_category === 'HOME_LEAVE' ? 'Home Leave' : 'Day Pass',
+                        validUntil: row.valid_until
+                    };
+                }
+            }
+            if (!info || !isMine(info.owner)) {
+                return res.status(403).json({ success: false, error: 'No gate pass of yours with this number.' });
+            }
+            if (info.status !== 'APPROVED' && info.status !== 'USED') {
+                return res.status(403).json({ success: false, error: `This pass is ${info.status || 'not approved'} — no gate QR.` });
+            }
+            base = {
+                kind: 'PASS', passId: id, studentId: info.studentId || null,
+                name: info.name || 'Student', rollNo: info.rollNo || '',
+                destination: info.destination || '', reason: info.reason || '',
+                passType: info.passType || 'Day Pass', validUntil: info.validUntil || null
+            };
+        } else {
+            if (!supabase) return res.status(503).json({ success: false, error: 'Leave register offline' });
+            const { data: lv } = await supabase.from('leave_requests').select('*').eq('id', id).maybeSingle();
+            if (!lv || !isMine(lv.student_roll)) {
+                return res.status(403).json({ success: false, error: 'No leave of yours with this id.' });
+            }
+            if (lv.status !== 'APPROVED' || lv.scanned_at || Date.parse(lv.created_at || 0) < Date.parse(localStartOfDayISO())) {
+                return res.status(403).json({ success: false, error: `This leave is ${lv.scanned_at ? 'already used' : (lv.status || 'not approved')} — no gate QR.` });
+            }
+            const prof = (req.user?.profile && req.user.profile.roll_number) ? req.user.profile : (await profileByRoll(lv.student_roll)) || {};
+            base = {
+                kind: 'LEAVE', leaveId: id,
+                passId: `LV-${id.replace(/-/g, '').slice(-8).toUpperCase()}`,
+                rollNo: prof.roll_number || lv.student_roll,
+                name: prof.full_name || lv.student_name || 'Student',
+                department: prof.department || '', course: prof.course || '', section: prof.section || ''
+            };
+        }
+        const info = passPublicKeyInfo();
+        return res.json({
+            success: true, kind, id,
+            keyId: info.keyId,
+            rotateMs: PASS_QR_ROTATE_MS,
+            maxAgeMs: PASS_QR_MAX_AGE_MS,
+            serverTime: new Date().toISOString(),
+            tokens: signPassQrBatch(base, req.body?.count)
+        });
+    } catch (e) {
+        return res.status(500).json({ success: false, error: e.message });
+    }
+});
+
 // Guard phone's OFFLINE list: today's mentor-APPROVED, not-yet-scanned
 // day-scholar leaves. The guard app downloads it whenever it is online so a
 // leave QR can be checked at the gate without network.
@@ -4144,6 +4247,16 @@ app.post('/api/leave-scan', authenticateUser, requireRole('GUARD', 'WARDEN', 'AD
         }
         if (!/^[A-Za-z0-9-]{1,64}$/.test(leaveId)) {
             return res.status(400).json({ success: false, error: 'Invalid leave id in QR' });
+        }
+        // Fix 5: the QR must carry a valid SERVER signature (Ed25519) and say
+        // exactly this roll / leave / issue time. Forged, tampered and old
+        // (app-signed HMAC) QRs stop here.
+        const qrCheck = verifyPassQr(req.body.qrToken);
+        if (!qrCheck.ok || qrCheck.payload?.kind !== 'LEAVE'
+            || String(qrCheck.payload.leaveId) !== leaveId
+            || String(qrCheck.payload.rollNo || '').trim().toLowerCase() !== roll.toLowerCase()
+            || String(qrCheck.payload.issuedAt || '') !== String(req.body.issuedAt || '')) {
+            return res.status(403).json({ success: false, qrRejected: true, reason: qrCheck.ok ? 'QR does not match this scan (roll / leave / time). Nothing recorded.' : qrCheck.reason });
         }
         // Offline sync: the guard phone checked this QR without network and
         // sends the REAL scan time. Freshness is judged against that scan
@@ -6481,6 +6594,36 @@ app.post('/api/scan-pass', authenticateUser, requireRole('GUARD', 'ADMIN', 'WARD
         }
         const scannedAt = passData.verifiedAt || new Date().toISOString();
         const direction = passData.direction === 'RETURN' ? 'RETURN' : 'EXIT';
+
+        // Fix 5: a QR scan carries the signed token — check it on the server
+        // too (Ed25519 + 60 s freshness; for an offline scan synced later,
+        // freshness is judged at the guard phone's scan time). The keypad
+        // path (guard types the GP number, no QR) sends no token and works
+        // as before.
+        if (passData.qrToken) {
+            const qrCheck = verifyPassQr(passData.qrToken);
+            if (!qrCheck.ok || qrCheck.payload?.kind !== 'PASS' || String(qrCheck.payload.passId) !== String(passData.id)) {
+                return res.status(403).json({ success: false, qrRejected: true, reason: qrCheck.ok ? 'QR belongs to a different pass. Nothing recorded.' : qrCheck.reason });
+            }
+            let refMs = Date.now();
+            if (passData.offlineScan === true && passData.qrCheckedAt) {
+                const t = Date.parse(String(passData.qrCheckedAt));
+                if (Number.isFinite(t) && t <= Date.now() + 5 * 60000 && t >= Date.now() - 24 * 3600000) refMs = Math.min(t, Date.now());
+            }
+            if (!passQrFresh(qrCheck.payload, refMs)) {
+                return res.status(403).json({ success: false, qrRejected: true, expired: true, reason: 'QR expired — ask the student to show the live QR in the app (screenshots or old photos are not accepted). Nothing recorded.' });
+            }
+            // The signed values win over the guard phone's copy.
+            const sp = qrCheck.payload;
+            passData.rollNo = sp.rollNo;
+            passData.name = sp.name;
+            passData.destination = sp.destination;
+            passData.validUntil = sp.validUntil;
+        }
+        delete passData.qrToken;
+        delete passData.qrCheckedAt;
+        delete passData.offlineScan;
+        delete passData.kind;
 
         // Authoritative current status: server memory first, then Supabase.
         // A pass must be APPROVED for EXIT and USED for RETURN — the state

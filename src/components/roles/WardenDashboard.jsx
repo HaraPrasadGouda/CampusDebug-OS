@@ -204,22 +204,12 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
       const effectiveValidUntil =
         passValidMs > nowMs ? pass.validUntil : new Date(nowMs + 4 * 3600 * 1000).toISOString();
 
-      const cryptoResult = await generateSignedPassToken({
-        passId: pass.id,
-        studentId: pass.studentId || 'STU-9921',
-        name: pass.name,
-        rollNo: pass.rollNo,
-        destination: pass.destination,
-        reason: pass.reason,
-        validUntil: effectiveValidUntil
-      });
-
+      // Fix 5: no signing on the warden's device any more — the server signs
+      // the student's rotating gate QR on request (POST /api/pass-token).
       const approvedPass = {
         ...pass,
         status: 'APPROVED',
         validUntil: effectiveValidUntil,
-        token: cryptoResult.rawToken,
-        signature: cryptoResult.signature,
         approvedBy: 'Hostel Warden',
         approvedAt: new Date().toISOString()
       };
@@ -249,7 +239,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
       }
 
       setPendingPasses(pendingPasses.filter(p => p.id !== pass.id));
-      triggerToast(`Pass #${pass.id} Approved! Cryptographic HMAC-SHA256 Token unlocked for ${pass.name}.`);
+      triggerToast(`Pass #${pass.id} Approved! Signed gate QR unlocked for ${pass.name}.`);
     } catch (err) {
       console.error('Approval failed:', err);
       triggerToast('Failed to sign token: ' + err.message, 'error');

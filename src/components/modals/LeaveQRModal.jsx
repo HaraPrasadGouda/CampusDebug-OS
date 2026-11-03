@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Compass, Clock, Send, QrCode, RefreshCw, CheckCircle2, XCircle, LogOut } from 'lucide-react';
-import { generateSignedLeaveToken, LEAVE_QR_ROTATE_MS } from '../../utils/crypto';
-import { noteServerDate, serverNow } from '../../utils/serverClock';
+import { useRotatingQr } from '../../utils/passQr';
+import { noteServerDate } from '../../utils/serverClock';
 import { getStoredProfile, getAccessToken } from '../../utils/authClient';
 import { pickTodaysLeave, saveLeaveSnapshot, readLeaveSnapshot } from '../../utils/dayScholarLeave';
 import ScannableQR from '../ScannableQR';
@@ -15,8 +15,6 @@ import ScannableQR from '../ScannableQR';
  * States: apply → PENDING → APPROVED → OUT (or REJECTED / EXPIRED).
  */
 export default function LeaveQRModal({ isOpen, onClose, onToast }) {
-  const [token, setToken] = useState(null);
-  const [tokenStage, setTokenStage] = useState('IDLE');
   const [state, setState] = useState({ phase: 'LOADING' });
   const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -61,39 +59,19 @@ export default function LeaveQRModal({ isOpen, onClose, onToast }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
-  // Rotating per-leave QR: signed only while THIS leave is APPROVED and not
-  // yet scanned; a new QR (fresh issuedAt, server-corrected clock) every
-  // LEAVE_QR_ROTATE_MS. No approved leave → no token at all.
+  // Rotating per-leave QR: only while THIS leave is APPROVED and not yet
+  // scanned. Fix 5: the SERVER signs it (POST /api/pass-token); the phone
+  // keeps a ~60 min batch so it still rotates every ~25 s with no network.
+  // No approved leave → no token at all.
   const liveLeaveId = (() => {
     if (!isOpen || state.phase !== 'READY') return null;
     const l = pickTodaysLeave(state.leaves || []).live;
     return l ? String(l.id) : null;
   })();
-  const [nextQrAt, setNextQrAt] = useState(0);
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    if (!liveLeaveId) { setToken(null); setTokenStage('IDLE'); return undefined; }
-    let alive = true;
-    const sign = async () => {
-      try {
-        const p = getStoredProfile() || {};
-        const { rawToken } = await generateSignedLeaveToken({
-          leaveId: liveLeaveId,
-          rollNo: p.rollNumber || 'STUDENT',
-          name: p.fullName || 'Student',
-          department: p.department || '',
-          course: p.course || '',
-          section: p.section || '',
-          issuedAtMs: serverNow()
-        });
-        if (alive) { setToken(rawToken); setTokenStage('READY'); setNextQrAt(Date.now() + LEAVE_QR_ROTATE_MS); }
-      } catch { if (alive) setTokenStage('ERROR'); }
-    };
-    sign();
-    const rotate = setInterval(sign, LEAVE_QR_ROTATE_MS);
-    const tick = setInterval(() => setTick(t => t + 1), 1000);
-    return () => { alive = false; clearInterval(rotate); clearInterval(tick); };
-  }, [liveLeaveId]);
+  const qr = useRotatingQr('LEAVE', liveLeaveId, !!liveLeaveId);
+  const token = qr.token;
+  const tokenStage = qr.token ? 'READY' : qr.stage;
+  const nextQrAt = Date.now() + qr.secondsLeft * 1000;
 
   if (!isOpen) return null;
 
@@ -251,7 +229,7 @@ export default function LeaveQRModal({ isOpen, onClose, onToast }) {
                     </div>
                   ) : (
                     <div className="w-[104px] h-[104px] flex items-center justify-center text-slate-400 text-[10px] font-mono text-center px-2">
-                      {tokenStage === 'ERROR' ? 'Signing unavailable on this device' : 'Making live QR…'}
+                      {tokenStage === 'OFFLINE' ? 'No internet — connect once to load the live QR' : tokenStage === 'DENIED' ? (qr.denyReason || 'QR not available') : 'Making live QR…'}
                     </div>
                   )}
                 </div>
