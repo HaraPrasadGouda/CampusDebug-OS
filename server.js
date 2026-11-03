@@ -111,30 +111,183 @@ function normalizeUrgency(textOrUrgency = '') {
 }
 
 // ----------------------------------------------------
-// 1b. TECHNICIAN ROSTER (deterministic routing — AI never invents names)
+// 1b. TECHNICIANS — read from the Supabase `technicians` table
+// (migration.sql). One active technician per category; they never log in,
+// so they are not in `profiles`. The server keeps a small cache, loaded at
+// start and refreshed every few minutes. There is NO built-in fallback list:
+// if the table can't be read, complaints are saved unassigned and the
+// warden sees "Technician list unavailable".
 // ----------------------------------------------------
-const TECHNICIAN_ROSTER = {
-    'Plumbing':    { id: 'TECH-PLUMB-01', name: 'Manoj Kumar',   role: 'Senior Plumber',   specialty: 'Pipes, Taps, Water Coolers' },
-    'Wi-Fi / LAN': { id: 'TECH-NET-01',   name: 'Suresh Patra',  role: 'Network Engineer', specialty: 'Wi-Fi APs, LAN Ports, Routers' },
-    'Electrical':  { id: 'TECH-ELEC-01',  name: 'Ashok Mishra',  role: 'Electrician',      specialty: 'Fans, Lights, MCB, Wiring' },
-    'Furniture':   { id: 'TECH-FURN-01',  name: 'Ramesh Behera', role: 'Hostel Carpenter', specialty: 'Beds, Desks, Doors, Windows' },
-    'Cleanliness': { id: 'TECH-CLEAN-01', name: 'Jatindra Dash', role: 'Housekeeping Supervisor', specialty: 'Washrooms, Garbage, Sweeping' }
-};
+const TECH_REFRESH_MS = 5 * 60 * 1000;
+const TECH_UNAVAILABLE = 'Technician list unavailable';
+const technicianState = { list: [], loadedAt: null, error: null };
 
+async function loadTechnicians(reason = 'refresh') {
+    if (!supabase) {
+        technicianState.list = [];
+        technicianState.error = 'Supabase is not configured';
+        console.error(`❌ [TECHNICIANS] ${TECH_UNAVAILABLE}: Supabase is not configured (no SUPABASE_URL / service key).`);
+        return technicianState;
+    }
+    try {
+        const { data, error } = await supabase
+            .from('technicians')
+            .select('id, full_name, role, category, phone_number, active, created_at')
+            .order('id', { ascending: true });
+        if (error) throw new Error(error.message || String(error.code || 'query failed'));
+        technicianState.list = (data || []).map(r => ({
+            id: String(r.id),
+            name: r.full_name,
+            role: r.role || '',
+            category: r.category,
+            phone: r.phone_number || '',
+            active: r.active !== false
+        }));
+        technicianState.loadedAt = new Date().toISOString();
+        technicianState.error = technicianState.list.some(t => t.active) ? null : 'No active technicians in the technicians table';
+        if (technicianState.error) console.error(`❌ [TECHNICIANS] ${TECH_UNAVAILABLE}: ${technicianState.error}`);
+        else if (reason === 'startup') console.log(`🔧 [TECHNICIANS] ${technicianState.list.filter(t => t.active).length} active technician(s) loaded from the database`);
+    } catch (err) {
+        // Keep the last list that was really read from the DB (a blip
+        // shouldn't unassign everyone); with nothing loaded yet it stays empty.
+        technicianState.error = err.message;
+        const missing = /does not exist|could not find the table|42P01|PGRST205|schema cache/i.test(err.message);
+        console.error(`❌ [TECHNICIANS] ${TECH_UNAVAILABLE}: ${err.message}` +
+            (missing ? ' — the "technicians" table is missing; run migration.sql in Supabase.' : ''));
+    }
+    return technicianState;
+}
+loadTechnicians('startup');
+setInterval(() => { loadTechnicians('interval'); }, TECH_REFRESH_MS);
+
+function techniciansAvailable() {
+    return technicianState.list.some(t => t.active);
+}
+
+// The active technician for a complaint category, or null (never invented).
 function getTechnicianFor(category) {
     const key = normalizeCategory(category);
-    return TECHNICIAN_ROSTER[key] || TECHNICIAN_ROSTER['Cleanliness'];
+    return technicianState.list.find(t => t.active && t.category === key) || null;
+}
+
+// Any technician by id (inactive too — old complaints still show who it was).
+function getTechnicianById(id) {
+    if (!id) return null;
+    return technicianState.list.find(t => t.id === String(id)) || null;
+}
+
+// Short ticket code used in SMS and on screens: first 8 hex chars of the UUID.
+function shortTicketCode(id) {
+    const s = String(id || '');
+    return /^[0-9a-f]{8}-/i.test(s) ? s.slice(0, 8).toUpperCase() : s;
+}
+
+// Keypad-phone friendly text: GSM-7 punctuation only ("—" or curly quotes
+// would switch the whole SMS to Unicode = 70 chars per part instead of 160).
+function smsSafe(text, { trim = true } = {}) {
+    const s = String(text || '')
+        .replace(/[\u2013\u2014\u2212]/g, '-')
+        .replace(/[\u2018\u2019\u201B]/g, "'")
+        .replace(/[\u201C\u201D]/g, '"')
+        .replace(/\u2026/g, '...')
+        .replace(/\s+/g, ' ');
+    return trim ? s.trim() : s;
+}
+
+// "Hostel Block B, Room 101" → "Block B Room 101"
+function blockRoomOf(location) {
+    const loc = String(location || '');
+    const blk = (/Hostel\s+([^,]+)/i.exec(loc) || [])[1] || '';
+    const room = (/Room\s+([^,]+)/i.exec(loc) || [])[1] || '';
+    const b = blk.trim();
+    const blockLabel = !b ? '' : (/^block\b/i.test(b) ? b : (/^[A-Za-z0-9]{1,3}$/.test(b) ? `Block ${b}` : b));
+    return [blockLabel, room.trim() ? `Room ${room.trim()}` : ''].filter(Boolean).join(' ') || loc;
+}
+
+// Fit "<head><text><tail>" into one 160-char SMS by trimming only the
+// complaint text (never the ticket code, place or student contact).
+function fitSms(head, text, tail, limit = 160) {
+    let body = smsSafe(text).replace(/[.\s]+$/, '');
+    const room = limit - head.length - tail.length;
+    if (body.length > room) {
+        // cut text ends in "..." — the tail then drops its own leading "."
+        tail = tail.replace(/^\./, '');
+        const r2 = limit - head.length - tail.length;
+        body = (r2 > 3 ? body.slice(0, r2 - 3) : body.slice(0, 12)).replace(/[\s.,;:-]+$/, '') + '...';
+    }
+    return head + body + tail;
+}
+
+// Long names (4 words) eat the complaint text: keep first + last name.
+function smsName(name) {
+    const n = smsSafe(name || 'Hosteller');
+    if (n.length <= 22) return n;
+    const w = n.split(' ');
+    return w.length > 1 ? `${w[0]} ${w[w.length - 1]}` : n.slice(0, 22);
+}
+
+function buildNewComplaintSms({ ticketId, category, location, text, studentName, studentPhone }) {
+    const head = smsSafe(`CampusDebug: New complaint #${shortTicketCode(ticketId)} - ${category} - ${blockRoomOf(location)}: `, { trim: false });
+    const tail = smsSafe(`. Student: ${smsName(studentName)}${studentPhone ? `, ${studentPhone}` : ''}.`);
+    return fitSms(head, text, tail);
+}
+
+// The technician already has the complaint text from the first SMS, so the
+// reopen SMS carries code, place and student only.
+function buildReopenSms({ ticketId, category, location, studentName, studentPhone }) {
+    return smsSafe(`CampusDebug: Complaint #${shortTicketCode(ticketId)} reopened: student says not fixed. ${category} - ${blockRoomOf(location)}. Student: ${smsName(studentName)}${studentPhone ? `, ${studentPhone}` : ''}.`);
+}
+
+// dispatchSms result → the word the warden sees.
+function smsStatusWord(result) {
+    if (!result) return 'not sent';
+    if (result.gatewayError) return 'failed';
+    switch (result.mode) {
+        case 'gateway': return 'sent';
+        case 'dry-run': return 'dry-run';
+        case 'simulated': return 'simulated';
+        case 'skipped': return 'skipped';
+        default: return String(result.mode || 'unknown');
+    }
+}
+
+// SMS the technician and remember the outcome on the ticket's ledger entry
+// (the warden's "SMS status"). kind: 'new' | 'reopen' | 'reassign'.
+async function smsTechnician(ticketId, tech, kind, message) {
+    let result;
+    try {
+        result = await dispatchSms(tech.phone, message);
+    } catch (err) {
+        result = { mode: 'error', gatewayError: err.message };
+    }
+    const entry = {
+        kind,
+        to: tech.id,
+        status: smsStatusWord(result),
+        mode: result.mode,
+        ...(result.gatewayError ? { error: result.gatewayError } : {}),
+        chars: message.length,
+        text: message,
+        at: new Date().toISOString()
+    };
+    const id = String(ticketId);
+    const led = ticketLedgerDB[id] || {};
+    ticketLedgerDB[id] = { ...led, sms: [...(led.sms || []), entry].slice(-10) };
+    saveLedger();
+    console.log(`📨 [TECH SMS ${kind.toUpperCase()}] #${shortTicketCode(id)} → ${tech.name} (${tech.id}): ${entry.status}`);
+    return entry;
 }
 
 // ----------------------------------------------------
 // 1d. ROUTING LEDGER (server-side file persistence)
-// The Supabase schema has no assigned_technician column and the service key
-// can't run DDL, so technician assignments + work notes are persisted in a
-// small JSON ledger next to the server (survives restarts on the same host).
+// Assignments themselves live in Supabase (tickets.assigned_technician_id,
+// assigned_by, assigned_at — migration.sql). This small JSON ledger next to
+// the server keeps the extras that have no column: technician SMS outcomes,
+// work notes and the time of the student's last "Not fixed".
 // ----------------------------------------------------
 import fs from 'fs';
 const LEDGER_PATH = path.join(__dirname, 'data', 'assignments.json');
-const ticketLedgerDB = {}; // { ticketId: { assignedTo, assignedTechId, notes, inProgress } }
+const ticketLedgerDB = {}; // { ticketId: { sms: [...], notes, notFixedAt, inProgress } }
 
 // ----------------------------------------------------
 // SMS GATEWAY — capcom6 "SMS Gateway for Android", self-hosted.
@@ -240,12 +393,13 @@ function savePushSubs() {
 // re-subscribes on every login the account holder makes from it), so the
 // queue is flattened into an endpoint-keyed SET before sending — otherwise
 // a device with 3 accounts on file receives the same push 3 times.
-async function pushToRolls(rollNumbers, { title, body }) {
+async function pushToRolls(rollNumbers, { title, body }, { personal = false } = {}) {
     if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
         console.warn('[push] VAPID keys missing — background push unavailable');
         return 0;
     }
-    const rolls = new Set([...rollNumbers, 'global']);
+    // personal: only the named students' devices (no 'global' broadcast key)
+    const rolls = new Set(personal ? rollNumbers : [...rollNumbers, 'global']);
     const payload = JSON.stringify({ title, body, url: '/' });
     // Flatten: Map<endpoint, { sub, rolls: Set } > across every queried roll
     // so pruning/still-alive bookkeeping can be written back to each roll.
@@ -337,6 +491,9 @@ async function dispatchSms(phone, message) {
             return { mode: 'gateway', status: 'sent' };
         } catch (gatewayErr) {
             console.warn(`⚠️ Gateway SMS failed (${gatewayErr.message}) — degrading to simulated dispatch`);
+            console.log(`📱 [SIMULATED SMS DISPATCH] -> To: ${digits} | "${message}"`);
+            // gatewayError lets callers that show delivery state say "failed"
+            return { mode: 'simulated', status: 'dispatched', gatewayError: gatewayErr.message };
         }
     }
     console.log(`📱 [SIMULATED SMS DISPATCH] -> To: ${digits} | "${message}"`);
@@ -494,6 +651,11 @@ function matchScore(candidateTicket, { category, block, text, keywords }) {
 }
 
 const SIMILARITY_THRESHOLD = 0.30; // ≥30% semantic overlap required to merge
+
+// "Hostel Block B, Room 101" → "hostel block b, room 101" (same-room rule)
+function normLocation(loc) {
+    return String(loc || '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
 
 // ----------------------------------------------------
 // 2. SUPABASE AUTH VERIFICATION MIDDLEWARE
@@ -901,6 +1063,7 @@ app.post('/api/parse-ticket', authenticateUser, async (req, res) => {
         // Offline-dev (no Supabase) keeps the old body-driven behaviour.
         const ticketRole = String(req.user?.role || '').toUpperCase();
         let hostelBlock, floor, room, studentId;
+        let filerProfile = null;           // the signed-in student's profile row
         if (supabase && ticketRole === 'STUDENT') {
             const me = (req.user?.profile && req.user.profile.id)
                 ? req.user.profile
@@ -918,6 +1081,7 @@ app.post('/api/parse-ticket', authenticateUser, async (req, res) => {
             room = String(me.room_number || '').trim();
             floor = '';   // the directory has no floor column — never guessed
             studentId = me.id;
+            filerProfile = me;
         } else {
             hostelBlock = String(req.body.hostelBlock || 'Block B');
             floor = String(req.body.floor || '');
@@ -1022,7 +1186,10 @@ app.post('/api/parse-ticket', authenticateUser, async (req, res) => {
         const slaHours = Number(parsedAI.sla_hours) || slaHoursFor(urgencyLevel, category);
         const aiKeywords = Array.isArray(parsedAI.keywords) ? parsedAI.keywords : [];
         const summaryText = parsedAI.summary || complaintText;
-        const tech = getTechnicianFor(category);
+        // Technician for this category from the technicians table (null if
+        // the list is unavailable — the complaint is still saved).
+        let tech = getTechnicianFor(category);
+        let smsCoveredBy = null;           // duplicate of a complaint whose technician was already texted
         const isCritical = urgencyLevel === 'CRITICAL';
         const severityLabel = {
             LOW: 'Routine', MEDIUM: 'Standard', HIGH: 'High-Risk', CRITICAL: 'Critical'
@@ -1034,26 +1201,40 @@ app.post('/api/parse-ticket', authenticateUser, async (req, res) => {
         let joinedMaster = false;          // true = attached to an existing master incident
         let newlyFormedCluster = false;    // true = similarity match formed a NEW master incident
         let ticketErrWarn = null;
+        let assignWarn = null;             // complaint saved but no technician recorded
+        let assignedTech = null;           // technician actually saved on the ticket
 
         if (supabase) {
             try {
-                // ---- (a) Search ACTIVE unresolved tickets for a matching problem ----
-                // Same room/floor alone never merges — similarity requires category +
-                // block + text/keyword overlap + time proximity (matchScore).
+                // ---- (a) Search OPEN tickets for the same problem ----
+                // Two deterministic rules (no AI model needed):
+                //  1. SAME ROOM + same category + still open → same job. Joins
+                //     regardless of wording (roommates describe it differently).
+                //  2. SAME BLOCK + same category + text/keyword overlap ≥ 30%
+                //     within 12h (matchScore — word overlap, Hinglish map,
+                //     character trigrams; Ollama keywords help only if running).
+                // "Open" = not marked Resolved by its student and not closed, so a
+                // complaint after an incident is closed starts a new one.
+                // Critical complaints join too: assignment is immediate now, so
+                // joining never delays the technician — it only avoids a 2nd SMS.
                 let matchTarget = null;
-                if (!isCritical) { // Critical issues route straight to a technician; no clustering wait
+                {
                     const { data: activeTickets, error: activeErr } = await supabase
                         .from('tickets')
                         .select('*')
-                        .in('status', ['PENDING', 'ASSIGNED'])
+                        .in('status', ['PENDING', 'ASSIGNED', 'ESCALATED_TO_DEAN'])
                         .order('created_at', { ascending: false })
-                        .limit(50);
+                        .limit(100);
                     console.log(`🔎 [Duplicate Detection]: scanned ${activeTickets ? activeTickets.length : 0} active candidate ticket(s)` + (activeErr ? ` (query ERROR: ${activeErr.message})` : ''));
                     if (activeErr) console.warn('duplicate-scan query error:', activeErr.message);
                     if (activeTickets) {
                         let bestScore = 0;
+                        const roomKey = room ? normLocation(fullLocation) : null;
                         for (const cand of activeTickets) {
-                            const score = matchScore(cand, { category, block: cleanBlock, text: `${summaryText} ${complaintText}`, keywords: [...new Set([...(aiKeywords || []), ...textKeywords(complaintText).slice(0, 6)])] });
+                            if (cand.student_resolved_at || cand.closed_at) continue; // only OPEN work can absorb a duplicate
+                            const sameRoom = roomKey && normalizeCategory(cand.category) === category && normLocation(cand.location) === roomKey;
+                            const score = sameRoom ? 1 : matchScore(cand, { category, block: cleanBlock, text: `${summaryText} ${complaintText}`, keywords: [...new Set([...(aiKeywords || []), ...textKeywords(complaintText).slice(0, 6)])] });
+                            if (sameRoom) console.log(`🔎 [Duplicate Detection]: candidate ${cand.id} is the SAME ROOM + same category and still open → same job`);
                             if (score > 0) console.log(`🔎 [Duplicate Detection]: candidate ${cand.id} (${cand.category}) scored ${score.toFixed(2)} vs new complaint`);
                             if (score > bestScore) { bestScore = score; matchTarget = cand; }
                         }
@@ -1103,17 +1284,24 @@ app.post('/api/parse-ticket', authenticateUser, async (req, res) => {
                         } catch (incErr) { console.warn('ticket_count increment skipped:', incErr.message); }
                         console.log(`🔗 [Duplicate Matched]: New complaint attached to existing Master Incident ${masterIncidentId} (score ≥ ${SIMILARITY_THRESHOLD}).`);
                     }
+                    // Same problem → same technician, and ONE SMS per incident:
+                    // the technician was already texted for the matched complaint
+                    // (or for the one it was itself covered by), so this
+                    // duplicate is assigned silently and points at that SMS.
+                    const crew = getTechnicianById(matchTarget.assigned_technician_id);
+                    if (crew && crew.active) {
+                        tech = crew;
+                        const prevCover = ((ticketLedgerDB[String(matchTarget.id)] || {}).sms || []).find(e => e.kind === 'covered');
+                        smsCoveredBy = (prevCover && prevCover.coveredBy) || String(matchTarget.id);
+                    }
                 }
 
                 // ---- (c) EVERY ticket gets an immediate technician assignment ----
                 // (Warden is a supervisor, not a bottleneck — no complaint waits for
                 // a second student to report the same problem, and critical issues
-                // skip clustering entirely.)
-                if (masterIncidentId) {
-                    // If the master already has a technical crew, that crew owns the new complaint too
-                    if (masterAssignmentsDB[masterIncidentId]) tech.assignedNote = masterAssignmentsDB[masterIncidentId].name;
-                }
-
+                // skip clustering entirely.) Saved as PENDING first, then the
+                // assignment is written — so a missing column never loses the
+                // complaint itself.
                 const ticketRow = {
                     student_id: studentId,
                     master_incident_id: masterIncidentId,
@@ -1122,7 +1310,7 @@ app.post('/api/parse-ticket', authenticateUser, async (req, res) => {
                     location: fullLocation,
                     urgency: urgencyLevel,
                     sla_hours: slaHours,
-                    status: 'ASSIGNED'
+                    status: 'PENDING'
                 };
 
                 let ticketErr = null;
@@ -1132,8 +1320,30 @@ app.post('/api/parse-ticket', authenticateUser, async (req, res) => {
 
                 if (!ticketErr && sbTicket) {
                     insertedTicket = sbTicket;
+                    if (tech) {
+                        const nowIso = new Date().toISOString();
+                        const assignment = {
+                            status: 'ASSIGNED',
+                            assigned_technician_id: tech.id,
+                            assigned_by: 'AUTO',
+                            assigned_at: nowIso,
+                            updated_at: nowIso   // no updated_at trigger on tickets
+                        };
+                        const { data: aRow, error: aErr } = await supabase
+                            .from('tickets').update(assignment).eq('id', sbTicket.id).select().maybeSingle();
+                        if (aErr) {
+                            assignWarn = `Complaint saved, but the technician could not be recorded on it (${aErr.message}). Run migration.sql.`;
+                            console.error(`❌ [AUTO-ASSIGN] #${shortTicketCode(sbTicket.id)}: ${aErr.message}`);
+                        } else {
+                            insertedTicket = aRow || { ...sbTicket, ...assignment };
+                            assignedTech = tech;
+                        }
+                    } else {
+                        assignWarn = `${TECH_UNAVAILABLE} — complaint saved; the warden will assign a technician.`;
+                        console.error(`❌ [AUTO-ASSIGN] #${shortTicketCode(sbTicket.id)} left unassigned: ${TECH_UNAVAILABLE} (${technicianState.error || 'no active technician for ' + category}).`);
+                    }
                     if (isCritical) {
-                        console.log(`🚨 [CRITICAL COMPLAINT]: Ticket #${sbTicket.id} (${category} at ${fullLocation}) — Warden flagged immediately, Technician ${tech.name} (${tech.id}) routed. Not waiting for clustering.`);
+                        console.log(`🚨 [CRITICAL COMPLAINT]: Ticket #${sbTicket.id} (${category} at ${fullLocation}) — Warden flagged immediately` + (assignedTech ? `, Technician ${assignedTech.name} (${assignedTech.id}) assigned.` : ', no technician available.') + ' Not waiting for clustering.');
                     }
                 } else if (ticketErr) {
                     ticketErrWarn = ticketErr.message;
@@ -1161,14 +1371,26 @@ app.post('/api/parse-ticket', authenticateUser, async (req, res) => {
             severity: severityLabel,
             keywords: aiKeywords,
             aiCategory: aiCategory || undefined,
-            status: 'ASSIGNED',
-            statusLabel: isCritical
-                ? `CRITICAL — Routed to ${tech.name} (Warden Alerted)`
-                : joinedMaster
-                    ? `Linked to Master Incident — ${tech.name} Handling`
-                    : `Routed to ${tech.name}`,
-            assignedTo: tech.name,
-            assignedTechId: tech.id,
+            status: assignedTech ? 'ASSIGNED' : 'PENDING',
+            statusLabel: assignedTech
+                ? (isCritical
+                    ? `CRITICAL — Assigned to ${assignedTech.name} (Warden Alerted)`
+                    : joinedMaster
+                        ? `Linked to Master Incident — ${assignedTech.name} handling`
+                        : `Assigned to ${assignedTech.name}`)
+                : (isCritical ? 'CRITICAL — Reported, Warden Alerted' : 'Reported — waiting for a technician'),
+            assignedTo: assignedTech ? assignedTech.name : null,
+            assignedTechId: assignedTech ? assignedTech.id : null,
+            technician: assignedTech ? { id: assignedTech.id, name: assignedTech.name, role: assignedTech.role, category: assignedTech.category } : null,
+            assignedBy: assignedTech ? 'AUTO' : null,
+            assignedAt: insertedTicket && insertedTicket.assigned_at ? insertedTicket.assigned_at : null,
+            shortCode: insertedTicket ? shortTicketCode(insertedTicket.id) : null,
+            lifecycleStage: 'REPORTED',
+            reportedAt: (insertedTicket && insertedTicket.created_at) || new Date().toISOString(),
+            studentResolvedAt: null,
+            closedAt: null,
+            notFixedCount: 0,
+            student_id: studentId,
             masterId: masterIncidentId || undefined,
             masterJoined: joinedMaster || undefined,
             clusterFormed: newlyFormedCluster || undefined,
@@ -1181,9 +1403,8 @@ app.post('/api/parse-ticket', authenticateUser, async (req, res) => {
         };
         // Mirror into the in-memory cache (same store every route reads)
         ticketsDB.unshift(newTicket);
-        // Persist routing in the ledger (technician ownership survives restarts)
+        // Ledger extras (no columns for these): label, notes, AI category, SMS log
         ticketLedgerDB[String(newTicket.id)] = {
-            assignedTo: tech.name, assignedTechId: tech.id,
             statusLabel: newTicket.statusLabel, notes: '',
             createdAt: newTicket.createdAt,
             // Fix 4: no tickets column for it (no schema change) — kept in the
@@ -1191,6 +1412,32 @@ app.post('/api/parse-ticket', authenticateUser, async (req, res) => {
             ...(aiCategory ? { aiCategory } : {})
         };
         saveLedger();
+
+        // Text the technician — once per incident (see smsCoveredBy above).
+        let smsEntry = null;
+        if (assignedTech && insertedTicket) {
+            if (smsCoveredBy) {
+                smsEntry = { kind: 'covered', coveredBy: smsCoveredBy, status: 'covered', to: assignedTech.id, at: new Date().toISOString() };
+                const led = ticketLedgerDB[String(newTicket.id)] || {};
+                ticketLedgerDB[String(newTicket.id)] = { ...led, sms: [...(led.sms || []), smsEntry] };
+                saveLedger();
+                console.log(`📨 [TECH SMS COVERED] #${shortTicketCode(newTicket.id)} → ${assignedTech.name}: no new SMS, same incident as #${shortTicketCode(smsCoveredBy)}`);
+            } else {
+                const filer = (filerProfile && String(filerProfile.id) === String(studentId))
+                    ? filerProfile
+                    : await profileRowById(studentId);
+                smsEntry = await smsTechnician(newTicket.id, assignedTech, 'new', buildNewComplaintSms({
+                    ticketId: newTicket.id,
+                    category,
+                    location: fullLocation,
+                    text: complaintText,
+                    studentName: filer?.full_name,
+                    studentPhone: filer?.phone_number
+                }));
+            }
+            newTicket.smsStatus = smsEntry.status;
+            newTicket.smsCoveredBy = smsEntry.coveredBy ? shortTicketCode(smsEntry.coveredBy) : null;
+        }
 
         // In-memory mirror of master clusters (only used when Supabase is down)
         if (masterIncidentId && newlyFormedCluster && !supabase) {
@@ -1202,13 +1449,10 @@ app.post('/api/parse-ticket', authenticateUser, async (req, res) => {
                 location: `Hostel ${cleanBlock}, ${cleanFloor}`,
                 impactedRooms: [`Room ${room}`],
                 studentsImpacted: 2,
-                status: 'ASSIGNED',
-                assignedTo: tech.name,
+                status: assignedTech ? 'ASSIGNED' : 'OPEN',
+                assignedTo: assignedTech ? assignedTech.name : null,
                 slaHours: slaHours
             });
-        } else if (!supabase && !masterIncidentId) {
-            const techTicket = ticketsDB.find(t => t.id === newTicket.id);
-            if (techTicket) techTicket.assignedTo = tech.name;
         }
 
         return res.json({
@@ -1218,13 +1462,15 @@ app.post('/api/parse-ticket', authenticateUser, async (req, res) => {
             masterClusters: masterClustersDB,
             clustered: !!joinedMaster,
             masterId: masterIncidentId || null,
-            assignedTechnician: { ...tech },
+            // name + role only — the technician's phone stays with the warden
+            assignedTechnician: assignedTech ? { id: assignedTech.id, name: assignedTech.name, role: assignedTech.role } : null,
+            techSms: smsEntry ? { status: smsEntry.status, coveredBy: smsEntry.coveredBy ? shortTicketCode(smsEntry.coveredBy) : null } : null,
             slaHours,
             urgency: urgencyLevel,
             severity: severityLabel,
             aiFallback: !!parsedAI._fallback,
             aiCategory,
-            warning: ticketErrWarn || undefined
+            warning: ticketErrWarn || assignWarn || undefined
         });
 
     } catch (error) {
@@ -1649,91 +1895,253 @@ app.patch('/api/document-requests/:id', authenticateUser, requireRole('ADMIN', '
 });
 
 // ----------------------------------------------------
-// 5C. TICKET LIFECYCLE: student-confirm + warden-close.
-// Reported → (assigned) → technician fixes → STUDENT confirms "job done"
-// → warden verifies the student confirmation and CLOSES. The close call is
-// physically refused until the student pressed confirm — the accountability
-// the dean expects: techs can't self-close complaints.
+// 5C. TICKET LIFECYCLE (HARA's anti-cheat flow)
+// REPORTED/ASSIGNED → RESOLVED → CLOSED
+//  • RESOLVED: only the student who filed it can mark it, after checking
+//    the fix in their own room (tickets.student_resolved_at).
+//  • "Not fixed": the same student sends it back (status → ASSIGNED,
+//    not_fixed_count + 1, student_resolved_at cleared) and the technician
+//    is texted again.
+//  • CLOSED: only a WARDEN, and only once the student has marked Resolved —
+//    the server refuses (403) otherwise, so a technician can't claim a job
+//    done that the student hasn't confirmed.
+// Every write also sets updated_at (tickets has no updated_at trigger).
 // ----------------------------------------------------
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const OPEN_TICKET_STATUSES = ['PENDING', 'ASSIGNED', 'IN_PROGRESS', 'ESCALATED_TO_DEAN'];
+
 async function loadTicketRow(id) {
   const { data, error } = await supabase
     .from('tickets')
-    .select('id, student_id, status, raw_text, category, location')
+    .select('*')
     .eq('id', id)
     .maybeSingle();
   return { row: data || null, error: error ? error.message : null };
 }
 
-app.post('/api/tickets/:id/student-confirm', authenticateUser, async (req, res) => {
+async function profileRowById(id) {
+  if (!supabase || !id) return null;
   try {
-    const id = String(req.params.id || '').trim();
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
-      return res.status(400).json({ success: false, error: 'invalid ticket id' });
-    }
-    const myId = String((req.user?.profile && req.user.profile.id) || req.user?.id || '');
-    const { row, error } = await loadTicketRow(id);
-    if (error || !row) return res.status(404).json({ success: false, error: 'ticket not found' });
-    if (String(row.student_id) !== myId) {
-      return res.status(403).json({ success: false, error: 'you can only confirm your own complaint' });
-    }
-    const cur = String(row.status || '').toUpperCase();
-    if (cur === 'CLOSED') return res.json({ success: true, status: 'CLOSED', studentConfirmed: true, alreadyClosed: true });
+    const { data } = await supabase
+      .from('profiles')
+      .select('id, roll_number, full_name, phone_number')
+      .eq('id', id)
+      .maybeSingle();
+    return data || null;
+  } catch { return null; }
+}
 
-    if (cur !== 'RESOLVED') {
-      const { error: uErr } = await supabase.from('tickets').update({ status: 'RESOLVED' }).eq('id', id);
-      if (uErr) return res.status(500).json({ success: false, error: uErr.message });
+function myProfileId(req) {
+  return String((req.user?.profile && req.user.profile.id) || req.user?.id || '');
+}
+
+function isTicketClosed(row) {
+  return !!(row && (String(row.status || '').toUpperCase() === 'CLOSED' || row.closed_at));
+}
+
+// Shared guard for the two student actions: own complaint, still open.
+async function loadOwnOpenTicket(req, res) {
+  const id = String(req.params.id || '').trim();
+  if (!UUID_RE.test(id)) { res.status(400).json({ success: false, error: 'invalid ticket id' }); return null; }
+  if (!supabase) { res.status(503).json({ success: false, error: 'Complaint updates need the database connection.' }); return null; }
+  const { row, error } = await loadTicketRow(id);
+  if (error || !row) { res.status(404).json({ success: false, error: 'ticket not found' }); return null; }
+  if (String(req.user?.role || '').toUpperCase() !== 'STUDENT' || String(row.student_id) !== myProfileId(req)) {
+    console.warn(`⛔ [TICKET] #${shortTicketCode(id)} student action refused for ${req.user?.rollNumber || req.user?.id} — not the student who filed it`);
+    res.status(403).json({ success: false, error: 'Only the student who reported this complaint can update it.' });
+    return null;
+  }
+  if (isTicketClosed(row)) {
+    res.status(409).json({ success: false, error: 'This complaint is already closed by the warden.', status: 'CLOSED' });
+    return null;
+  }
+  return { id, row };
+}
+
+// Student: "Resolved" (the technician came and it works).
+// Old path /student-confirm kept as an alias for cached clients.
+async function studentResolveHandler(req, res) {
+  try {
+    const got = await loadOwnOpenTicket(req, res);
+    if (!got) return;
+    const { id, row } = got;
+    if (row.student_resolved_at) {
+      return res.json({ success: true, status: 'RESOLVED', studentResolvedAt: row.student_resolved_at, already: true });
     }
-    ticketLedgerDB[id] = {
-      ...(ticketLedgerDB[id] || {}),
-      studentConfirmed: true,
-      studentConfirmedAt: new Date().toISOString()
+    const nowIso = new Date().toISOString();
+    const { data: up, error: uErr } = await supabase.from('tickets')
+      .update({ status: 'RESOLVED', student_resolved_at: nowIso, updated_at: nowIso })
+      .eq('id', id).select().maybeSingle();
+    if (uErr) {
+      console.error(`❌ [TICKET RESOLVE] #${shortTicketCode(id)}: ${uErr.message}`);
+      return res.status(500).json({ success: false, error: `Could not save "Resolved" (${uErr.message}). The lifecycle columns may be missing — run migration.sql.` });
+    }
+    console.log(`✅ [TICKET RESOLVED BY STUDENT] #${shortTicketCode(id)} by ${req.user?.rollNumber || req.user?.id}`);
+    return res.json({ success: true, status: 'RESOLVED', studentResolvedAt: nowIso, ticket: studentSafeTicket(enrichTicketRow(up || { ...row, status: 'RESOLVED', student_resolved_at: nowIso })) });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+}
+app.post('/api/tickets/:id/resolve', authenticateUser, studentResolveHandler);
+app.post('/api/tickets/:id/student-confirm', authenticateUser, studentResolveHandler);
+
+// Student: "Not fixed" → back to the technician (SMS again).
+app.post('/api/tickets/:id/not-fixed', authenticateUser, async (req, res) => {
+  try {
+    const got = await loadOwnOpenTicket(req, res);
+    if (!got) return;
+    const { id, row } = got;
+    const nowIso = new Date().toISOString();
+    const cur = String(row.status || '').toUpperCase();
+    // Who fixes it now: the technician already on it, else the category's.
+    let tech = getTechnicianById(row.assigned_technician_id);
+    const autoAssigning = !tech || !tech.active;
+    if (autoAssigning) tech = getTechnicianFor(row.category);
+    const update = {
+      // An SLA-breached complaint stays escalated (the Dean already sees it);
+      // otherwise it goes back to ASSIGNED (PENDING if nobody can take it).
+      status: cur === 'ESCALATED_TO_DEAN' ? 'ESCALATED_TO_DEAN' : (tech ? 'ASSIGNED' : 'PENDING'),
+      not_fixed_count: (Number(row.not_fixed_count) || 0) + 1,
+      student_resolved_at: null,
+      updated_at: nowIso,
+      ...(tech && autoAssigning ? { assigned_technician_id: tech.id, assigned_by: 'AUTO', assigned_at: nowIso } : {})
     };
+    const { data: up, error: uErr } = await supabase.from('tickets').update(update).eq('id', id).select().maybeSingle();
+    if (uErr) {
+      console.error(`❌ [TICKET NOT FIXED] #${shortTicketCode(id)}: ${uErr.message}`);
+      return res.status(500).json({ success: false, error: `Could not save "Not fixed" (${uErr.message}). The lifecycle columns may be missing — run migration.sql.` });
+    }
+    // The 24h reminder clock restarts from this student action.
+    ticketLedgerDB[id] = { ...(ticketLedgerDB[id] || {}), notFixedAt: nowIso };
     saveLedger();
-    console.log(`✅ [TICKET CONFIRM] ${id.slice(0, 8)} student-confirmed resolved by ${req.user?.rollNumber || req.user?.id}`);
-    return res.json({ success: true, status: 'RESOLVED', studentConfirmed: true });
+    let sms = null;
+    if (tech) {
+      const me = req.user?.profile && req.user.profile.id ? req.user.profile : await profileRowById(row.student_id);
+      sms = await smsTechnician(id, tech, 'reopen', buildReopenSms({
+        ticketId: id, category: normalizeCategory(row.category), location: row.location, text: row.raw_text,
+        studentName: me?.full_name, studentPhone: me?.phone_number
+      }));
+    } else {
+      console.error(`❌ [TICKET NOT FIXED] #${shortTicketCode(id)} reopened but nobody was texted: ${TECH_UNAVAILABLE}`);
+    }
+    console.log(`↩️  [TICKET NOT FIXED] #${shortTicketCode(id)} reopened by student (count ${update.not_fixed_count})`);
+    return res.json({
+      success: true,
+      status: update.status,
+      notFixedCount: update.not_fixed_count,
+      smsStatus: sms ? sms.status : null,
+      warning: tech ? undefined : `${TECH_UNAVAILABLE} — the warden will assign someone.`,
+      ticket: studentSafeTicket(enrichTicketRow(up || { ...row, ...update }))
+    });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }
 });
 
-app.post('/api/tickets/:id/close', authenticateUser, requireRole('WARDEN', 'ADMIN', 'DEAN'), async (req, res) => {
+// Warden: Close — only after the student marked Resolved.
+// TODO(HARA): no warden override exists on purpose (decision pending).
+app.post('/api/tickets/:id/close', authenticateUser, requireRole('WARDEN'), async (req, res) => {
   try {
     const id = String(req.params.id || '').trim();
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
-      return res.status(400).json({ success: false, error: 'invalid ticket id' });
-    }
+    if (!UUID_RE.test(id)) return res.status(400).json({ success: false, error: 'invalid ticket id' });
+    if (!supabase) return res.status(503).json({ success: false, error: 'Closing needs the database connection.' });
     const { row, error } = await loadTicketRow(id);
     if (error || !row) return res.status(404).json({ success: false, error: 'ticket not found' });
-    const led = ticketLedgerDB[id] || {};
-    const alreadyClosed = !!led.closed;
-    if (!led.studentConfirmed && !alreadyClosed) {
-      console.warn(`⛔ [TICKET CLOSE] ${id.slice(0, 8)} refused — student has NOT confirmed the fix yet`);
-      return res.status(409).json({
+    if (isTicketClosed(row)) {
+      return res.json({ success: true, status: 'CLOSED', closedAt: row.closed_at, closedBy: row.closed_by, already: true });
+    }
+    if (!row.student_resolved_at) {
+      console.warn(`⛔ [TICKET CLOSE] #${shortTicketCode(id)} refused — the student has NOT marked it Resolved`);
+      return res.status(403).json({
         success: false,
-        error: 'The student has not confirmed the fix yet. Closing stays locked until the student marks "job done".'
+        error: 'The student has not marked this complaint Resolved yet. Close unlocks after the student confirms the fix.'
       });
     }
-    if (!alreadyClosed) {
-      const { data: up, error: uErr } = await supabase.from('tickets').update({ status: 'CLOSED' }).eq('id', id).select();
-      if (uErr || !up || up.length === 0) {
-        // Enum not migrated to CLOSED yet — degrade but keep the intent visible
-        console.warn(`[TICKET CLOSE] CLOSED write unavailable (${uErr ? uErr.message : 'no rows'}), running ALTER TYPE ticket_status_enum to unlock — tracking closed in ledger meanwhile`);
-        await supabase.from('tickets').update({ status: 'RESOLVED' }).eq('id', id);
-      }
-      ticketLedgerDB[id] = {
-        ...led,
-        closed: true,
-        closedAt: new Date().toISOString(),
-        closedBy: req.user?.rollNumber || req.user?.email || 'warden'
-      };
-      saveLedger();
+    const nowIso = new Date().toISOString();
+    const closedBy = req.user?.name || req.user?.profile?.full_name || req.user?.rollNumber || 'Warden';
+    const { data: up, error: uErr } = await supabase.from('tickets')
+      .update({ status: 'CLOSED', closed_at: nowIso, closed_by: closedBy, updated_at: nowIso })
+      .eq('id', id).select().maybeSingle();
+    if (uErr) {
+      console.error(`❌ [TICKET CLOSE] #${shortTicketCode(id)}: ${uErr.message}`);
+      return res.status(500).json({ success: false, error: `Could not close (${uErr.message}). The lifecycle columns may be missing — run migration.sql.` });
     }
-    console.log(`🔒 [TICKET CLOSE] ${id.slice(0, 8)} closed by warden (student confirmation on file)`);
-    return res.json({ success: true, status: 'CLOSED', studentConfirmed: true });
+    console.log(`🔒 [TICKET CLOSE] #${shortTicketCode(id)} closed by ${closedBy} (student marked Resolved at ${row.student_resolved_at})`);
+    // Last open complaint of a master incident closed → the incident is done too.
+    if (row.master_incident_id) {
+      try {
+        const { data: sib } = await supabase.from('tickets').select('id, status, closed_at').eq('master_incident_id', row.master_incident_id);
+        if (sib && sib.length && sib.every(t => String(t.id) === id || isTicketClosed(t))) {
+          await supabase.from('master_incidents').update({ status: 'RESOLVED' }).eq('id', row.master_incident_id);
+          masterClustersDB.forEach(c => { if (c.masterId === row.master_incident_id || c.id === row.master_incident_id) c.status = 'RESOLVED'; });
+          console.log(`🌐 [MASTER INCIDENT DONE] ${row.master_incident_id}: every linked complaint is closed`);
+        }
+      } catch (e) { console.warn('master roll-up skipped:', e.message); }
+    }
+    return res.json({ success: true, status: 'CLOSED', closedAt: nowIso, closedBy, ticket: enrichTicketRow(up || { ...row, status: 'CLOSED', closed_at: nowIso, closed_by: closedBy }) });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }
 });
+
+// ----------------------------------------------------
+// 5D. 24h "WAS IT FIXED?" REMINDER
+// A complaint that has sat with a technician for 24h with no student
+// action gets ONE reminder to the student per 24h (push to their own
+// devices + the in-app banner on the complaint card, driven by
+// last_reminder_at). Runs every 15 min and, at most once a minute,
+// lazily when someone loads the dashboard.
+// ----------------------------------------------------
+const REMINDER_AFTER_MS = 24 * 3600 * 1000;
+let lastReminderSweepMs = 0;
+
+async function runTicketReminderSweep(source = 'interval') {
+  if (!supabase) return { checked: 0, reminded: 0 };
+  lastReminderSweepMs = Date.now();
+  const cutoffIso = new Date(Date.now() - REMINDER_AFTER_MS).toISOString();
+  const { data: rows, error } = await supabase
+    .from('tickets')
+    .select('id, student_id, category, status, assigned_technician_id, assigned_at, student_resolved_at, closed_at, last_reminder_at')
+    .in('status', ['ASSIGNED', 'ESCALATED_TO_DEAN'])
+    .is('student_resolved_at', null)
+    .is('closed_at', null)
+    .lt('assigned_at', cutoffIso)
+    .limit(200);
+  if (error) {
+    console.warn(`[REMINDER] sweep skipped: ${error.message}`);
+    return { checked: 0, reminded: 0, error: error.message };
+  }
+  let reminded = 0;
+  for (const t of rows || []) {
+    if (!t.assigned_technician_id) continue;
+    // Clock = the latest of: assigned, last reminder, last "Not fixed".
+    const anchors = [t.assigned_at, t.last_reminder_at, (ticketLedgerDB[String(t.id)] || {}).notFixedAt]
+      .map(x => (x ? new Date(x).getTime() : 0));
+    if (Date.now() - Math.max(...anchors) < REMINDER_AFTER_MS) continue;
+    const nowIso = new Date().toISOString();
+    // Claim it first (only if nobody else just did) so two sweeps never double-send.
+    let claim = supabase.from('tickets').update({ last_reminder_at: nowIso }).eq('id', t.id);
+    claim = t.last_reminder_at ? claim.eq('last_reminder_at', t.last_reminder_at) : claim.is('last_reminder_at', null);
+    const { data: claimed, error: cErr } = await claim.select('id');
+    if (cErr || !claimed || claimed.length === 0) continue;
+    const cat = normalizeCategory(t.category);
+    const body = `Was your ${cat} issue fixed? Tap Resolved or Not fixed.`;
+    const prof = await profileRowById(t.student_id);
+    let pushed = 0;
+    if (prof?.roll_number) {
+      pushed = await pushToRolls([String(prof.roll_number)], { title: `Complaint #${shortTicketCode(t.id)}`, body }, { personal: true }).catch(() => 0);
+    }
+    reminded++;
+    console.log(`⏰ [REMINDER] #${shortTicketCode(t.id)} → ${prof?.roll_number || t.student_id}: "${body}" (push devices: ${pushed}; in-app banner on)`);
+  }
+  if (reminded) console.log(`⏰ [REMINDER] ${source}: ${reminded} reminder(s) sent`);
+  return { checked: (rows || []).length, reminded };
+}
+setInterval(() => { runTicketReminderSweep('interval').catch(e => console.warn('[REMINDER]', e.message)); }, 15 * 60 * 1000);
+function maybeRunReminderSweep() {
+  if (Date.now() - lastReminderSweepMs < 60 * 1000) return;
+  runTicketReminderSweep('lazy').catch(e => console.warn('[REMINDER]', e.message));
+}
 
 // ----------------------------------------------------
 // 6. API ROUTES: MEAL RSVP (Zero-Waste plate counting — REAL data)
@@ -2574,6 +2982,8 @@ app.post('/api/fees/pay', authenticateUser, async (req, res) => {
 
 app.get('/api/dashboard-data', authenticateUser, async (req, res) => {
     try {
+        maybeRunReminderSweep(); // 24h "was it fixed?" reminders, at most once a minute
+        const isStaffRole = ['WARDEN', 'ADMIN', 'DEAN'].includes(String(req.user?.role || '').toUpperCase());
         const rowId = req.user?.profile?.id;
         const userId = rowId || req.user?.id || '10000000-0000-0000-0000-000000000001';
         let profile = null;
@@ -2653,7 +3063,7 @@ app.get('/api/dashboard-data', authenticateUser, async (req, res) => {
                         try {
                             const { data: rt } = await supabase
                                 .from('tickets')
-                                .select('location, master_incident_id')
+                                .select('id, location, master_incident_id, status, student_resolved_at, closed_at, assigned_technician_id')
                                 .in('master_incident_id', clusterIds);
                             roomTickets = rt || [];
                         } catch { /* rooms stay empty if the query fails */ }
@@ -2665,6 +3075,11 @@ app.get('/api/dashboard-data', authenticateUser, async (req, res) => {
                             .map(t => (String(t.location || '').match(/Room\s+(\S+)/i) || [])[1])
                             .filter(Boolean);
                         const uniqueRooms = [...new Set(memberRooms)];
+                        // Lifecycle roll-up: "2 students reported · 1 resolved"
+                        const members = roomTickets.filter(t => t.master_incident_id === c.id);
+                        const closedMembers = members.filter(t => isTicketClosed(t)).length;
+                        const resolvedMembers = members.filter(t => isTicketClosed(t) || t.student_resolved_at).length;
+                        const memberTech = getTechnicianById((members.find(t => t.assigned_technician_id) || {}).assigned_technician_id);
                         const sla = computeSlaState({ created_at: c.created_at, sla_hours: c.sla_hours || 4 });
                         return {
                             ...c,
@@ -2678,7 +3093,12 @@ app.get('/api/dashboard-data', authenticateUser, async (req, res) => {
                                 ? c.impacted_rooms
                                 : uniqueRooms.map(r => `Room ${r}`),
                             studentsImpacted: c.ticket_count || uniqueRooms.length || c.studentsImpacted || 1,
-                            assignedTo: c.assigned_technician || (masterAssignmentsDB[c.id] ? masterAssignmentsDB[c.id].name : null),
+                            assignedTo: (memberTech && memberTech.name) || (masterAssignmentsDB[c.id] ? masterAssignmentsDB[c.id].name : null) || c.assigned_technician || null,
+                            technician: memberTech ? { id: memberTech.id, name: memberTech.name, role: memberTech.role } : null,
+                            reportedCount: members.length,
+                            resolvedCount: resolvedMembers,
+                            closedCount: closedMembers,
+                            memberCodes: members.map(t => shortTicketCode(t.id)),
                             slaHoursLeft: sla.slaHoursLeft,
                             slaState: sla.slaState,
                             slaHours: c.sla_hours || 4
@@ -2760,9 +3180,11 @@ app.get('/api/dashboard-data', authenticateUser, async (req, res) => {
             mentor,
             slaResolutionRate,
             gatePasses: passes.length > 0 ? passes.map(normalizeDashboardRow) : gatePassesDB.map(normalizeDashboardRow),
-            tickets: (tickets.length > 0 ? tickets : ticketsDB).map(enrichTicketRow),
+            // Students see who is coming (name + role), not the technician's phone or SMS log.
+            tickets: (tickets.length > 0 ? tickets : ticketsDB).map(enrichTicketRow).map(t => (isStaffRole ? t : studentSafeTicket(t))),
             masterClusters: clusters.length > 0 ? clusters : masterClustersDB,
-            technicianRoster: Object.values(TECHNICIAN_ROSTER)
+            // Staff only: technicians from the DB (+ workload); students never get phone numbers.
+            ...(isStaffRole ? await technicianPanelData() : {})
         });
 
     } catch (err) {
@@ -7310,9 +7732,32 @@ function computeSlaState(row) {
     return { slaHoursLeft: left, slaState: state };
 }
 
-// Enriches any ticket row (cloud or in-memory) with the fields the UI renders.
-// Cloud schema has no assigned_technician column — the live assignment map from
-// ticketsDB (creation-time routing) is merged in by id.
+// Enriches any ticket row (cloud or in-memory) with the fields the UI renders:
+// technician (from the technicians table cache), who assigned it, the
+// technician SMS outcome (ledger), and the lifecycle
+// Reported → Resolved (student) → Closed (warden) with timestamps.
+function techSmsSummary(id) {
+    const log = ((ticketLedgerDB[String(id)] || {}).sms) || [];
+    if (!log.length) return { smsStatus: null, smsCoveredBy: null, smsLog: [] };
+    const last = log[log.length - 1];
+    return {
+        smsStatus: last.status,
+        smsKind: last.kind,
+        smsAt: last.at || null,
+        smsCoveredBy: last.coveredBy ? shortTicketCode(last.coveredBy) : null,
+        smsLog: log.map(e => ({ kind: e.kind, status: e.status, at: e.at, coveredBy: e.coveredBy ? shortTicketCode(e.coveredBy) : undefined }))
+    };
+}
+
+function studentSafeTicket(t) {
+    if (!t) return t;
+    const { smsLog, smsStatus, smsKind, smsAt, smsCoveredBy, ...rest } = t;
+    return {
+        ...rest,
+        technician: t.technician ? { id: t.technician.id, name: t.technician.name, role: t.technician.role, category: t.technician.category } : null
+    };
+}
+
 function enrichTicketRow(row) {
     if (!row) return row;
     const base = normalizeDashboardRow(row);
@@ -7320,22 +7765,47 @@ function enrichTicketRow(row) {
     const led = ticketLedgerDB[String(row.id)] || null;
     const status = String(base.status || 'PENDING').toUpperCase() || 'PENDING';
     const sla = computeSlaState(base);
-    const assigned = base.assignedTo || base.assigned_technician || (led ? led.assignedTo : null) || (mem ? mem.assignedTo : null);
-    // Ledger overrides (survive restarts): warden-closed tickets + the
-    // student "job done" confirmation. DB status stays RESOLVED if the
-    // enum isn't migrated — the ledger is the source of truth for closed.
-    const isClosed = !!(led && led.closed) || status === 'CLOSED';
+    const techId = row.assigned_technician_id || (mem ? mem.assignedTechId : null) || null;
+    const tech = getTechnicianById(techId);
+    const technician = tech
+        ? { id: tech.id, name: tech.name, role: tech.role, phone: tech.phone, category: tech.category, active: tech.active }
+        : (techId ? { id: techId, name: null, role: null, phone: null, unavailable: true } : null);
+    const closedAt = row.closed_at || null;
+    const isClosed = status === 'CLOSED' || !!closedAt;
+    const studentResolvedAt = row.student_resolved_at || null;
     const effStatus = isClosed ? 'CLOSED' : status;
+    const lifecycleStage = isClosed ? 'CLOSED' : (studentResolvedAt ? 'RESOLVED' : 'REPORTED');
+    const techName = technician ? (technician.name || technician.id) : null;
+    const statusLabel = isClosed
+        ? 'Closed — student confirmed, warden verified'
+        : studentResolvedAt
+            ? 'Resolved by student — waiting for warden to close'
+            : status === 'ESCALATED_TO_DEAN'
+                ? 'Escalated to Dean (SLA breached)'
+                : techName
+                    ? (Number(row.not_fixed_count) > 0 ? `Reopened — with ${techName}` : `Assigned to ${techName}`)
+                    : 'Reported — waiting for a technician';
     return {
         ...base,
         status: effStatus,
-        statusLabel: isClosed
-          ? 'Closed — student confirmed, warden verified'
-          : (mem?.statusLabel || (led ? led.statusLabel : null) || base.statusLabel || TICKET_STATUS_LABELS[status] || status),
-        studentConfirmed: !!(led && led.studentConfirmed) || mem?.studentConfirmed === true,
-        assignedTo: assigned,
+        statusLabel,
+        lifecycleStage,
+        shortCode: shortTicketCode(row.id),
+        reportedAt: row.created_at || base.createdAt || null,
+        studentResolvedAt,
+        closedAt,
+        closedBy: row.closed_by || null,
+        studentConfirmed: !!studentResolvedAt || isClosed,
+        notFixedCount: Number(row.not_fixed_count) || 0,
+        lastReminderAt: row.last_reminder_at || null,
+        reminderActive: !!row.last_reminder_at && !studentResolvedAt && !isClosed,
+        technician,
+        assignedTo: techName,
+        assignedTechId: techId,
+        assignedBy: row.assigned_by || null,
+        assignedAt: row.assigned_at || null,
+        ...techSmsSummary(row.id),
         aiCategory: base.aiCategory || base.ai_category || (led ? led.aiCategory : null) || (mem ? mem.aiCategory : null) || null, // Fix 4
-        assignedTechId: base.assignedTechId || base.assigned_technician_id || (led ? led.assignedTechId : null) || (mem ? mem.assignedTechId : null) || null,
         masterId: base.master_incident_id || base.masterId || (mem ? mem.masterId : null) || null,
         slaHoursLeft: sla.slaHoursLeft,
         slaState: sla.slaState,
@@ -7345,11 +7815,11 @@ function enrichTicketRow(row) {
 }
 
 // Supabase enum safety: tickets.status only allows PENDING|ASSIGNED|RESOLVED|
-// ESCALATED_TO_DEAN and master_incidents.status only OPEN|RESOLVED. Map any
+// ESCALATED_TO_DEAN|CLOSED and master_incidents.status only OPEN|RESOLVED. Map any
 // richer UI state onto the closest legal value before every DB write.
 function safeTicketStatus(status) {
     const s = String(status || '').toUpperCase();
-    if (['PENDING', 'ASSIGNED', 'RESOLVED', 'ESCALATED_TO_DEAN'].includes(s)) return s;
+    if (['PENDING', 'ASSIGNED', 'RESOLVED', 'ESCALATED_TO_DEAN', 'CLOSED'].includes(s)) return s; // CLOSED is in the live enum
     // Fix 3 (early RESOLVED): work that is still under way must NOT be written
     // as RESOLVED. IN_PROGRESS stays ASSIGNED in the DB (the same thing the
     // standalone-ticket ACCEPT/START path already does); the "Technician
@@ -7389,6 +7859,11 @@ async function updateMasterAssignment(masterId, tech) {
 // Cascade status change: master incident + ALL linked student tickets
 async function cascadeStatus({ masterId, ticketId, status, note, actor = '' }) {
     const results = { masterUpdated: false, ticketsUpdated: 0, affected: [] };
+    // Anti-cheat: RESOLVED / CLOSED never cascade onto student complaints.
+    // A complaint is Resolved only by its own student and Closed only by the
+    // warden after that (/api/tickets/:id/resolve, /close). The master
+    // incident's own status still updates.
+    const touchTickets = !['RESOLVED', 'CLOSED'].includes(String(status || '').toUpperCase());
 
     // 1. Supabase (authoritative)
     if (supabase) {
@@ -7412,8 +7887,8 @@ async function cascadeStatus({ masterId, ticketId, status, note, actor = '' }) {
                     .select('assigned_technician').eq('id', masterId).maybeSingle();
                 if (mRow && mRow.assigned_technician) masterAssignmentsDB[masterId] = { name: mRow.assigned_technician, id: null };
             }
-            if (masterId || ticketId) {
-                const columnUpdate = { status: dbTicketStatus };
+            if (touchTickets && (masterId || ticketId)) {
+                const columnUpdate = { status: dbTicketStatus, updated_at: new Date().toISOString() };
                 let query = supabase.from('tickets').update(columnUpdate);
                 if (masterId) query = query.eq('master_incident_id', masterId);
                 else query = query.eq('id', ticketId);
@@ -7435,8 +7910,8 @@ async function cascadeStatus({ masterId, ticketId, status, note, actor = '' }) {
         const statusLabel = TICKET_STATUS_LABELS[status] || status;
     let memTicketUpdated = false;
     ticketsDB.forEach(t => {
-        const hit = masterId ? t.masterId === masterId || t.master_incident_id === masterId
-                             : String(t.id) === String(ticketId);
+        const hit = touchTickets && (masterId ? t.masterId === masterId || t.master_incident_id === masterId
+                             : String(t.id) === String(ticketId));
         if (hit) {
             t.status = status;
             t.statusLabel = statusLabel;
@@ -7455,8 +7930,8 @@ async function cascadeStatus({ masterId, ticketId, status, note, actor = '' }) {
     });
     // Ledger mirror (survives server restarts)
     ticketsDB.forEach(t => {
-        const hit = masterId ? (t.masterId === masterId || t.master_incident_id === masterId)
-                             : String(t.id) === String(ticketId);
+        const hit = touchTickets && (masterId ? (t.masterId === masterId || t.master_incident_id === masterId)
+                             : String(t.id) === String(ticketId));
         if (hit) {
             ticketLedgerDB[String(t.id)] = {
                 ...(ticketLedgerDB[String(t.id)] || {}),
@@ -7470,6 +7945,64 @@ async function cascadeStatus({ masterId, ticketId, status, note, actor = '' }) {
     results.memTicketUpdated = memTicketUpdated;
     return results;
 }
+
+// ----------------------------------------------------
+// 9b2. TECHNICIANS PANEL (warden): every technician from the DB with
+// their workload — open (assigned, student hasn't resolved), resolved and
+// waiting for the warden to close, closed, "not fixed" reopens, and who
+// assigned the work (AUTO vs a warden).
+// ----------------------------------------------------
+async function technicianPanelData() {
+    const out = {
+        technicians: [],
+        techniciansError: techniciansAvailable() ? null : `${TECH_UNAVAILABLE}${technicianState.error ? ` (${technicianState.error})` : ''}`,
+        techniciansLoadedAt: technicianState.loadedAt
+    };
+    const stats = {};
+    if (supabase && technicianState.list.length) {
+        try {
+            const { data, error } = await supabase
+                .from('tickets')
+                .select('id, assigned_technician_id, assigned_by, status, student_resolved_at, closed_at, not_fixed_count')
+                .not('assigned_technician_id', 'is', null)
+                .limit(5000);
+            if (error) throw new Error(error.message);
+            for (const t of data || []) {
+                const s = stats[t.assigned_technician_id] || (stats[t.assigned_technician_id] = { open: 0, awaitingClose: 0, closed: 0, notFixed: 0, byAuto: 0, byWarden: 0, wardens: {} });
+                if (isTicketClosed(t)) s.closed++;
+                else if (t.student_resolved_at) s.awaitingClose++;
+                else s.open++;
+                s.notFixed += Number(t.not_fixed_count) || 0;
+                if (String(t.assigned_by || '').toUpperCase() === 'AUTO') s.byAuto++;
+                else if (t.assigned_by) { s.byWarden++; s.wardens[t.assigned_by] = (s.wardens[t.assigned_by] || 0) + 1; }
+            }
+        } catch (err) {
+            out.statsError = `Workload counts unavailable (${err.message})`;
+        }
+    }
+    const CAT_ORDER = ['Plumbing', 'Wi-Fi / LAN', 'Electrical', 'Furniture', 'Cleanliness'];
+    const ordered = [...technicianState.list].sort((a, b) =>
+        (b.active - a.active) || (CAT_ORDER.indexOf(a.category) - CAT_ORDER.indexOf(b.category)) || a.id.localeCompare(b.id));
+    out.technicians = ordered.map(t => {
+        const s = stats[t.id] || { open: 0, awaitingClose: 0, closed: 0, notFixed: 0, byAuto: 0, byWarden: 0, wardens: {} };
+        return {
+            id: t.id, name: t.name, role: t.role, category: t.category, phone: t.phone, active: t.active,
+            stats: { open: s.open, awaitingClose: s.awaitingClose, closed: s.closed, notFixed: s.notFixed, byAuto: s.byAuto, byWarden: s.byWarden, wardens: s.wardens, total: s.open + s.awaitingClose + s.closed }
+        };
+    });
+    // Dropdowns (reassign) read the same real list
+    out.technicianRoster = out.technicians.filter(t => t.active);
+    return out;
+}
+
+app.get('/api/technicians', authenticateUser, requireRole('WARDEN', 'ADMIN', 'DEAN'), async (req, res) => {
+    try {
+        if (req.query.refresh === '1') await loadTechnicians('manual');
+        return res.json({ success: true, ...(await technicianPanelData()) });
+    } catch (err) {
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
 
 // ----------------------------------------------------
 // 9c. API ROUTE: GET /api/technician/tickets (Technician Work Queue)
@@ -7538,19 +8071,18 @@ app.get('/api/technician/tickets', authenticateUser, requireRole('WARDEN', 'ADMI
             };
         });
 
-        // Server-side filtering to the requesting technician's queue
+        // Server-side filtering to one technician's queue (technicians table)
+        const self = technicianState.list.find(t => t.id === techId || (techName && t.name === techName)) || null;
         const matchesTech = (assigned) => {
             if (!assigned) return false;
             if (techName && String(assigned).toLowerCase().includes(String(techName).toLowerCase())) return true;
-            const roster = Object.values(TECHNICIAN_ROSTER);
-            const self = roster.find(t => t.id === techId || t.name === techName);
-            if (self && String(assigned).toLowerCase().includes(self.name.toLowerCase())) return true;
+            if (self && String(assigned).toLowerCase().includes(String(self.name).toLowerCase())) return true;
             return false;
         };
 
         const myTickets = tickets.filter(t =>
             ['ASSIGNED', 'IN_PROGRESS', 'PENDING', 'REPORTED', 'ESCALATED_TO_DEAN'].includes(t.status) &&
-            (matchesTech(t.assignedTo) || (matchesTech(t.masterAssignedTo || null)))
+            ((self && t.assignedTechId === self.id) || matchesTech(t.assignedTo) || matchesTech(t.masterAssignedTo || null))
         );
         const myMasters = masterIncidentsView.filter(m =>
             ['OPEN', 'UNASSIGNED', 'IN_PROGRESS', 'ASSIGNED', 'ESCALATED_TO_DEAN'].includes(String(m.status || '').toUpperCase()) &&
@@ -7563,7 +8095,8 @@ app.get('/api/technician/tickets', authenticateUser, requireRole('WARDEN', 'ADMI
 
         return res.json({
             success: true,
-            roster: Object.values(TECHNICIAN_ROSTER),
+            roster: technicianState.list.filter(t => t.active),
+            techniciansError: techniciansAvailable() ? null : TECH_UNAVAILABLE,
             tickets: myTickets,
             masterIncidents: myMasters,
             openMasterIncidents: openUnassignedMasters,
@@ -7596,16 +8129,34 @@ app.post('/api/technician/action', authenticateUser, requireRole('WARDEN', 'ADMI
             return res.status(400).json({ success: false, error: 'techName/techId required for assignment/start actions' });
         }
 
-        const roster = Object.values(TECHNICIAN_ROSTER);
-        const self = roster.find(t => t.id === techId || t.name === techName);
+        const self = technicianState.list.find(t => t.active && (t.id === techId || (techName && t.name === techName))) || null;
         const actor = self ? `${self.name} (${self.role})` : (techName || 'Technician');
         const stamp = new Date().toISOString();
+        const wardenName = req.user?.name || req.user?.profile?.full_name || req.user?.rollNumber || 'Warden';
+
+        // Anti-cheat: only the student marks a complaint Resolved, and only
+        // the warden's /api/tickets/:id/close (after that) closes it.
+        if (ticketId && (action === 'RESOLVE' || action === 'CLOSE')) {
+            return res.status(403).json({
+                success: false,
+                error: action === 'RESOLVE'
+                    ? 'Only the student who reported the complaint can mark it Resolved.'
+                    : 'Close a complaint from its card — it unlocks after the student marks it Resolved.'
+            });
+        }
 
         // ---- Master incident path (dispatch/accept/start/resolve/close cascades) ----
         if (masterId) {
             if (action === 'ASSIGN' || action === 'ACCEPT' || action === 'START') {
-                const tech = self || roster[0];
+                if (!self) {
+                    return res.status(400).json({
+                        success: false,
+                        error: techniciansAvailable() ? 'Unknown technician — pick one from the technicians list.' : TECH_UNAVAILABLE
+                    });
+                }
+                const tech = self;
                 await updateMasterAssignment(masterId, tech);
+                await assignOpenTicketsOfMaster(masterId, tech, wardenName);
                 await cascadeStatus({ masterId, status: 'IN_PROGRESS', note: note || null, actor: tech.name });
                 console.log(`🔧 [TECHNICIAN DISPATCHED]: Master Incident ${masterId} → ${tech.name} (${tech.id}) at ${stamp}`);
                 return res.json({
@@ -7627,19 +8178,22 @@ app.post('/api/technician/action', authenticateUser, requireRole('WARDEN', 'ADMI
 
             const finalStatus = action === 'RESOLVE' ? 'RESOLVED' : 'CLOSED';
             await cascadeStatus({ masterId, status: finalStatus, note: note || null, actor });
-            console.log(`✅ [MASTER ${finalStatus}]: ${actor} → Master Incident ${masterId}. All linked student complaints updated & notifications dispatched.`);
+            console.log(`✅ [MASTER ${finalStatus}]: ${actor} → Master Incident ${masterId}. Each linked student still confirms their own complaint.`);
             return res.json({
                 success: true,
                 masterId,
                 action,
                 status: finalStatus,
-                message: `Master Incident ${masterId} ${finalStatus} by ${actor} — linked student complaints updated`
+                message: `Master Incident ${masterId} marked ${finalStatus}. Each student still confirms their own complaint.`
             });
         }
 
         // ---- Standalone ticket path ----
         if (action === 'ACCEPT' || action === 'START') {
-            const tech = self || roster[0];
+            if (!self) {
+                return res.status(400).json({ success: false, error: techniciansAvailable() ? 'Unknown technician — pick one from the technicians list.' : TECH_UNAVAILABLE });
+            }
+            const tech = self;
             if (supabase) {
                 try {
                     // Ticket stays 'ASSIGNED' while work is under way (status enum has
@@ -7658,7 +8212,6 @@ app.post('/api/technician/action', authenticateUser, requireRole('WARDEN', 'ADMI
             });
             ticketLedgerDB[String(ticketId)] = {
                 ...(ticketLedgerDB[String(ticketId)] || {}),
-                assignedTo: tech.name, assignedTechId: tech.id,
                 statusLabel: TICKET_STATUS_LABELS.IN_PROGRESS, inProgress: true
             };
             saveLedger();
@@ -7674,7 +8227,7 @@ app.post('/api/technician/action', authenticateUser, requireRole('WARDEN', 'ADMI
                 }
             });
             ticketLedgerDB[String(ticketId)] = {
-                ...(ticketLedgerDB[String(ticketId)] || { assignedTo: actor }),
+                ...(ticketLedgerDB[String(ticketId)] || {}),
                 notes: note, lastNoteBy: actor, lastNoteAt: stamp
             };
             saveLedger();
@@ -7684,10 +8237,7 @@ app.post('/api/technician/action', authenticateUser, requireRole('WARDEN', 'ADMI
             return res.json({ success: true, ticketId, action, note });
         }
 
-        const finalStatus = action === 'RESOLVE' ? 'RESOLVED' : 'CLOSED';
-        await cascadeStatus({ ticketId, status: finalStatus, note: note || null, actor });
-        console.log(`✅ [TICKET ${finalStatus}]: ${actor} → Ticket #${ticketId}. Student feed notification dispatched.`);
-        return res.json({ success: true, ticketId, action, status: finalStatus, message: `Ticket #${ticketId} ${finalStatus}` });
+        return res.status(400).json({ success: false, error: `unsupported action ${action}` });
     } catch (err) {
         console.error('technician/action error:', err.message);
         return res.status(500).json({ success: false, error: err.message });
@@ -7696,20 +8246,21 @@ app.post('/api/technician/action', authenticateUser, requireRole('WARDEN', 'ADMI
 
 // ----------------------------------------------------
 // 9e. API ROUTE: POST /api/resolve-cluster
-//     (Warden-side resolution — cascades to all linked tickets)
+//     (Warden-side: marks the MASTER incident resolved. The linked student
+//      complaints keep their own lifecycle — each student marks Resolved
+//      in their room, then the warden closes each one.)
 // ----------------------------------------------------
 app.post('/api/resolve-cluster', authenticateUser, requireRole('WARDEN', 'ADMIN', 'DEAN'), async (req, res) => {
     try {
         const { clusterId } = req.body;
         if (!clusterId) return res.status(400).json({ success: false, error: 'clusterId required' });
-        const result = await cascadeStatus({ masterId: clusterId, status: 'RESOLVED', actor: 'Hostel Warden' });
-        const resolvedCount = result.ticketsUpdated || result.affected.length || 0;
-        console.log(`🌐 [MASTER INCIDENT RESOLVED]: ${clusterId} — ${resolvedCount} student complaint(s) auto-resolved.`);
+        await cascadeStatus({ masterId: clusterId, status: 'RESOLVED', actor: 'Hostel Warden' });
+        console.log(`🌐 [MASTER INCIDENT RESOLVED]: ${clusterId} — linked complaints wait for each student's "Resolved".`);
         return res.json({
             success: true,
             masterClusters: masterClustersDB,
-            resolvedTickets: resolvedCount,
-            message: `Master Incident ${clusterId} resolved`
+            resolvedTickets: 0,
+            message: `Master Incident ${clusterId} marked resolved. Each student confirms their own complaint before you close it.`
         });
     } catch (err) {
         return res.status(500).json({ success: false, error: err.message });
@@ -7740,32 +8291,81 @@ app.post('/api/warden/escalate', authenticateUser, requireRole('WARDEN', 'ADMIN'
 app.post('/api/warden/reassign', authenticateUser, requireRole('WARDEN', 'ADMIN', 'DEAN'), async (req, res) => {
     try {
         const { masterId, ticketId, technicianId } = req.body;
-        const roster = Object.values(TECHNICIAN_ROSTER);
-        const tech = roster.find(t => t.id === technicianId || t.name === technicianId);
-        if (!tech) {
-            return res.status(400).json({ success: false, error: 'Unknown technicianId — use IDs from the roster', roster: roster.map(t => t.id) });
+        if (!techniciansAvailable()) {
+            return res.status(503).json({ success: false, error: TECH_UNAVAILABLE });
         }
+        const tech = technicianState.list.find(t => t.active && t.id === technicianId) || null;
+        if (!tech) {
+            return res.status(400).json({ success: false, error: 'Unknown technician — use an id from the technicians list', technicians: technicianState.list.filter(t => t.active).map(t => t.id) });
+        }
+        const wardenName = req.user?.name || req.user?.profile?.full_name || req.user?.rollNumber || 'Warden';
         if (masterId) {
             await updateMasterAssignment(masterId, tech);
-            // Assigned-technician column doesn't exist in the cloud schema —
-            // the roster assignment lives in masterAssignmentsDB (this process).
-            ticketsDB.forEach(t => { if (t.masterId === masterId || t.master_incident_id === masterId) { t.assignedTo = tech.name; } });
-            console.log(`🔄 [WARDEN REASSIGNED]: Master Incident ${masterId} → ${tech.name} (${tech.id})`);
-            return res.json({ success: true, masterId, assignedTo: tech.name, message: `Master Incident ${masterId} reassigned to ${tech.name}` });
+            const r = await assignOpenTicketsOfMaster(masterId, tech, wardenName);
+            ticketsDB.forEach(t => { if (t.masterId === masterId || t.master_incident_id === masterId) { t.assignedTo = tech.name; t.assignedTechId = tech.id; } });
+            console.log(`🔄 [WARDEN REASSIGNED]: Master Incident ${masterId} → ${tech.name} (${tech.id}) by ${wardenName}`);
+            return res.json({ success: true, masterId, assignedTo: tech.name, assignedTechId: tech.id, assignedBy: wardenName, ticketsUpdated: r.updated, smsStatus: r.sms ? r.sms.status : null, message: `Master Incident reassigned to ${tech.name}` });
         }
-        // No assigned_technician column in cloud — roster assignment reflected live
-        ticketsDB.forEach(t => { if (String(t.id) === String(ticketId)) { t.assignedTo = tech.name; } });
-        ticketLedgerDB[String(ticketId)] = {
-            ...(ticketLedgerDB[String(ticketId)] || {}),
-            assignedTo: tech.name, assignedTechId: tech.id
-        };
-        saveLedger();
-        console.log(`🔄 [WARDEN REASSIGNED]: Ticket #${ticketId} → ${tech.name} (${tech.id})`);
-        return res.json({ success: true, ticketId, assignedTo: tech.name, message: `Ticket #${ticketId} reassigned to ${tech.name}` });
+        if (!supabase || !UUID_RE.test(String(ticketId || ''))) {
+            return res.status(400).json({ success: false, error: 'ticketId required' });
+        }
+        const { row } = await loadTicketRow(String(ticketId));
+        if (!row) return res.status(404).json({ success: false, error: 'ticket not found' });
+        if (isTicketClosed(row)) return res.status(409).json({ success: false, error: 'This complaint is already closed.' });
+        const r = await assignTicketsToTech([row], tech, wardenName);
+        if (r.error) return res.status(500).json({ success: false, error: r.error });
+        ticketsDB.forEach(t => { if (String(t.id) === String(ticketId)) { t.assignedTo = tech.name; t.assignedTechId = tech.id; } });
+        console.log(`🔄 [WARDEN REASSIGNED]: Ticket #${shortTicketCode(ticketId)} → ${tech.name} (${tech.id}) by ${wardenName}`);
+        return res.json({ success: true, ticketId, assignedTo: tech.name, assignedTechId: tech.id, assignedBy: wardenName, smsStatus: r.sms ? r.sms.status : null, message: `Complaint #${shortTicketCode(ticketId)} reassigned to ${tech.name}` });
     } catch (err) {
         return res.status(500).json({ success: false, error: err.message });
     }
 });
+
+// Write a (re)assignment onto ticket rows and text the technician ONCE:
+// the first open ticket gets the SMS, the rest point at it ("covered").
+// Tickets the student already marked Resolved, or that are closed, are left alone.
+async function assignTicketsToTech(rows, tech, assignedBy) {
+    const open = (rows || []).filter(r => !isTicketClosed(r) && !r.student_resolved_at);
+    if (!supabase || open.length === 0) return { updated: 0, sms: null };
+    const nowIso = new Date().toISOString();
+    let updated = 0;
+    for (const r of open) {
+        const cur = String(r.status || '').toUpperCase();
+        const { error } = await supabase.from('tickets').update({
+            assigned_technician_id: tech.id,
+            assigned_by: assignedBy,
+            assigned_at: nowIso,
+            updated_at: nowIso,
+            ...(cur === 'PENDING' ? { status: 'ASSIGNED' } : {})
+        }).eq('id', r.id);
+        if (error) {
+            console.error(`❌ [ASSIGN] #${shortTicketCode(r.id)}: ${error.message}`);
+            return { updated, sms: null, error: `Could not save the technician (${error.message}). Run migration.sql.` };
+        }
+        updated++;
+    }
+    const first = open[0];
+    const filer = await profileRowById(first.student_id);
+    const sms = await smsTechnician(first.id, tech, 'reassign', buildNewComplaintSms({
+        ticketId: first.id, category: normalizeCategory(first.category), location: first.location, text: first.raw_text,
+        studentName: filer?.full_name, studentPhone: filer?.phone_number
+    }));
+    for (const r of open.slice(1)) {
+        const led = ticketLedgerDB[String(r.id)] || {};
+        ticketLedgerDB[String(r.id)] = { ...led, sms: [...(led.sms || []), { kind: 'covered', coveredBy: String(first.id), status: 'covered', to: tech.id, at: nowIso }] };
+    }
+    saveLedger();
+    return { updated, sms };
+}
+
+async function assignOpenTicketsOfMaster(masterId, tech, assignedBy) {
+    if (!supabase || !masterId) return { updated: 0, sms: null };
+    const { data: rows, error } = await supabase.from('tickets').select('*')
+        .eq('master_incident_id', masterId).order('created_at', { ascending: true });
+    if (error) { console.warn('master assign: ticket read failed:', error.message); return { updated: 0, sms: null }; }
+    return assignTicketsToTech(rows || [], tech, assignedBy);
+}
 
 // ----------------------------------------------------
 // Fix 3 (lost actions): mess feedback + notice read receipts.

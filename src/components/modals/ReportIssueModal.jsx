@@ -144,7 +144,7 @@ export default function ReportIssueModal({ isOpen, onClose, onTicketCreated }) {
                 urgency: aiUrgency,
                 description: formData.description,
                 status: ai.status || 'ASSIGNED',
-                statusLabel: ai.statusLabel || `Routed to ${ai.assignedTo || 'Maintenance'}`,
+                statusLabel: ai.statusLabel || 'Reported',
                 assignedTo: ai.assignedTo || serverResult.assignedTechnician?.name,
                 assignedTechId: ai.assignedTechId || serverResult.assignedTechnician?.id,
                 masterId: ai.masterId || serverResult.masterId || undefined,
@@ -155,7 +155,17 @@ export default function ReportIssueModal({ isOpen, onClose, onTicketCreated }) {
                 sla: ai.sla || (ai.sla_hours ? `SLA: ${ai.sla_hours}h Target` : 'SLA: 4h Standard'),
                 sla_hours: ai.sla_hours || 4,
                 createdAt: ai.createdAt || new Date().toISOString(),
-                time: 'Just now'
+                time: 'Just now',
+                // Lifecycle (Reported → Resolved → Closed) — the card shows
+                // the progress bar + Resolved / Not fixed right away.
+                shortCode: ai.shortCode || undefined,
+                lifecycleStage: ai.lifecycleStage || undefined,
+                reportedAt: ai.reportedAt || undefined,
+                studentResolvedAt: null,
+                closedAt: null,
+                notFixedCount: 0,
+                technician: ai.technician ? { id: ai.technician.id, name: ai.technician.name, role: ai.technician.role } : null,
+                student_id: ai.student_id || undefined
               };
 
               if (typeof window !== 'undefined') {
