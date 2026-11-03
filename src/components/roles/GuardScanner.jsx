@@ -19,15 +19,20 @@ import {
   LogIn,
   Users
 } from 'lucide-react';
-import { verifySignedPassToken } from '../../utils/crypto';
+import { verifySignedPassToken, leaveQrFreshness } from '../../utils/crypto';
+import { noteServerDate, serverNow } from '../../utils/serverClock';
 import { getAllLocal, saveLocal, queueOfflineAction } from '../../utils/db';
 import { getAccessToken } from '../../utils/authClient';
+import { queueAction } from '../../utils/syncEngine';
+import { refreshApprovedLeaves, checkLeaveOffline, markLeaveUsedLocally, getUsedLeaves } from '../../utils/leaveGateCache';
 
 export default function GuardScanner({ searchQuery = '' }) {
   const [isScanning, setIsScanning] = useState(false);
   const [scanResult, setScanResult] = useState(null); // { valid, isExpired, payload, message }
   const [leaveRows, setLeaveRows] = useState([]);  // day-scholar leave log (category=LEAVE)
   const [leaveStats, setLeaveStats] = useState({ outsToday: 0 });
+  // Leave exits this phone let out OFFLINE (sync pending / synced / conflict).
+  const [localLeaveUsed, setLocalLeaveUsed] = useState(() => getUsedLeaves());
   const [tokenInput, setTokenInput] = useState('');
   const [gateLogs, setGateLogs] = useState([
     // Starts EMPTY — the log only shows gates the guard actually verified
@@ -41,6 +46,38 @@ export default function GuardScanner({ searchQuery = '' }) {
   useEffect(() => {
     return () => {
       stopCamera();
+    };
+  }, []);
+
+  // OFFLINE LEAVE LIST: download today's approved day-scholar leaves whenever
+  // online (now, every minute, and the moment the network comes back), so a
+  // leave QR can still be checked at the gate with no network.
+  useEffect(() => {
+    refreshApprovedLeaves();
+    const iv = setInterval(refreshApprovedLeaves, 60000);
+    const onOnline = () => refreshApprovedLeaves();
+    // Outbox answer for an offline leave exit: synced, or refused (double use / invalid).
+    const onLeaveSynced = (e) => {
+      const d = e?.detail || {};
+      if (!d.leaveId) return;
+      const prev = getUsedLeaves()[String(d.leaveId)] || {};
+      markLeaveUsedLocally(d.leaveId, d.ok
+        ? { state: 'SYNCED', syncedAt: new Date().toISOString() }
+        : { state: d.conflict ? 'CONFLICT' : 'REFUSED', reason: d.reason || d.error || 'Refused by server at sync', firstOutAt: d.firstOutAt || null });
+      setLocalLeaveUsed(getUsedLeaves());
+      setScanResult(cur => (cur && cur.mode === 'leave' && cur.leave?.pendingSync && cur.payload?.leaveId === String(d.leaveId))
+        ? (d.ok
+            ? { ...cur, leave: { ...cur.leave, pendingSync: false, synced: true, parentSms: d.parentSms || cur.leave.parentSms } }
+            : { valid: false, reasonKind: 'state', message: d.reason || 'Offline exit refused by the server at sync.', payload: cur.payload })
+        : cur);
+      if (d.ok) window.dispatchEvent(new CustomEvent('campus_leave_updated', { detail: { rollNo: prev.rollNo, outAt: prev.scannedAt } }));
+    };
+    window.addEventListener('online', onOnline);
+    window.addEventListener('campus_leave_scan_synced', onLeaveSynced);
+    return () => {
+      clearInterval(iv);
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('campus_leave_scan_synced', onLeaveSynced);
     };
   }, []);
 
@@ -186,6 +223,7 @@ export default function GuardScanner({ searchQuery = '' }) {
       try {
         const tok = getAccessToken();
         const r = await fetch('/api/pass-scans?limit=60', tok ? { headers: { Authorization: `Bearer ${tok}` } } : undefined);
+        noteServerDate(r);
         const j = await r.json();
         if (alive && j?.success && Array.isArray(j.scans)) {
           mergeLogs(buildFromServer(j.scans));
@@ -231,11 +269,92 @@ export default function GuardScanner({ searchQuery = '' }) {
     if (verification.valid && verification.payload) {
       const passId = verification.payload.passId || '';
 
-      // DAY-SCHOLAR LEAVE branch: a windowless campus-ID token never touches
-      // the pass state machine — the SERVER checks for a mentor-APPROVED,
-      // not-yet-scanned leave and records the ONE-WAY OUT (parent SMS +
-      // student notification fire here at the gate, never before).
+      // Old permanent campus-ID QR (no time, no leave id): a screenshot of it
+      // could be re-used, so it no longer opens the gate for a leave.
       if (verification.payload.kind === 'COMMUTE') {
+        setScanResult({
+          valid: false,
+          reasonKind: 'state',
+          message: 'Old campus-ID QR — not valid for leave exit any more. Ask the student to open the app and show the live leave QR (it changes every few seconds).',
+          payload: verification.payload
+        });
+        playAudioFeedback(false);
+        return;
+      }
+
+      // DAY-SCHOLAR LEAVE branch: a rotating per-leave token never touches
+      // the pass state machine — the SERVER checks the leave id is this
+      // student's mentor-APPROVED, not-yet-scanned leave and that the QR is
+      // fresh, then records the ONE-WAY OUT (parent SMS + student
+      // notification fire here at the gate, never before).
+      if (verification.payload.kind === 'LEAVE') {
+        const { fresh } = leaveQrFreshness(verification.payload, serverNow());
+        if (!fresh) {
+          setScanResult({
+            valid: false,
+            isExpired: true,
+            message: 'QR expired — ask the student to show the live QR in the app (screenshots or old photos are not accepted). Nothing recorded.',
+            payload: verification.payload
+          });
+          playAudioFeedback(false);
+          return;
+        }
+        // NO NETWORK: check against this phone's downloaded approved list,
+        // let the student out once, queue the exit (real scan time) in the
+        // outbox — the server re-checks it when the phone is back online.
+        const exitOffline = async () => {
+          const p = verification.payload;
+          const chk = checkLeaveOffline(p, serverNow());
+          if (!chk.ok) {
+            setScanResult({ valid: false, reasonKind: chk.reasonKind, message: chk.reason, payload: p });
+            playAudioFeedback(false);
+            return;
+          }
+          const scannedAt = new Date(serverNow()).toISOString();
+          markLeaveUsedLocally(p.leaveId, { state: 'PENDING', scannedAt, rollNo: p.rollNo, name: p.name });
+          setLocalLeaveUsed(getUsedLeaves());
+          try {
+            await queueAction('LEAVE_SCAN', '/api/leave-scan', {
+              rollNo: p.rollNo,
+              name: p.name,
+              leaveId: p.leaveId,
+              issuedAt: p.issuedAt,
+              scannedAt,
+              offline: true,
+              method: 'QR',
+              scannedBy: 'Main Gate Guard'
+            });
+          } catch (qErr) { console.warn('Leave exit could not be queued:', qErr); }
+          setGateLogs(prev => [{
+            id: `LV-${Date.now()}`,
+            passId: `LEAVE-${p.rollNo}`,
+            student: `${p.name} (${p.rollNo})`,
+            destination: 'Day-scholar leave',
+            type: 'LEAVE_OUT',
+            time: new Date(scannedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            ts: new Date(scannedAt).getTime(),
+            status: 'OUT (sync pending)',
+            verifiedAt: scannedAt
+          }, ...prev].slice(0, 10));
+          setScanResult({
+            valid: true,
+            mode: 'leave',
+            leave: { outAt: scannedAt, pendingSync: true, parentSms: 'sent when this phone is back online' },
+            student: {
+              name: p.name,
+              rollNo: p.rollNo,
+              department: p.department || '',
+              course: p.course || '',
+              section: p.section || ''
+            },
+            payload: p
+          });
+          playAudioFeedback(true);
+        };
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+          await exitOffline();
+          return;
+        }
         try {
           const tok = getAccessToken();
           const r = await fetch('/api/leave-scan', {
@@ -244,12 +363,16 @@ export default function GuardScanner({ searchQuery = '' }) {
             body: JSON.stringify({
               rollNo: verification.payload.rollNo,
               name: verification.payload.name,
+              leaveId: verification.payload.leaveId,
+              issuedAt: verification.payload.issuedAt,
               method: 'QR',
               scannedBy: 'Main Gate Guard'
             })
           });
+          noteServerDate(r);
           const j = await r.json();
           if (j?.success) {
+            markLeaveUsedLocally(verification.payload.leaveId, { state: 'SYNCED', scannedAt: j.outAt, rollNo: j.rollNo, name: j.name, online: true });
             setGateLogs(prev => [{
               id: `LV-${Date.now()}`,
               passId: `LEAVE-${j.rollNo}`,
@@ -265,21 +388,32 @@ export default function GuardScanner({ searchQuery = '' }) {
               valid: true,
               mode: 'leave',
               leave: { outAt: j.outAt, reason: j.leaveReason, parentSms: j.parentSms },
+              // Identity for the guard to read out — the server's directory
+              // row wins over what the student's phone put in the QR.
+              student: {
+                name: j.name || verification.payload.name,
+                rollNo: j.rollNo || verification.payload.rollNo,
+                department: j.department || verification.payload.department || '',
+                course: j.course || verification.payload.course || '',
+                section: j.section || verification.payload.section || ''
+              },
               payload: verification.payload
             });
             playAudioFeedback(true);
             window.dispatchEvent(new CustomEvent('campus_leave_updated', { detail: { rollNo: j.rollNo, outAt: j.outAt } }));
           } else {
-            setScanResult({ valid: false, message: j?.reason || j?.error || 'Gate leave-scan rejected', payload: verification.payload });
+            setScanResult({
+              valid: false,
+              reasonKind: j?.expired ? undefined : 'state',
+              isExpired: j?.expired || undefined,
+              message: j?.reason || j?.error || 'Gate leave-scan rejected',
+              payload: verification.payload
+            });
             playAudioFeedback(false);
           }
         } catch {
-          setScanResult({
-            valid: false,
-            message: 'Leave verification needs connectivity right now — nothing was recorded; scan again when online.',
-            payload: verification.payload
-          });
-          playAudioFeedback(false);
+          // Network dropped (request never answered) — same offline check.
+          await exitOffline();
         }
         return;
       }
@@ -835,7 +969,9 @@ export default function GuardScanner({ searchQuery = '' }) {
                         : scanResult.mode === 'exit'
                           ? 'CAMPUS EXIT REGISTERED ✓'
                           : scanResult.mode === 'leave'
-                            ? 'LEAVE EXIT REGISTERED — STUDENT IS OUT ✓'
+                            ? (scanResult.leave?.pendingSync
+                                ? 'OFFLINE — EXITED (SYNC PENDING) ✓'
+                                : 'LEAVE EXIT REGISTERED — STUDENT IS OUT ✓')
                             : 'CRYPTOGRAPHICALLY VALID PASS'}
                   </span>
                 </div>
@@ -853,6 +989,12 @@ export default function GuardScanner({ searchQuery = '' }) {
                   <div className="p-3 border rounded-lg text-xs leading-relaxed bg-amber-50 border-amber-300 text-amber-800">
                     <strong className="font-extrabold font-mono text-[11px] block tracking-wider">⬆ ONE-WAY LEAVE — OUT OF CAMPUS</strong>
                     Exit scanned at {new Date(scanResult.leave.outAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.
+                    {scanResult.leave.pendingSync && (
+                      <span data-testid="leave-sync-pending" className="block font-bold">Exited (sync pending) — checked offline on this phone; it is sent to the server as soon as the network is back.</span>
+                    )}
+                    {scanResult.leave.synced && (
+                      <span data-testid="leave-synced" className="block font-bold">Synced ✓ — the server recorded this exit.</span>
+                    )}
                     No return scan today — the student is expected back on the <strong>next working day</strong>. Parent SMS: {scanResult.leave.parentSms}.
                   </div>
                 )}
@@ -878,18 +1020,39 @@ export default function GuardScanner({ searchQuery = '' }) {
                   <div className="w-12 h-12 rounded-xl bg-emerald-600 flex items-center justify-center text-white font-bold text-lg font-mono shadow-sm">
                     {scanResult.payload.name ? scanResult.payload.name.charAt(0) : 'S'}
                   </div>
-                  <div>
-                    <h4 className="text-base font-bold text-slate-900 leading-tight">
-                      {scanResult.payload.name}
+                  <div className="min-w-0">
+                    <h4 className={`${scanResult.mode === 'leave' ? 'text-lg sm:text-xl break-words' : 'text-base'} font-bold text-slate-900 leading-tight`}>
+                      {(scanResult.mode === 'leave' && scanResult.student?.name) || scanResult.payload.name}
                     </h4>
-                    <span className="text-xs font-mono text-emerald-700 font-semibold">
-                      Roll No: {scanResult.payload.rollNo}
+                    <span className={`${scanResult.mode === 'leave' ? 'text-sm' : 'text-xs'} font-mono text-emerald-700 font-semibold`}>
+                      Roll No: {(scanResult.mode === 'leave' && scanResult.student?.rollNo) || scanResult.payload.rollNo}
                     </span>
                     <span className="text-[11px] text-slate-500 block font-mono">
                       Pass ID: {scanResult.payload.passId}
                     </span>
                   </div>
                 </div>
+
+                {/* Day-scholar leave: branch / department / course for the
+                    guard to match the student (no photo by design). */}
+                {scanResult.mode === 'leave' && scanResult.student && (
+                  <div data-testid="leave-student-details" className="grid grid-cols-2 gap-2 pt-2 border-t border-emerald-200">
+                    <div className="col-span-2 bg-white p-2.5 rounded-lg border border-emerald-100 min-w-0">
+                      <span className="text-[10px] font-mono text-slate-500 block">Branch / Department</span>
+                      <span className="text-base font-extrabold text-slate-900 block leading-snug break-words">
+                        {scanResult.student.department || '—'}
+                      </span>
+                    </div>
+                    <div className="bg-white p-2.5 rounded-lg border border-emerald-100 min-w-0">
+                      <span className="text-[10px] font-mono text-slate-500 block">Course</span>
+                      <span className="text-sm font-bold text-slate-900 block break-words">{scanResult.student.course || '—'}</span>
+                    </div>
+                    <div className="bg-white p-2.5 rounded-lg border border-emerald-100 min-w-0">
+                      <span className="text-[10px] font-mono text-slate-500 block">Section</span>
+                      <span className="text-sm font-bold text-slate-900 block break-words">{scanResult.student.section || '—'}</span>
+                    </div>
+                  </div>
+                )}
 
                 {/* Destination & Expiry Grid — pass-only fields; leave IDs carry neither */}
                 {scanResult.mode !== 'leave' && (
@@ -1063,7 +1226,14 @@ export default function GuardScanner({ searchQuery = '' }) {
           const start = new Date(); start.setHours(0, 0, 0, 0);
           const todays = (leaveRows || [])
             .filter(x => x.scanned_at && new Date(x.scanned_at) >= start);
-          if (todays.length === 0) {
+          // Exits this phone let out OFFLINE that the server list doesn't show yet.
+          const serverRolls = new Set(todays.map(x => String(x.student_roll || '').toLowerCase()));
+          const offlineRows = Object.entries(localLeaveUsed || {})
+            .map(([leaveId, v]) => ({ leaveId, ...v }))
+            .filter(v => !v.online && v.scannedAt && new Date(v.scannedAt) >= start)
+            .filter(v => !(v.state === 'SYNCED' && serverRolls.has(String(v.rollNo || '').toLowerCase())))
+            .sort((a, b) => Date.parse(b.scannedAt) - Date.parse(a.scannedAt));
+          if (todays.length === 0 && offlineRows.length === 0) {
             return (
               <div className="py-6 text-center text-xs text-slate-500 space-y-1">
                 <Users className="w-7 h-7 text-slate-300 mx-auto" />
@@ -1074,6 +1244,29 @@ export default function GuardScanner({ searchQuery = '' }) {
           }
           return (
             <div className="space-y-2">
+              {offlineRows.map(row => (
+                <div key={`off-${row.leaveId}`} data-testid="offline-leave-row" className={`border rounded-2xl p-3 flex items-center justify-between gap-3 text-xs font-mono ${row.state === 'CONFLICT' || row.state === 'REFUSED' ? 'bg-red-50/70 border-red-200' : 'bg-amber-50/70 border-amber-200'}`}>
+                  <div className="flex items-center space-x-3 min-w-0">
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold border shrink-0 ${row.state === 'CONFLICT' || row.state === 'REFUSED' ? 'bg-red-100 text-red-700 border-red-200' : row.state === 'SYNCED' ? 'bg-sky-50 text-sky-700 border-sky-200' : 'bg-amber-100 text-amber-800 border-amber-200'}`}>
+                      {row.state === 'CONFLICT' ? 'DOUBLE USE' : row.state === 'REFUSED' ? 'REFUSED AT SYNC' : row.state === 'SYNCED' ? 'OUT (SYNCED)' : 'OUT (SYNC PENDING)'}
+                    </span>
+                    <div className="min-w-0">
+                      <span className="font-bold text-slate-900">{row.name || 'Student'}</span>
+                      <span className="text-slate-500 block text-[11px] font-sans break-words">
+                        {row.rollNo || '—'} • {row.state === 'CONFLICT'
+                          ? `Already exited at another gate${row.firstOutAt ? ` at ${new Date(row.firstOutAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''} — flagged for warden`
+                          : row.state === 'REFUSED' ? (row.reason || 'Refused by server') : 'Offline leave exit'}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <span className="text-slate-500 text-[10px] block">this phone</span>
+                    <span className="text-slate-700 font-bold text-[11px]">
+                      {new Date(row.scannedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </div>
+                </div>
+              ))}
               {todays.map(row => (
                 <div key={row.id} className="bg-slate-50/70 border border-slate-200/80 rounded-2xl p-3 flex items-center justify-between gap-3 text-xs font-mono">
                   <div className="flex items-center space-x-3">

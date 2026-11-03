@@ -168,6 +168,66 @@ export async function generateSignedCommuteToken(id) {
 }
 
 /**
+ * DAY-SCHOLAR LEAVE QR — rotating and per-leave. Exists only while a mentor
+ * APPROVED, not-yet-scanned leave exists; carries THAT leave's id and is
+ * re-signed every LEAVE_QR_ROTATE_MS with a fresh issuedAt. The gate (guard
+ * device AND server) refuses one older than LEAVE_QR_MAX_AGE_MS, so a
+ * screenshot or a forwarded photo stops working within a minute.
+ * Its canonical field set is its own (kind + leaveId + identity + issuedAt),
+ * so a LEAVE signature can never be replayed as a pass or campus-ID token.
+ * @param {Object} d - { leaveId, rollNo, name, department, course, section, issuedAtMs }
+ */
+export const LEAVE_QR_ROTATE_MS = 25 * 1000;   // student card makes a new QR
+export const LEAVE_QR_MAX_AGE_MS = 60 * 1000;  // gate refuses older than this
+export const LEAVE_QR_MAX_FUTURE_MS = 30 * 1000; // allowed clock skew ahead
+
+function leaveCanonical(p) {
+  return JSON.stringify({
+    kind: 'LEAVE',
+    leaveId: p.leaveId,
+    passId: p.passId,
+    rollNo: p.rollNo,
+    name: p.name,
+    department: p.department,
+    course: p.course,
+    section: p.section,
+    issuedAt: p.issuedAt
+  });
+}
+
+export async function generateSignedLeaveToken(d) {
+  const leaveId = String(d.leaveId);
+  const payload = {
+    kind: 'LEAVE',
+    leaveId,
+    passId: `LV-${leaveId.replace(/-/g, '').slice(-8).toUpperCase()}`,
+    rollNo: d.rollNo,
+    name: d.name,
+    department: d.department || '',
+    course: d.course || '',
+    section: d.section || '',
+    issuedAt: new Date(Number.isFinite(d.issuedAtMs) ? d.issuedAtMs : Date.now()).toISOString()
+  };
+  const { alg, signature } = await signCanonical(leaveCanonical(payload));
+  return {
+    rawToken: toB64(JSON.stringify({ payload, signature, alg, v: 1 })),
+    payload,
+    signature
+  };
+}
+
+/**
+ * Is a LEAVE token's issuedAt inside the gate window? nowMs should be the
+ * server-corrected clock (utils/serverClock.serverNow).
+ */
+export function leaveQrFreshness(payload, nowMs = Date.now()) {
+  const t = Date.parse(payload && payload.issuedAt);
+  if (!Number.isFinite(t)) return { fresh: false, ageMs: null };
+  const ageMs = nowMs - t;
+  return { fresh: ageMs <= LEAVE_QR_MAX_AGE_MS && ageMs >= -LEAVE_QR_MAX_FUTURE_MS, ageMs };
+}
+
+/**
  * Verify a scanned token offline using Web Crypto API (gate passes AND
  * day-scholar commute IDs — same HMAC, same canonical field set).
  * @param {string} rawTokenBase64
@@ -185,7 +245,9 @@ export async function verifySignedPassToken(rawTokenBase64) {
     const { payload, signature } = tokenObj;
     const enc = new TextEncoder();
 
-    const canonicalString = JSON.stringify({
+    // LEAVE tokens sign their own field set (incl. kind + leaveId); every
+    // other token keeps the original pass canonical set, unchanged.
+    const canonicalString = payload.kind === 'LEAVE' ? leaveCanonical(payload) : JSON.stringify({
       passId: payload.passId,
       studentId: payload.studentId,
       rollNo: payload.rollNo,
@@ -248,7 +310,9 @@ export async function verifySignedPassToken(rawTokenBase64) {
       payload,
       message: payload.kind === 'COMMUTE'
         ? 'Commute ID verified — server decides IN / OUT.'
-        : 'Cryptographically Verified & Active.'
+        : payload.kind === 'LEAVE'
+          ? 'Leave QR verified — gate checks it is live and approved.'
+          : 'Cryptographically Verified & Active.'
     };
   } catch (err) {
     return { valid: false, message: 'Malformed QR token: ' + err.message };
