@@ -19,6 +19,7 @@ import MealRsvpModal from './components/modals/MealRsvpModal';
 import LeaveQRModal from './components/modals/LeaveQRModal';
 import TeacherDashboard from './components/roles/TeacherDashboard';
 import LoginScreen from './components/auth/LoginScreen';
+import { isPageHidden, onPageActive, POLL_ACTIVE_MS, POLL_IDLE_MS } from './utils/livePoll';
 import {
   CheckCircle2,
   WifiOff,
@@ -253,8 +254,10 @@ export default function App() {
       } catch { /* offline — keep the last known map */ }
     };
     pull();
-    const iv = setInterval(pull, 15000);
-    return () => { alive = false; clearInterval(iv); };
+    // Fix 2: skip while the tab is hidden; catch up as soon as it is visible.
+    const iv = setInterval(() => { if (!isPageHidden()) pull(); }, 15000);
+    const offActive = onPageActive(pull);
+    return () => { alive = false; clearInterval(iv); offActive(); };
   }, [currentRole, session?.identity]);
 
   // Boot the sync engine once at app start so queued offline actions
@@ -613,18 +616,43 @@ export default function App() {
       } catch (err) { /* offline or server unreachable — keep polling */ }
     };
 
-    // Poll backend every 3 seconds so mobile scans instantly reflect
-    const pollInterval = setInterval(() => {
+    // Fix 2 (polling): this used to hit the server every 3 s, even in a
+    // background tab. Now: every 15 s while the gate pass can still change on
+    // another device (PENDING / APPROVED), every 30 s otherwise, nothing while
+    // the tab is hidden, and at once when the user comes back to the tab or
+    // after their own action (pass / ticket events, outbox flushes).
+    let lastPollAt = Date.now();
+    const pollNow = () => {
+      lastPollAt = Date.now();
       loadLocalData();
       reconcileActivePass();
+    };
+    const pollEveryMs = () => {
+      const s = String(activePassRef.current?.status || '').toUpperCase();
+      return (s === 'PENDING' || s === 'APPROVED') ? POLL_ACTIVE_MS : POLL_IDLE_MS;
+    };
+    const pollInterval = setInterval(() => {
+      if (isPageHidden()) return;
+      if (Date.now() - lastPollAt >= pollEveryMs()) pollNow();
     }, 3000);
+    const offPageActive = onPageActive(pollNow);
+    // Own actions go through the outbox; refresh once its flush settles.
+    let outboxTimer = null;
+    const handleOutboxSettled = () => {
+      clearTimeout(outboxTimer);
+      outboxTimer = setTimeout(pollNow, 1200);
+    };
 
     window.addEventListener('campus_gate_pass_updated', handleGatePassUpdate);
     window.addEventListener('campus_tickets_updated', handleTicketsUpdated);
+    window.addEventListener('campus_outbox_updated', handleOutboxSettled);
     return () => {
       clearInterval(pollInterval);
+      clearTimeout(outboxTimer);
+      offPageActive();
       window.removeEventListener('campus_gate_pass_updated', handleGatePassUpdate);
       window.removeEventListener('campus_tickets_updated', handleTicketsUpdated);
+      window.removeEventListener('campus_outbox_updated', handleOutboxSettled);
     };
   }, []);
 
