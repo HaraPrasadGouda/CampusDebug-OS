@@ -198,8 +198,8 @@ export default function Sidebar({
               const isActive = activeNav === item.id;
 
               return (
+                <React.Fragment key={item.id}>
                 <button
-                  key={item.id}
                   type="button"
                   onClick={() => {
                     if (item.onClick) {
@@ -222,6 +222,9 @@ export default function Sidebar({
                   <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-white' : item.isDanger ? 'text-rose-500' : 'text-slate-500'}`} />
                   <span>{item.label}</span>
                 </button>
+                {/* Admin tool sub-menu mounts here (layout only) */}
+                {item.id === 'home' && currentRole === 'Admin' && <div id="admin-tool-nav" />}
+                </React.Fragment>
               );
             })}
           </nav>

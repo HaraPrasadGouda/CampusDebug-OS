@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { 
   Database, 
   Send, 
@@ -165,6 +166,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
   const [ccSearch, setCcSearch] = useState('');
   const [ccDirectory, setCcDirectory] = useState({ sections: [], years: [] }); // live roster sections/years (dispatcher dropdowns)
   const [staff, setStaff] = useState({ teachers: [], wardens: [] });
+  const [staffLoaded, setStaffLoaded] = useState(false); // KPI shows '—' until the real list arrives
   // --- ROOM ALLOCATION: dry-run plan preview, confirm-to-apply, plus the
   // per-student manual override (same rules, enforced live).
   const [roomPlan, setRoomPlan] = useState(null);   // dryRun response awaiting Confirm
@@ -206,7 +208,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
       const tok = getAccessToken();
       const r = await fetch('/api/admin/staff-directory', tok ? { headers: { Authorization: `Bearer ${tok}` } } : undefined);
       const j = await r.json();
-      if (j?.success) setStaff({ teachers: j.teachers || [], wardens: j.wardens || [] });
+      if (j?.success) { setStaff({ teachers: j.teachers || [], wardens: j.wardens || [] }); setStaffLoaded(true); }
     } catch { /* offline */ }
   };
 
@@ -412,6 +414,12 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
     }
     setTtSecBusy(null);
   };
+
+  // Teachers KPI: read the staff list once on mount (Campus Setup still reloads it when opened).
+  useEffect(() => {
+    loadStaffDirectory();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (activeTab === 'timetable') { loadTimetableInfo(); loadAttLocks(); loadCampusConfig(); loadAtRisk(); }
@@ -891,192 +899,160 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
     (u.hostelBlock || '').toLowerCase().includes(effectiveQuery)
   );
 
+
+  // ── Layout only: the same 8 admin tools (same ids, same labels, same
+  // setActiveTab handler), grouped into sections, and the 4 KPI figures shown
+  // compact instead of 4 big cards. No data or behaviour change.
+  const adminTabs = {
+    dispatcher: { label: 'Targeted Micro-Dispatcher', Icon: Send, on: 'bg-emerald-600 text-white', off: 'bg-emerald-100 text-emerald-600', sel: 'bg-emerald-50 border-emerald-400 text-emerald-900', bar: 'bg-emerald-500' },
+    docs: { label: 'Document Desk', Icon: FileText, on: 'bg-violet-600 text-white', off: 'bg-violet-100 text-violet-600', sel: 'bg-violet-50 border-violet-400 text-violet-900', bar: 'bg-violet-500' },
+    timetable: { label: 'Timetable Engine', Icon: Calendar, on: 'bg-teal-600 text-white', off: 'bg-teal-100 text-teal-600', sel: 'bg-teal-50 border-teal-400 text-teal-900', bar: 'bg-teal-500' },
+    setup: { label: 'Campus Setup', Icon: Building2, on: 'bg-indigo-600 text-white', off: 'bg-indigo-100 text-indigo-600', sel: 'bg-indigo-50 border-indigo-400 text-indigo-900', bar: 'bg-indigo-500' },
+    mess: { label: 'Mess Kitchen Forecast', Icon: Utensils, on: 'bg-amber-600 text-white', off: 'bg-amber-100 text-amber-600', sel: 'bg-amber-50 border-amber-400 text-amber-900', bar: 'bg-amber-500' },
+    csv: { label: `Legacy CSV Ingest Engine (${importedUsers.length})`, Icon: FileSpreadsheet, on: 'bg-purple-600 text-white', off: 'bg-purple-100 text-purple-600', sel: 'bg-purple-50 border-purple-400 text-purple-900', bar: 'bg-purple-500' },
+    metrics: { label: 'System Health & Sync Engine', Icon: Database, on: 'bg-sky-600 text-white', off: 'bg-sky-100 text-sky-600', sel: 'bg-sky-50 border-sky-400 text-sky-900', bar: 'bg-sky-500' },
+    security: { label: 'Password Reset Desk', Icon: ShieldCheck, on: 'bg-rose-600 text-white', off: 'bg-rose-100 text-rose-600', sel: 'bg-rose-50 border-rose-400 text-rose-900', bar: 'bg-rose-500' },
+  };
+  const adminGroups = [
+    { title: 'Communication', ids: ['dispatcher'] },
+    { title: 'Academics', ids: ['timetable'] },
+    { title: 'Campus & Hostel', ids: ['setup', 'mess'] },
+    { title: 'Support', ids: ['docs', 'security'] },
+    { title: 'Data & System', ids: ['csv', 'metrics'] },
+  ];
+  const activeGroup = adminGroups.find(g => g.ids.includes(activeTab)) || adminGroups[0];
+  const adminKpis = [
+    { label: 'Total Enrolled Students', value: campusStats.studentCount != null ? campusStats.studentCount.toLocaleString() : (importedUsers.length > 0 ? importedUsers.length : '—'), note: 'Active Rosters', dot: 'bg-purple-500', pill: 'bg-purple-100 text-purple-800' },
+    { label: 'Micro-Segments', value: campusStats.blockCount != null ? campusStats.blockCount.toLocaleString() : '—', note: 'Hostel Blocks', dot: 'bg-blue-500', pill: 'bg-blue-100 text-blue-800' },
+    { label: 'Resolution SLA Rate', value: campusStats.slaResolutionRate != null ? `${campusStats.slaResolutionRate}%` : '—', note: 'Target: >90%', dot: 'bg-emerald-500', pill: 'bg-emerald-100 text-emerald-800' },
+    { label: 'Teachers', value: staffLoaded ? staff.teachers.length.toLocaleString() : '—', note: 'Faculty on roster', dot: 'bg-amber-500', pill: 'bg-amber-100 text-amber-800' },
+  ];
+
+  // Option A: mount point the app sidebar renders under "Home" for Admin.
+  // If the sidebar is collapsed (slot clipped), the in-page nav takes over.
+  const [toolNavSlot, setToolNavSlot] = useState(null);
+  const [slotShown, setSlotShown] = useState(true);
+  useEffect(() => {
+    const el = document.getElementById('admin-tool-nav');
+    setToolNavSlot(el);
+    if (!el || typeof IntersectionObserver === 'undefined') return undefined;
+    const io = new IntersectionObserver(([e]) => setSlotShown(e.isIntersecting));
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+
   return (
     <div className="space-y-5 animate-in fade-in duration-200">
       
-      {/* Admin Top Header Metrics */}
-      {/* Admin Top Header Metrics - 3D Colorful Cards */}
-      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
-        <div className="bg-gradient-to-br from-[#faf5ff] to-[#f3e8ff] border-2 border-[#d8b4fe] rounded-2xl sm:rounded-3xl p-5 flex flex-col justify-between shadow-[0_8px_24px_rgba(168,85,247,0.12)] hover:shadow-xl hover:-translate-y-1 transition-all duration-300">
-          <span className="text-sm font-extrabold text-purple-900 tracking-wide">Total Enrolled Students</span>
-          <div className="mt-3 flex items-baseline justify-between">
-            <span className="text-3xl sm:text-4xl font-extrabold font-mono text-purple-950">
-              {campusStats.studentCount != null
-                ? campusStats.studentCount.toLocaleString()
-                : (importedUsers.length > 0 ? importedUsers.length : '—')}
-            </span>
-            <span className="text-xs font-mono px-2.5 py-1 rounded-full bg-purple-200 text-purple-900 border border-purple-400 font-bold">
-              Active Rosters
-            </span>
-          </div>
-        </div>
+      {/* Laptop: the tools live as a grouped sub-menu under "Home" in the app sidebar */}
+      {toolNavSlot && createPortal(
+        <div className="mt-1 mb-2 ml-4 pl-2.5 border-l-2 border-slate-100 space-y-2">
+          {adminGroups.map((g) => (
+            <div key={g.title}>
+              <p className="text-[9px] uppercase tracking-wider font-bold text-slate-400 px-2 pb-0.5">{g.title}</p>
+              {g.ids.map((id) => {
+                const t = adminTabs[id];
+                const on = activeTab === id;
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    data-admin-tab={id}
+                    onClick={() => setActiveTab(id)}
+                    className={`w-full min-h-[38px] flex items-center gap-2 rounded-lg border px-2 py-1 text-left transition-colors cursor-pointer ${on ? t.sel : 'border-transparent text-slate-600 hover:bg-slate-100/80 hover:text-slate-900'}`}
+                  >
+                    <span className={`w-6 h-6 rounded-md flex items-center justify-center shrink-0 ${on ? t.on : t.off}`}>
+                      <t.Icon className="w-3.5 h-3.5" />
+                    </span>
+                    <span className="text-[11px] font-bold leading-tight min-w-0">{t.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+        </div>,
+        toolNavSlot
+      )}
 
-        <div className="bg-gradient-to-br from-[#eff6ff] to-[#dbeafe] border-2 border-[#93c5fd] rounded-2xl sm:rounded-3xl p-5 flex flex-col justify-between shadow-[0_8px_24px_rgba(59,130,246,0.12)] hover:shadow-xl hover:-translate-y-1 transition-all duration-300">
-          <span className="text-sm font-extrabold text-blue-900 tracking-wide">Micro-Segments</span>
-          <div className="mt-3 flex items-baseline justify-between">
-            <span className="text-3xl sm:text-4xl font-extrabold font-mono text-blue-950">
-              {campusStats.blockCount != null ? campusStats.blockCount.toLocaleString() : '—'}
-            </span>
-            <span className="text-xs font-mono px-2.5 py-1 rounded-full bg-blue-200 text-blue-900 border border-blue-400 font-bold">
-              Hostel Blocks
-            </span>
-          </div>
-        </div>
 
-        <div className="bg-gradient-to-br from-[#edf9f5] to-[#e0f5ed] border-2 border-[#86efac] rounded-2xl sm:rounded-3xl p-5 flex flex-col justify-between shadow-[0_8px_24px_rgba(16,185,129,0.12)] hover:shadow-xl hover:-translate-y-1 transition-all duration-300">
-          <span className="text-sm font-extrabold text-emerald-900 tracking-wide">Resolution SLA Rate</span>
-          <div className="mt-3 flex items-baseline justify-between">
-            <span className="text-3xl sm:text-4xl font-extrabold font-mono text-emerald-700">
-              {campusStats.slaResolutionRate != null ? `${campusStats.slaResolutionRate}%` : '—'}
-            </span>
-            <span className="text-xs font-mono px-2.5 py-1 rounded-full bg-emerald-200 text-emerald-900 border border-emerald-400 font-bold">
-              Target: &gt;90%
-            </span>
-          </div>
+      {/* Slim KPI strip — the same 4 figures as the old big cards */}
+      <section className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+        <div className="px-3.5 lg:px-4 pt-2.5 lg:pt-3 pb-2 flex items-center justify-between gap-2">
+          <h2 className="font-display font-extrabold text-base lg:text-lg text-slate-900 tracking-tight">Admin Console</h2>
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Overview</span>
         </div>
-
-        <div className="bg-gradient-to-br from-[#fffbeb] to-[#fef3c7] border-2 border-[#fcd34d] rounded-2xl sm:rounded-3xl p-5 flex flex-col justify-between shadow-[0_8px_24px_rgba(245,158,11,0.12)] hover:shadow-xl hover:-translate-y-1 transition-all duration-300">
-          <span className="text-sm font-extrabold text-amber-900 tracking-wide">Legacy ERP Sync</span>
-          <div className="mt-3 flex items-baseline justify-between">
-            <span className="text-lg sm:text-xl font-extrabold font-mono text-amber-950">Zero-Disruption</span>
-            <span className="text-xs font-mono px-2.5 py-1 rounded-full bg-amber-200 text-amber-900 border border-amber-400 font-bold">
-              PWA Ingest
-            </span>
-          </div>
+        <div className="grid grid-cols-4 border-t border-slate-100 divide-x divide-slate-100">
+          {adminKpis.map((k) => (
+            <div key={k.label} className="px-2 lg:px-4 py-2 lg:py-2.5 min-w-0 flex flex-col-reverse lg:flex-col justify-end gap-0.5">
+              <p className="text-[9px] lg:text-[11px] font-bold text-slate-500 flex items-start lg:items-center gap-1.5 min-w-0 leading-tight">
+                <span className={`hidden lg:inline-block w-1.5 h-1.5 rounded-full shrink-0 ${k.dot}`}></span>
+                <span className="lg:truncate">{k.label}<span className="lg:hidden block font-semibold text-slate-400">{k.note}</span></span>
+              </p>
+              <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 min-w-0">
+                <span className={`lg:hidden w-1.5 h-1.5 rounded-full shrink-0 self-center ${k.dot}`}></span>
+                <span className={`font-mono font-extrabold text-slate-900 break-words min-w-0 ${k.small ? 'text-[10px] lg:text-sm' : 'text-base lg:text-xl'}`}>{k.value}</span>
+                <span className={`hidden lg:inline text-[10px] font-bold px-1.5 py-0.5 rounded ${k.pill} whitespace-nowrap`}>{k.note}</span>
+              </div>
+            </div>
+          ))}
         </div>
       </section>
 
-      {/* Navigation Tabs — Quick-Action tile grid (like the student dashboard,
-          a size smaller): every tab is a compact colored card, so nothing
-          ever hides behind a horizontal scroll on phones */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-        <button
-          onClick={() => setActiveTab('dispatcher')}
-          className={`flex items-center gap-2.5 rounded-xl border p-2 text-left transition-all cursor-pointer ${
-            activeTab === 'dispatcher'
-              ? 'bg-emerald-50 border-emerald-400 ring-2 ring-emerald-300/40'
-              : 'bg-white border-slate-200 hover:border-slate-300 hover:shadow-sm'
-          }`}
-        >
-          <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${activeTab === 'dispatcher' ? 'bg-emerald-600 text-white' : 'bg-emerald-100 text-emerald-600'}`}>
-            <Send className="w-4 h-4" />
-          </span>
-          <span className={`text-[11px] font-bold leading-tight ${activeTab === 'dispatcher' ? 'text-emerald-900' : 'text-slate-700'}`}>
-            Targeted Micro-Dispatcher
-          </span>
-        </button>
+      {/* Phone: the 5 groups as a bottom tab bar (portal to <body> so it stays fixed) */}
+      {createPortal(
+        <nav className={`${toolNavSlot && slotShown ? 'lg:hidden' : ''} fixed bottom-0 inset-x-0 z-30 bg-white/95 backdrop-blur border-t border-slate-200 shadow-[0_-4px_16px_rgba(15,23,42,0.06)] pb-[env(safe-area-inset-bottom)]`}>
+          <div className="grid grid-cols-5 max-w-lg mx-auto">
+            {adminGroups.map((g) => {
+              const on = g.ids.includes(activeTab);
+              const t = adminTabs[g.ids[0]];
+              return (
+                <button
+                  key={g.title}
+                  type="button"
+                  data-admin-group={g.title}
+                  onClick={() => setActiveTab(on ? activeTab : g.ids[0])}
+                  className={`min-h-[60px] flex flex-col items-center justify-center gap-1 px-0.5 cursor-pointer ${on ? 'text-slate-900' : 'text-slate-500'}`}
+                >
+                  <span className={`w-9 h-7 rounded-full flex items-center justify-center ${on ? t.on : 'text-slate-500'}`}>
+                    <t.Icon className="w-4 h-4" />
+                  </span>
+                  <span className="text-[9.5px] font-bold leading-tight text-center">{g.title}</span>
+                </button>
+              );
+            })}
+          </div>
+        </nav>,
+        document.body
+      )}
 
-        <button
-          onClick={() => setActiveTab('timetable')}
-          className={`flex items-center gap-2.5 rounded-xl border p-2 text-left transition-all cursor-pointer ${
-            activeTab === 'timetable'
-              ? 'bg-teal-50 border-teal-400 ring-2 ring-teal-300/40'
-              : 'bg-white border-slate-200 hover:border-slate-300 hover:shadow-sm'
-          }`}
-        >
-          <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${activeTab === 'timetable' ? 'bg-teal-600 text-white' : 'bg-teal-100 text-teal-600'}`}>
-            <Calendar className="w-4 h-4" />
-          </span>
-          <span className={`text-[11px] font-bold leading-tight ${activeTab === 'timetable' ? 'text-teal-900' : 'text-slate-700'}`}>
-            Timetable Engine
-          </span>
-        </button>
+      {/* Phone: tools of the selected group as a segmented switch */}
+      {activeGroup.ids.length > 1 && (
+        <div className={`${toolNavSlot && slotShown ? 'lg:hidden' : ''} grid grid-cols-2 gap-1 bg-white border border-slate-200 rounded-2xl shadow-sm p-1`}>
+          {activeGroup.ids.map((id) => {
+            const t = adminTabs[id];
+            const on = activeTab === id;
+            return (
+              <button
+                key={id}
+                type="button"
+                data-admin-tab={id}
+                onClick={() => setActiveTab(id)}
+                className={`min-h-[44px] flex items-center justify-center gap-1.5 rounded-xl border px-2 py-1 text-center transition-colors cursor-pointer ${on ? t.sel : 'border-transparent text-slate-600 hover:bg-slate-50'}`}
+              >
+                <t.Icon className="w-3.5 h-3.5 shrink-0" />
+                <span className="text-[11px] font-bold leading-tight">{t.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
-        <button
-          onClick={() => setActiveTab('setup')}
-          className={`flex items-center gap-2.5 rounded-xl border p-2 text-left transition-all cursor-pointer ${
-            activeTab === 'setup'
-              ? 'bg-indigo-50 border-indigo-400 ring-2 ring-indigo-300/40'
-              : 'bg-white border-slate-200 hover:border-slate-300 hover:shadow-sm'
-          }`}
-        >
-          <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${activeTab === 'setup' ? 'bg-indigo-600 text-white' : 'bg-indigo-100 text-indigo-600'}`}>
-            <Building2 className="w-4 h-4" />
-          </span>
-          <span className={`text-[11px] font-bold leading-tight ${activeTab === 'setup' ? 'text-indigo-900' : 'text-slate-700'}`}>
-            Campus Setup
-          </span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('csv')}
-          className={`flex items-center gap-2.5 rounded-xl border p-2 text-left transition-all cursor-pointer ${
-            activeTab === 'csv'
-              ? 'bg-purple-50 border-purple-400 ring-2 ring-purple-300/40'
-              : 'bg-white border-slate-200 hover:border-slate-300 hover:shadow-sm'
-          }`}
-        >
-          <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${activeTab === 'csv' ? 'bg-purple-600 text-white' : 'bg-purple-100 text-purple-600'}`}>
-            <FileSpreadsheet className="w-4 h-4" />
-          </span>
-          <span className={`text-[11px] font-bold leading-tight ${activeTab === 'csv' ? 'text-purple-900' : 'text-slate-700'}`}>
-            Legacy CSV Ingest Engine ({importedUsers.length})
-          </span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('metrics')}
-          className={`flex items-center gap-2.5 rounded-xl border p-2 text-left transition-all cursor-pointer ${
-            activeTab === 'metrics'
-              ? 'bg-sky-50 border-sky-400 ring-2 ring-sky-300/40'
-              : 'bg-white border-slate-200 hover:border-slate-300 hover:shadow-sm'
-          }`}
-        >
-          <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${activeTab === 'metrics' ? 'bg-sky-600 text-white' : 'bg-sky-100 text-sky-600'}`}>
-            <Database className="w-4 h-4" />
-          </span>
-          <span className={`text-[11px] font-bold leading-tight ${activeTab === 'metrics' ? 'text-sky-900' : 'text-slate-700'}`}>
-            System Health & Sync Engine
-          </span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('security')}
-          className={`flex items-center gap-2.5 rounded-xl border p-2 text-left transition-all cursor-pointer ${
-            activeTab === 'security'
-              ? 'bg-rose-50 border-rose-400 ring-2 ring-rose-300/40'
-              : 'bg-white border-slate-200 hover:border-slate-300 hover:shadow-sm'
-          }`}
-        >
-          <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${activeTab === 'security' ? 'bg-rose-600 text-white' : 'bg-rose-100 text-rose-600'}`}>
-            <ShieldCheck className="w-4 h-4" />
-          </span>
-          <span className={`text-[11px] font-bold leading-tight ${activeTab === 'security' ? 'text-rose-900' : 'text-slate-700'}`}>
-            Password Reset Desk
-          </span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('mess')}
-          className={`flex items-center gap-2.5 rounded-xl border p-2 text-left transition-all cursor-pointer ${
-            activeTab === 'mess'
-              ? 'bg-amber-50 border-amber-400 ring-2 ring-amber-300/40'
-              : 'bg-white border-slate-200 hover:border-slate-300 hover:shadow-sm'
-          }`}
-        >
-          <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${activeTab === 'mess' ? 'bg-amber-600 text-white' : 'bg-amber-100 text-amber-600'}`}>
-            <Utensils className="w-4 h-4" />
-          </span>
-          <span className={`text-[11px] font-bold leading-tight ${activeTab === 'mess' ? 'text-amber-900' : 'text-slate-700'}`}>
-            Mess Kitchen Forecast
-          </span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('docs')}
-          className={`flex items-center gap-2.5 rounded-xl border p-2 text-left transition-all cursor-pointer ${
-            activeTab === 'docs'
-              ? 'bg-violet-50 border-violet-400 ring-2 ring-violet-300/40'
-              : 'bg-white border-slate-200 hover:border-slate-300 hover:shadow-sm'
-          }`}
-        >
-          <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${activeTab === 'docs' ? 'bg-violet-600 text-white' : 'bg-violet-100 text-violet-600'}`}>
-            <FileText className="w-4 h-4" />
-          </span>
-          <span className={`text-[11px] font-bold leading-tight ${activeTab === 'docs' ? 'text-violet-900' : 'text-slate-700'}`}>
-            Document Desk
-          </span>
-        </button>
+      {/* Selected tool — clear section header so the panel below is the focus */}
+      <div className="flex items-center gap-2 px-1 min-w-0">
+        <span className={`w-1 h-5 rounded-full shrink-0 ${(adminTabs[activeTab] || adminTabs.dispatcher).bar}`}></span>
+        <span className="text-[10px] sm:text-[11px] font-bold uppercase tracking-wider text-slate-400 shrink-0">{activeGroup.title}</span>
+        <span className="text-slate-300 shrink-0">/</span>
+        <h3 className="font-display font-extrabold text-sm sm:text-base text-slate-900 truncate">{(adminTabs[activeTab] || adminTabs.dispatcher).label}</h3>
       </div>
 
       {/* --- TAB 5: DOCUMENT DESK (Registrar queue) --- */}
@@ -2547,6 +2523,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
         </section>
       )}
 
+      <div className={`${toolNavSlot && slotShown ? 'lg:hidden' : ''} h-16`} aria-hidden="true"></div>
     </div>
   );
 }
