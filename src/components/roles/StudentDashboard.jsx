@@ -653,7 +653,7 @@ export default function StudentDashboard({
           (profiles.mentor_roll). Day-scholar leave requests route to
           this teacher for approval. Hidden when not assigned. */}
       {myMentor && (
-        <div className="order-7 col-span-2 lg:col-span-1 min-w-0 rounded-2xl border border-[#c7d2fe] lg:border-[#ddd6fe] bg-gradient-to-br lg:bg-gradient-to-b from-[#eef2ff] lg:from-[#f5f3ff] to-white shadow-[0_1px_2px_rgba(15,23,42,0.04)] p-3.5 lg:p-4 flex flex-col">
+        <div className="order-7 col-span-2 lg:col-span-1 min-w-0 rounded-2xl border border-[#c7d2fe] lg:border-[#ddd6fe] bg-gradient-to-br lg:bg-gradient-to-b from-[#eef2ff] lg:from-[#f5f3ff] to-white shadow-[0_1px_2px_rgba(15,23,42,0.04)] p-3.5 lg:p-4 flex flex-col lg:hover:shadow-lg lg:hover:-translate-y-0.5 transition-all duration-300">
           <div className="flex items-center gap-2.5">
             <div className="w-[30px] h-[30px] lg:w-[34px] lg:h-[34px] rounded-[9px] lg:rounded-[10px] bg-[#e0e7ff] text-[#4f46e5] flex items-center justify-center shrink-0">
               <UserCheck className="w-4 h-4" />
@@ -792,7 +792,7 @@ export default function StudentDashboard({
                 <p className="text-[12.5px] text-[#78350f] font-medium pt-1 flex items-baseline gap-x-1 flex-wrap">
                   <span>Next serving in</span>
                   <b className="text-[18px] lg:text-[22px] leading-none font-bold text-[#92400e]">{fmtDuration(mealStatus.minsToNext)}</b>
-                  <span>— see below ↓</span>
+                  <span className="lg:hidden">— see below ↓</span>
                 </p>
               </>
             )}
