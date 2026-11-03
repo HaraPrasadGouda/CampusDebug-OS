@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { saveLocal, bulkSaveLocal, getAllLocal, queueOfflineAction, getOutboxCount } from '../../utils/db';
 import { getAccessToken } from '../../utils/authClient';
+import { getLiveUpdates } from '../../utils/liveUpdates';
 
 // Notices are REAL records served by the central notice bus (server-persisted
 // in data/notices.json). History loads from there — nothing is seeded.
@@ -530,7 +531,8 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
       }
     };
     check();
-    const id = setInterval(check, 30000);
+    // Settings → Live updates OFF: no timed re-checks (opening the tab still checks).
+    const id = setInterval(() => { if (getLiveUpdates()) check(); }, 30000);
     return () => { alive = false; clearInterval(id); };
   }, [activeTab]);
 
@@ -560,7 +562,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
         .catch(() => { /* offline — keep last */ });
     };
     load();
-    const t = setInterval(load, 30000);
+    const t = setInterval(() => { if (getLiveUpdates()) load(); }, 30000); // Settings → Live updates
     return () => { alive = false; clearInterval(t); };
   }, []);
 
@@ -579,7 +581,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
         .catch(() => { /* offline — keep last */ });
     };
     load();
-    const t = setInterval(load, 20000);
+    const t = setInterval(() => { if (getLiveUpdates()) load(); }, 20000); // Settings → Live updates
     return () => { alive = false; clearInterval(t); };
   }, [activeTab]);
 

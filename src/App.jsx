@@ -20,7 +20,8 @@ import MealRsvpModal from './components/modals/MealRsvpModal';
 import LeaveQRModal from './components/modals/LeaveQRModal';
 import TeacherDashboard from './components/roles/TeacherDashboard';
 import LoginScreen from './components/auth/LoginScreen';
-import { isPageHidden, onPageActive, POLL_ACTIVE_MS, POLL_IDLE_MS } from './utils/livePoll';
+import { onPageActive, POLL_ACTIVE_MS, POLL_IDLE_MS } from './utils/livePoll';
+import { canAutoRefresh, onLiveUpdatesChange } from './utils/liveUpdates';
 import {
   CheckCircle2,
   WifiOff,
@@ -137,10 +138,18 @@ export default function App() {
       } catch { fromSnapshot(); /* offline or server unreachable — keep the last state */ }
     };
     pullLeave();
+    // Settings → Live updates: ON = refresh every 15 s while the leave can
+    // still change on another device (mentor decides / guard scans), every
+    // 30 s otherwise; skipped while the tab is hidden. OFF = no timer
+    // fetches — the leave still refreshes on open, tab return and own actions.
     const iv = setInterval(() => {
       ticks += 1;
-      if (isLeaveLive(dayLeaveRef.current) || ticks % 10 === 0) pullLeave();
+      if (!canAutoRefresh()) return;
+      const every = isLeaveLive(dayLeaveRef.current) ? POLL_ACTIVE_MS : POLL_IDLE_MS;
+      if ((ticks * 3000) % every === 0) pullLeave();
     }, 3000);
+    // Switched back ON in Settings: catch up at once.
+    const offLive = onLiveUpdatesChange((on) => { if (on) pullLeave(); });
     const onLeaveUpdated = () => pullLeave();
     const onVisible = () => { if (document.visibilityState === 'visible') pullLeave(); };
     window.addEventListener('campus_leave_updated', onLeaveUpdated);
@@ -149,6 +158,7 @@ export default function App() {
     return () => {
       alive = false;
       clearInterval(iv);
+      offLive();
       window.removeEventListener('campus_leave_updated', onLeaveUpdated);
       window.removeEventListener('focus', onLeaveUpdated);
       document.removeEventListener('visibilitychange', onVisible);
@@ -256,7 +266,8 @@ export default function App() {
     };
     pull();
     // Fix 2: skip while the tab is hidden; catch up as soon as it is visible.
-    const iv = setInterval(() => { if (!isPageHidden()) pull(); }, 15000);
+    // Settings → Live updates OFF stops this timer (open/tab-return still refresh).
+    const iv = setInterval(() => { if (canAutoRefresh()) pull(); }, 15000);
     const offActive = onPageActive(pull);
     return () => { alive = false; clearInterval(iv); offActive(); };
   }, [currentRole, session?.identity]);
@@ -632,8 +643,10 @@ export default function App() {
       const s = String(activePassRef.current?.status || '').toUpperCase();
       return (s === 'PENDING' || s === 'APPROVED') ? POLL_ACTIVE_MS : POLL_IDLE_MS;
     };
+    // Settings → Live updates OFF: no timer polls (open, tab return and own
+    // actions below still refresh).
     const pollInterval = setInterval(() => {
-      if (isPageHidden()) return;
+      if (!canAutoRefresh()) return;
       if (Date.now() - lastPollAt >= pollEveryMs()) pollNow();
     }, 3000);
     const offPageActive = onPageActive(pollNow);
@@ -759,7 +772,7 @@ export default function App() {
       createdAt: newFeedback.createdAt || new Date().toISOString()
     };
     setRecentActivities(prev => [feedbackWithDate, ...prev.filter(i => i.id !== feedbackWithDate.id)].sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()));
-    showToast(`Mess meal feedback logged & submitted to Caterer and Dean!`, 'success');
+    showToast('Mess feedback submitted ✓', 'success');
   };
 
   const handleDocRequested = (newDoc) => {
@@ -768,7 +781,7 @@ export default function App() {
       createdAt: newDoc.createdAt || new Date().toISOString()
     };
     setRecentActivities(prev => [docWithDate, ...prev.filter(i => i.id !== docWithDate.id)].sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()));
-    showToast(`Certificate Request #${newDoc.id} submitted to Registrar! (SLA: 24h)`, 'success');
+    showToast(`Certificate request #${newDoc.id} submitted ✓`, 'success');
   };
 
   const handleOpenQRModal = (pass) => {

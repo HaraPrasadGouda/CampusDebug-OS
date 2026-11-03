@@ -110,7 +110,7 @@ export default function Sidebar({
                   : isWarden
                     ? (session?.name || 'Warden')
                     : isGuard
-                      ? (session?.name || 'Security Guard')
+                      ? (String(session?.name || '').trim() || 'Guard')
                       : (session?.name || 'Administrator');
 
               // Sub-line is REAL: roll number + role/department from the

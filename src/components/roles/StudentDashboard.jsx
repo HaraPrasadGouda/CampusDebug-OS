@@ -37,6 +37,7 @@ import AiCategoryChip from '../AiCategoryChip';
 import { getTodayMenuKey, getTodayMenu, getTomorrowMenu, isFeastDay, getTodayDayLabel, getMealStatus, fmtDuration, MEAL_ORDER } from '../../data/messMenu';
 import { isLeaveWindowOpen } from '../../utils/leaveWindow';
 import { leaveNumber } from '../../utils/passNumber';
+import { canAutoRefresh } from '../../utils/liveUpdates';
 
 export default function StudentDashboard({
   activities = [],
@@ -86,7 +87,7 @@ export default function StudentDashboard({
       } catch { /* offline: the card simply doesn't render */ }
     };
     loadNotice();
-    const iv = setInterval(loadNotice, 120000);
+    const iv = setInterval(() => { if (canAutoRefresh()) loadNotice(); }, 120000); // Settings → Live updates
     return () => { alive = false; clearInterval(iv); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

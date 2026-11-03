@@ -26,6 +26,7 @@ import { getAccessToken } from '../../utils/authClient';
 import { queueAction } from '../../utils/syncEngine';
 import { refreshApprovedLeaves, checkLeaveOffline, markLeaveUsedLocally, getUsedLeaves, refreshGuardPassCache, checkPassNumberOffline, usedKeyFor } from '../../utils/leaveGateCache';
 import { leaveNumber } from '../../utils/passNumber';
+import { getLiveUpdates } from '../../utils/liveUpdates';
 
 export default function GuardScanner({ searchQuery = '' }) {
   const [isScanning, setIsScanning] = useState(false);
@@ -286,7 +287,9 @@ export default function GuardScanner({ searchQuery = '' }) {
     };
 
     loadRegister();
-    const iv = setInterval(loadRegister, 15000);
+    // Settings → Live updates OFF: the register stops auto-refreshing (the
+    // offline gate list above keeps refreshing — gate checks depend on it).
+    const iv = setInterval(() => { if (getLiveUpdates()) loadRegister(); }, 15000);
     return () => { alive = false; clearInterval(iv); };
   }, []);
 

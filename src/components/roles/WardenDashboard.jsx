@@ -27,6 +27,7 @@ import { getAccessToken } from '../../utils/authClient';
 import { notifyGatePassApproved } from '../../utils/notifications';
 import WardenCreatePassModal from '../modals/WardenCreatePassModal';
 import { isPageHidden, onPageActive, POLL_ACTIVE_MS, POLL_IDLE_MS } from '../../utils/livePoll';
+import { getLiveUpdates } from '../../utils/liveUpdates';
 
 // NO seeded demo data — the warden queue only shows REAL passes/tickets/clusters
 // created by actual student activity (IndexedDB + Supabase via /api/dashboard-data).
@@ -186,7 +187,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
       refreshWardenData();
     };
     const pollInterval = setInterval(() => {
-      if (isPageHidden()) return;
+      if (isPageHidden() || !getLiveUpdates()) return; // Settings → Live updates
       const every = pendingCountRef.current > 0 ? POLL_ACTIVE_MS : POLL_IDLE_MS;
       if (Date.now() - lastPollAt >= every) pollNow();
     }, 3000);

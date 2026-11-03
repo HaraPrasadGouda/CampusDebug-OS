@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { X, Bell, Wifi, Moon, RefreshCw, Database, Shield, Check } from 'lucide-react';
 import PasswordInput from '../auth/PasswordInput';
+import { useLiveUpdates } from '../../utils/liveUpdates';
 
 export default function SettingsModal({ isOpen, onClose }) {
   const [offlineSync, setOfflineSync] = useState(true);
-  const [autoRefresh, setAutoRefresh] = useState(true);
+  // Live updates: saved on this device, applies to every open screen at once.
+  const [autoRefresh, setAutoRefresh] = useLiveUpdates();
   const [pushStatus, setPushStatus] = useState({ ok: null, text: '' });
   const [pushOn, setPushOn] = useState(null); // null = still checking this device
   const [pushBusy, setPushBusy] = useState(false);
@@ -141,14 +143,25 @@ export default function SettingsModal({ isOpen, onClose }) {
               <RefreshCw className="w-5 h-5 text-purple-600" />
               <div>
                 <p className="text-xs font-semibold text-slate-800">Live updates</p>
-                <p className="text-[11px] text-slate-600">Keep pass status up to date automatically</p>
+                <p className="text-[11px] text-slate-600">
+                  {autoRefresh
+                    ? 'On: pass & leave status refresh every 15 s'
+                    : 'Off: status refreshes when you open the app'}
+                </p>
               </div>
             </div>
-            <button 
+            <button
+              type="button"
+              role="switch"
+              aria-checked={autoRefresh}
+              aria-label="Live updates"
+              data-testid="live-updates-toggle"
               onClick={() => setAutoRefresh(!autoRefresh)}
-              className={`w-11 h-6 flex items-center rounded-full p-1 transition-colors cursor-pointer ${autoRefresh ? 'bg-purple-600' : 'bg-slate-300'}`}
+              className="shrink-0 min-w-[44px] min-h-[44px] flex items-center justify-center cursor-pointer"
             >
-              <div className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-transform ${autoRefresh ? 'translate-x-5' : 'translate-x-0'}`} />
+              <span className={`w-11 h-6 flex items-center rounded-full p-1 transition-colors ${autoRefresh ? 'bg-purple-600' : 'bg-slate-300'}`}>
+                <span className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-transform ${autoRefresh ? 'translate-x-5' : 'translate-x-0'}`} />
+              </span>
             </button>
           </div>
 

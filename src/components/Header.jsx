@@ -22,6 +22,7 @@ import { getOutboxCount } from '../utils/db';
 import { getPendingSyncCount } from '../utils/syncEngine';
 import FacultyFinderDropdown from './FacultyFinderDropdown';
 import { isPageHidden, onPageActive } from '../utils/livePoll';
+import { canAutoRefresh } from '../utils/liveUpdates';
 
 const ROLES = [
   { id: 'Student', label: 'Student', title: 'Student Portal', icon: User, color: 'text-blue-600 bg-blue-50' },
@@ -117,7 +118,7 @@ export default function Header({
   useEffect(() => {
     fetchBellNotices();
     // Fix 2: no bell refresh while the tab is hidden; refresh on return.
-    const bellInterval = setInterval(() => { if (!isPageHidden()) fetchBellNotices(); }, 20000);
+    const bellInterval = setInterval(() => { if (canAutoRefresh()) fetchBellNotices(); }, 20000); // + Settings → Live updates
     const offBellActive = onPageActive(fetchBellNotices);
     return () => { clearInterval(bellInterval); offBellActive(); };
   }, []);
