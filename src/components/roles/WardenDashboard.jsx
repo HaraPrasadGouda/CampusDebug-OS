@@ -31,6 +31,24 @@ import WardenCreatePassModal from '../modals/WardenCreatePassModal';
 const INITIAL_PENDING_PASSES = [];
 const INITIAL_CLUSTERS = [];
 
+// Shared empty state for the dashboard cards: tinted icon circle + title (+ optional subline),
+// centred in the card (fills the card height on laptop where rows are equal height).
+const EMPTY_TONES = {
+  emerald: 'bg-emerald-50 text-emerald-600 ring-emerald-100',
+  purple: 'bg-purple-50 text-purple-600 ring-purple-100',
+};
+function CardEmptyState({ icon: Icon = CheckCircle2, tone = 'emerald', title, sub }) {
+  return (
+    <div className="flex-1 min-h-[200px] flex flex-col items-center justify-center text-center px-4 py-10">
+      <span className={`w-14 h-14 rounded-full ring-8 flex items-center justify-center mb-4 ${EMPTY_TONES[tone] || EMPTY_TONES.emerald}`}>
+        <Icon className="w-7 h-7" />
+      </span>
+      <p className="text-sm font-semibold text-slate-700 max-w-xs">{title}</p>
+      {sub && <p className="text-xs text-slate-500 mt-1 max-w-xs">{sub}</p>}
+    </div>
+  );
+}
+
 export default function WardenDashboard({ onNotification, masterClusters = [], searchQuery = '' }) {
   const [pendingPasses, setPendingPasses] = useState(INITIAL_PENDING_PASSES);
   const [clusters, setClusters] = useState(
@@ -509,11 +527,11 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
 
       {/* Sections: phone = one column (Pending Passes first); laptop (xl) = passes + issues on the
           left, SLA heatmap + clusters on the right, Gate Register full width below */}
-      <div className="flex flex-col gap-4 xl:grid xl:grid-cols-12 xl:items-start">
-        <div className="contents xl:flex xl:flex-col xl:gap-4 xl:col-span-7 xl:min-w-0">
+      <div className="flex flex-col gap-4 xl:grid xl:grid-cols-12">
+        <div className="contents">
 
       {/* --- TAB 0: ALL REPORTED STUDENT ISSUES --- */}
-        <section id="wd-tickets" className={`order-2 scroll-mt-[124px] min-w-0 bg-white border-2 border-amber-200 rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm ${tabCls('tickets')}`}>
+        <section id="wd-tickets" className={`order-2 xl:col-span-7 xl:row-start-2 xl:flex xl:flex-col xl:max-h-[600px] scroll-mt-[124px] min-w-0 bg-white border-2 border-amber-200 rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm ${tabCls('tickets')}`}>
           <div className="flex items-start justify-between gap-3 border-b border-amber-100 pb-3">
             <div className="min-w-0">
               <h2 className="text-[15px] font-bold text-slate-900 flex items-center gap-2.5">
@@ -530,12 +548,9 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
           </div>
 
           {shownTickets.length === 0 ? (
-            <div className="py-12 text-center text-slate-500 text-xs">
-              <CheckCircle2 className="w-8 h-8 text-emerald-600 mx-auto mb-2" />
-              {wq ? `No issues match "${wq}".` : 'No student maintenance issues logged yet.'}
-            </div>
+            <CardEmptyState title={wq ? `No issues match "${wq}".` : 'No student maintenance issues logged yet.'} />
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-3 xl:flex-1 xl:min-h-0 xl:overflow-y-auto xl:overscroll-contain xl:-mr-2 xl:pr-2">
               {preview('tickets', shownTickets).map((t) => (
                 <div 
                   key={t.id}
@@ -663,7 +678,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
             </button>
           )}
         </section>
-        <section id="wd-passes" className={`order-1 scroll-mt-[124px] min-w-0 bg-white border-2 border-emerald-300 rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm ${tabCls('passes')}`}>
+        <section id="wd-passes" className={`order-1 xl:col-span-7 xl:row-start-1 xl:flex xl:flex-col xl:max-h-[600px] scroll-mt-[124px] min-w-0 bg-white border-2 border-emerald-300 rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm ${tabCls('passes')}`}>
           <div className="flex items-start justify-between border-b border-emerald-100 pb-3 gap-3">
             <div className="min-w-0">
               <h2 className="text-[15px] font-bold text-slate-900 flex items-center gap-2.5">
@@ -688,12 +703,9 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
           </div>
 
           {shownPasses.length === 0 ? (
-            <div className="py-12 text-center text-slate-500 text-xs">
-              <CheckCircle2 className="w-8 h-8 text-emerald-600 mx-auto mb-2" />
-              {wq ? `No passes match "${wq}".` : 'All student gate pass requests have been processed.'}
-            </div>
+            <CardEmptyState title={wq ? `No passes match "${wq}".` : 'All student gate pass requests have been processed.'} />
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-3 xl:flex-1 xl:min-h-0 xl:overflow-y-auto xl:overscroll-contain xl:-mr-2 xl:pr-2">
               {preview('passes', shownPasses).map((pass) => (
                 <div 
                   key={pass.id}
@@ -771,10 +783,10 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
         </section>
         </div>
 
-        <div className="contents xl:flex xl:flex-col xl:gap-4 xl:col-span-5 xl:min-w-0">
+        <div className="contents">
 
       {/* --- TAB 2: SPATIAL MASTER INCIDENTS (DEDUPLICATION ENGINE) --- */}
-        <section id="wd-clusters" className={`order-3 xl:order-2 scroll-mt-[124px] min-w-0 bg-white border-2 border-purple-200 rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm ${tabCls('clusters')}`}>
+        <section id="wd-clusters" className={`order-3 xl:order-2 xl:col-start-8 xl:col-span-5 xl:row-start-2 xl:flex xl:flex-col xl:max-h-[600px] scroll-mt-[124px] min-w-0 bg-white border-2 border-purple-200 rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm ${tabCls('clusters')}`}>
           <div className="flex items-start justify-between gap-3 border-b border-purple-100 pb-3">
             <div className="min-w-0">
               <h2 className="text-[15px] font-bold text-slate-900 flex items-center gap-2.5">
@@ -790,10 +802,16 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
             <span className="shrink-0 text-[11px] font-mono font-bold px-2.5 py-1 rounded-full border text-purple-800 bg-purple-50 border-purple-200">{clusters.length}</span>
           </div>
 
-          <div className="space-y-3.5">
-            {shownClusters.length === 0 && wq ? (
-              <div className="py-12 text-center text-slate-500 text-xs">No clusters match "{wq}".</div>
-            ) : preview('clusters', shownClusters).map((cluster, idx) => {
+          {shownClusters.length === 0 ? (
+            <CardEmptyState
+              icon={Layers}
+              tone="purple"
+              title={wq ? `No clusters match "${wq}".` : 'No clusters yet'}
+              sub={wq ? null : 'Similar complaints will be grouped here'}
+            />
+          ) : (
+          <div className="space-y-3.5 xl:flex-1 xl:min-h-0 xl:overflow-y-auto xl:overscroll-contain xl:-mr-2 xl:pr-2">
+            {preview('clusters', shownClusters).map((cluster, idx) => {
               const masterId = cluster.masterId || cluster.id || `MST-CLUSTER-${idx}`;
               const impactedCount = cluster.impactedCount || cluster.studentsImpacted || (cluster.impactedRooms ? cluster.impactedRooms.length : (cluster.students ? cluster.students.length : 0));
               const roomsList = Array.isArray(cluster.students) && cluster.students.length > 0
@@ -913,6 +931,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
               );
             })}
           </div>
+          )}
           {shownClusters.length > PREVIEW.clusters && !wq && (
             <button type="button" onClick={() => toggleAll('clusters')} className={`${viewAllCls} border-purple-200 bg-purple-50/50 hover:bg-purple-50 text-purple-800`}>
               {showAll.clusters ? 'Show less' : `View all (${shownClusters.length})`}
@@ -931,7 +950,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
           ['PENDING', 'ASSIGNED', 'IN_PROGRESS', 'ESCALATED_TO_DEAN'].includes(String(t.status || '').toUpperCase()) && t.slaState === 'breached'
         );
         return (
-          <section id="wd-sla" className={`order-4 xl:order-1 scroll-mt-[124px] min-w-0 bg-white border-2 border-rose-200 rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm ${tabCls('sla')}`}>
+          <section id="wd-sla" className={`order-4 xl:order-1 xl:col-start-8 xl:col-span-5 xl:row-start-1 xl:flex xl:flex-col xl:max-h-[600px] scroll-mt-[124px] min-w-0 bg-white border-2 border-rose-200 rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm ${tabCls('sla')}`}>
           <div className="flex items-start justify-between gap-3 border-b border-rose-100 pb-3">
             <div className="min-w-0">
               <h2 className="text-[15px] font-bold text-slate-900 flex items-center gap-2.5">
@@ -947,7 +966,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
             <span className={`shrink-0 text-[11px] font-mono font-bold px-2.5 py-1 rounded-full border ${breached.length + breachedTickets.length > 0 ? 'text-white bg-rose-600 border-rose-600' : 'text-rose-800 bg-rose-50 border-rose-200'}`}>{openClusters.length}</span>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 xl:grid-cols-1 gap-3 sm:gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 xl:grid-cols-1 gap-3 sm:gap-4 xl:flex-1 xl:min-h-0 xl:overflow-y-auto xl:overscroll-contain xl:-mr-2 xl:pr-2">
             {/* On Track (>2h left) */}
             <div className="bg-emerald-50/70 border border-emerald-200 rounded-xl p-4 space-y-3 flex flex-col justify-between">
               <div className="space-y-2">
@@ -1045,7 +1064,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
       })()}
         </div>
 
-        <section id="wd-register" className={`order-5 xl:col-span-12 scroll-mt-[124px] min-w-0 bg-white border-2 border-slate-300 rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm ${tabCls('register')}`}>
+        <section id="wd-register" className={`order-5 xl:col-span-12 xl:row-start-3 scroll-mt-[124px] min-w-0 bg-white border-2 border-slate-300 rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm ${tabCls('register')}`}>
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 pb-3">
             <div className="min-w-0">
               <h2 className="text-[15px] font-bold text-slate-900 flex items-center gap-2.5">
