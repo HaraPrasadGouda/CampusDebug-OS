@@ -569,13 +569,13 @@ export default function StudentDashboard({
         onClick={() => isDayScholar
           ? onOpenModal('leave')
           : cardPass ? onViewPassQR(cardPass) : onOpenModal('gate_pass')}
-        className={`order-5 ${myMentor ? 'col-span-2 lg:col-span-1' : 'col-span-2'} min-w-0 rounded-2xl border border-[#fde68a] bg-gradient-to-r lg:bg-gradient-to-b from-[#fefce8] to-white shadow-[0_1px_2px_rgba(15,23,42,0.04)] px-3.5 py-3 lg:p-4 cursor-pointer group active:scale-[.985] lg:active:scale-100 lg:hover:shadow-lg lg:hover:-translate-y-0.5 transition-all duration-300 grid gap-x-3 lg:gap-x-0 grid-cols-[30px_minmax(0,1fr)_auto] lg:grid-cols-[34px_minmax(0,1fr)_auto] lg:grid-rows-[auto_auto_1fr_auto] [grid-template-areas:'hicon_htitle_badge'_'hicon_main_act'_'foot_foot_foot'] lg:[grid-template-areas:'hicon_htitle_htitle'_'badge_badge_badge'_'main_main_main'_'foot_foot_act']`}
+        className={`order-5 ${myMentor ? 'col-span-2 lg:col-span-1' : 'col-span-2'} min-w-0 rounded-2xl border border-[#fde68a] bg-gradient-to-r lg:bg-gradient-to-b from-[#fefce8] to-white shadow-[0_1px_2px_rgba(15,23,42,0.04)] px-3.5 py-3 lg:p-4 cursor-pointer group active:scale-[.985] lg:active:scale-100 lg:hover:shadow-lg lg:hover:-translate-y-0.5 transition-all duration-300 grid gap-x-3 lg:gap-x-0 grid-cols-[30px_minmax(0,1fr)_auto] lg:grid-cols-[34px_minmax(0,1fr)_auto] lg:grid-rows-[auto_auto_1fr_auto] [grid-template-areas:'hicon_htitle_htitle'_'hicon_badge_badge'_'hicon_main_act'_'foot_foot_foot'] lg:[grid-template-areas:'hicon_htitle_htitle'_'badge_badge_badge'_'main_main_main'_'foot_foot_act']`}
       >
-        <div className="[grid-area:hicon] self-center lg:self-auto w-[30px] h-[30px] lg:w-[34px] lg:h-[34px] rounded-[9px] lg:rounded-[10px] bg-[#fef3c7] text-[#d97706] flex items-center justify-center">
+        <div className="[grid-area:hicon] self-start lg:self-auto w-[30px] h-[30px] lg:w-[34px] lg:h-[34px] rounded-[9px] lg:rounded-[10px] bg-[#fef3c7] text-[#d97706] flex items-center justify-center">
           <QrCode className="w-4 h-4" />
         </div>
         <span className="[grid-area:htitle] self-end lg:self-center lg:ml-2.5 text-[11.5px] lg:text-[15px] font-semibold lg:font-bold text-slate-500 lg:text-slate-900 tracking-tight whitespace-nowrap">Active Gate Pass</span>
-        <div className="[grid-area:badge] justify-self-end lg:justify-self-start self-start lg:mt-2.5 flex items-center gap-1.5 min-w-0 max-w-[170px] min-[400px]:max-w-[200px] lg:max-w-none">
+        <div className="[grid-area:badge] justify-self-start self-start mt-1.5 lg:mt-2.5 flex items-center gap-1.5 min-w-0 max-w-full">
           {leaveCard ? (
           <span data-testid="pass-card-badge" className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1.5 border leading-tight ${leaveCard.badgeCls}`}>
             {leaveCard.icon === 'x' ? <XCircle className="w-3 h-3 shrink-0" />
@@ -617,11 +617,11 @@ export default function StudentDashboard({
           )}
         </div>
 
-        <div className="[grid-area:main] min-w-0 mt-0.5 lg:mt-3 lg:flex lg:flex-col lg:justify-center">
+        <div className="[grid-area:main] min-w-0 mt-1.5 lg:mt-3 lg:flex lg:flex-col lg:justify-center">
           <div className={`${leaveCard ? 'text-[15px] lg:text-xl 2xl:text-2xl' : 'text-[15px] lg:text-[26px]'} leading-tight font-bold lg:font-extrabold text-slate-900 font-mono tracking-tight break-words group-hover:text-amber-900 transition-colors`}>
             {leaveCard ? 'Day-Scholar Leave' : cardPass ? cardPass.id : 'No Active Pass'}
           </div>
-          <p className="text-[11px] lg:text-[12.5px] text-slate-600 font-medium mt-0.5 lg:mt-1 truncate">
+          <p className="text-[11px] lg:text-[12.5px] text-slate-600 font-medium mt-0.5 lg:mt-1 max-lg:line-clamp-2 max-lg:break-words lg:truncate">
             {leaveCard
               ? `${dayLeave.reason || 'Leave'} • One-way exit`
               : cardPass ? `${cardPass.destination || 'Campus'} • ${cardPass.passType || 'Day Pass'}` : 'No pass is currently active for your account'}
