@@ -34,7 +34,7 @@ import {
   Lock
 } from 'lucide-react';
 import AiCategoryChip from '../AiCategoryChip';
-import { getTodayMenuKey, getTodayMenu, isFeastDay, getTodayDayLabel, getMealStatus, fmtDuration, MEAL_ORDER } from '../../data/messMenu';
+import { getTodayMenuKey, getTodayMenu, getTomorrowMenu, isFeastDay, getTodayDayLabel, getMealStatus, fmtDuration, MEAL_ORDER } from '../../data/messMenu';
 import { isLeaveWindowOpen } from '../../utils/leaveWindow';
 
 export default function StudentDashboard({
@@ -821,7 +821,7 @@ export default function StudentDashboard({
                   starts {mealStatus.nextStartLabel}
                 </span>
               </p>
-              <p className="text-[13px] lg:text-sm text-slate-600 pt-1 leading-relaxed">{todayMenu[mealStatus.next]}</p>
+              <p className="text-[13px] lg:text-sm text-slate-600 pt-1 leading-relaxed">{(mealStatus.isTomorrow ? getTomorrowMenu() : todayMenu)[mealStatus.next]}</p>
               <p className={`mt-2.5 inline-flex items-start gap-1.5 text-[11.5px] font-medium rounded-[10px] lg:rounded-full border px-2.5 py-1 ${mealStatus.rsvpClosed ? 'text-slate-500 bg-slate-50 border-slate-200' : 'text-[#9a3412] bg-[#fff7ed] border-[#fed7aa]'}`}>
                 <Leaf className="w-3 h-3 shrink-0 mt-0.5" />
                 {mealStatus.rsvpClosed
