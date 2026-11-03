@@ -57,6 +57,12 @@ export const getTodayMenuKey = () => {
 // Returns today's full menu object { breakfast, lunch, snacks, dinner }
 export const getTodayMenu = () => WEEKLY_MESS_MENU[getTodayMenuKey()];
 
+// Returns tomorrow's full menu object (used when "Next" is tomorrow's first meal)
+export const getTomorrowMenu = () => {
+  const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+  return WEEKLY_MESS_MENU[days[(new Date().getDay() + 1) % 7]];
+};
+
 // Returns today's day label, e.g. 'Wednesday'
 export const getTodayDayLabel = () =>
   getTodayMenuKey().charAt(0).toUpperCase() + getTodayMenuKey().slice(1);
@@ -105,7 +111,7 @@ export const fmtDuration = (mins) => {
  * Returns:
  *   current         — meal key being served right now (or null)
  *   next            — next upcoming meal key (or null)
- *   isTomorrow      — true when "next" is tomorrow's first meal (after dinner)
+ *   isTomorrow      — true when "next" is tomorrow's first meal (during/after the last meal)
  *   minsToNext      — minutes until the next meal starts
  *   nextStartLabel  — 12h start time of the next meal, e.g. "08:00 PM"
  *   rsvpCutoffLabel — 12h time when RSVP locks for the next meal (3h before)
@@ -129,6 +135,20 @@ export function getMealStatus(now = new Date(), order = MEAL_ORDER) {
     }
     if (t <= w.end) {
       const next = order[i + 1] || null;
+      if (!next) {
+        // Last meal of the day is being served — "next" is tomorrow's first meal.
+        const firstW = MEAL_WINDOWS[order[0]];
+        const minsToNext = 1440 - t + firstW.start;
+        return {
+          current: key,
+          next: order[0],
+          isTomorrow: true,
+          minsToNext,
+          nextStartLabel: fmtTime12(firstW.start),
+          rsvpCutoffLabel: fmtTime12(firstW.start - RSVP_CUTOFF_MINUTES),
+          rsvpClosed: minsToNext <= RSVP_CUTOFF_MINUTES
+        };
+      }
       const nextStart = next ? MEAL_WINDOWS[next].start : null;
       return {
         current: key,
