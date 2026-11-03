@@ -142,7 +142,7 @@ export default function RequestGatePassModal({ isOpen, onClose, onPassCreated, s
                 Request Campus Gate Pass
               </h3>
               <p className="text-xs text-slate-500">
-                Hostel Warden cryptographic authorization
+                Approved by the Hostel Warden
               </p>
             </div>
           </div>
@@ -277,7 +277,7 @@ export default function RequestGatePassModal({ isOpen, onClose, onPassCreated, s
           <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-start space-x-2.5">
             <Clock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
             <p className="text-[11px] text-amber-900 leading-relaxed font-mono">
-              State Machine: Request will be routed to the <span className="text-amber-700 font-bold">Hostel Warden</span>. Once approved, the cryptographic HMAC-SHA256 signed QR code will unlock in your feed.
+              Your request goes to the <span className="text-amber-700 font-bold">Hostel Warden</span>. Once approved, your secure QR code will appear in your feed.
             </p>
           </div>
 

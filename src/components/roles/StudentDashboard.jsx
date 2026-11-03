@@ -205,7 +205,7 @@ export default function StudentDashboard({
     };
     if (st === 'REJECTED' || st === 'EXPIRED') return {
       badge: st, badgeCls: 'bg-amber-100 text-amber-800 border-amber-300', icon: 'dot', dotCls: 'bg-amber-600',
-      footer: st === 'REJECTED' ? 'Rejected — tap to request again' : 'Expired at 16:30 Gate Close — tap to request again',
+      footer: st === 'REJECTED' ? 'Rejected — tap to request again' : 'Expired — tap to request again',
       footerDot: 'bg-amber-500', action: 'Request →'
     };
     return {
@@ -432,12 +432,12 @@ export default function StudentDashboard({
 
       {/* Card 1: Attendance */}
       <div className="order-4 col-span-1 relative min-w-0 rounded-2xl border border-[#bbf7d0] bg-gradient-to-b from-[#f0fdf4] to-white shadow-[0_1px_2px_rgba(15,23,42,0.04)] p-3.5 lg:p-4 flex flex-col lg:hover:shadow-lg lg:hover:-translate-y-0.5 transition-all duration-300">
-        {/* Phone: the whole tile opens today's timetable (same action as the
-            "View Today's Timetable" link, which is shown on desktop) */}
+        {/* Phone: the whole tile opens the student's attendance (classes
+            marked present/absent). Desktop keeps its "View Today's Timetable" link. */}
         <button
           type="button"
           aria-label="Attendance"
-          onClick={() => onOpenModal('timetable')}
+          onClick={() => onOpenModal('attendance')}
           className="lg:hidden absolute inset-0 z-[1] rounded-2xl cursor-pointer active:bg-emerald-900/[0.03]"
         />
         <div className="flex items-center gap-2.5">
@@ -762,7 +762,7 @@ export default function StudentDashboard({
               )}
               <span className="inline-flex items-center gap-1 text-[11px] lg:text-xs font-semibold text-[#78350f] bg-white/60 lg:bg-transparent border border-[#fde68a] lg:border-0 rounded-full px-2.5 lg:px-0 py-0.5">
                 <MapPin className="w-3.5 h-3.5 text-amber-700 shrink-0" />
-                <span>Mess Hall B</span>
+                <span>Campus Mess</span>
               </span>
             </div>
           </div>

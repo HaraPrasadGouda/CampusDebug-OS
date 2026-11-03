@@ -269,7 +269,7 @@ export default function Header({
                 ? 'Search feed… or find a teacher (try "priya")'
                 : currentRole === 'Warden'
                   ? 'Search tickets, passes, clusters, register…'
-                  : 'Search, actions, or ask AI...'}
+                  : 'Search or jump to…'}
               className="w-full pl-10 pr-4 py-2 bg-slate-100/60 hover:bg-slate-100 focus:bg-white text-xs sm:text-sm text-slate-800 placeholder-slate-400 rounded-full border border-transparent focus:border-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-500/10 transition-all duration-200"
             />
             {searchQuery && (

@@ -441,7 +441,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
       const count = await getOutboxCount();
       setQueueDepth(count || 0);
       if (synced === 0 && onNotification) {
-        onNotification('IndexedDB Offline Queue is empty. All tickets are fully synchronized!', 'info');
+        onNotification('Offline queue is empty — everything is synced.', 'info');
       }
     } finally {
       setIsSyncing(false);
@@ -498,16 +498,41 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (data?.success) {
+          const recent = Array.isArray(data.tickets) ? data.tickets : [];
           setCampusStats({
             studentCount: data.studentCount ?? null,
             slaResolutionRate: data.slaResolutionRate ?? null,
             blockCount: data.blockCount ?? null,
-            blocks: Array.isArray(data.blocks) ? data.blocks : []
+            blocks: Array.isArray(data.blocks) ? data.blocks : [],
+            clusterCount: Array.isArray(data.masterClusters) ? data.masterClusters.length : null,
+            recentTickets: recent.length,
+            recentResolved: recent.filter(t => ['RESOLVED', 'CLOSED'].includes(String(t.status || '').toUpperCase())).length
           });
         }
       })
       .catch(() => { /* offline — keep null */ });
   }, []);
+
+  // System Health — a real round-trip to the API server and a real probe of
+  // the local AI model (GET /api/health?ai=1), re-checked while the tab is open.
+  const [health, setHealth] = useState(null); // null = checking
+  useEffect(() => {
+    if (activeTab !== 'metrics') return undefined;
+    let alive = true;
+    const check = async () => {
+      const t0 = performance.now();
+      try {
+        const r = await fetch('/api/health?ai=1', { cache: 'no-store' });
+        const d = r.ok ? await r.json() : null;
+        if (alive) setHealth({ online: !!d?.online, rttMs: Math.round(performance.now() - t0), ai: d?.ai || null, at: new Date() });
+      } catch {
+        if (alive) setHealth({ online: false, rttMs: null, ai: null, at: new Date() });
+      }
+    };
+    check();
+    const id = setInterval(check, 30000);
+    return () => { alive = false; clearInterval(id); };
+  }, [activeTab]);
 
   // Notice history — pulled from the central notice bus (real, server-persisted).
   useEffect(() => {
@@ -834,7 +859,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
           });
 
           if (cloudResult?.success) {
-            triggerToast(`${cloudResult.totalUpserted}/${parsedData.length} records added to the college database (Supabase) in ${duration}ms!`);
+            triggerToast(`${cloudResult.totalUpserted}/${parsedData.length} records added to the college directory in ${duration}ms!`);
           } else if (cloudResult?.rejected) {
             triggerToast(`CSV REJECTED — ${cloudResult.errors?.length || '?'} row(s) missing compulsory fields. Nothing was imported. First issue: ${cloudResult.errors?.[0]?.error || ''}`, 'warning');
           } else if (cloudResult && !cloudResult.success) {
@@ -904,12 +929,12 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
   // setActiveTab handler), grouped into sections, and the 4 KPI figures shown
   // compact instead of 4 big cards. No data or behaviour change.
   const adminTabs = {
-    dispatcher: { label: 'Targeted Micro-Dispatcher', Icon: Send, on: 'bg-emerald-600 text-white', off: 'bg-emerald-100 text-emerald-600', sel: 'bg-emerald-50 border-emerald-400 text-emerald-900', bar: 'bg-emerald-500' },
+    dispatcher: { label: 'Send Notice', Icon: Send, on: 'bg-emerald-600 text-white', off: 'bg-emerald-100 text-emerald-600', sel: 'bg-emerald-50 border-emerald-400 text-emerald-900', bar: 'bg-emerald-500' },
     docs: { label: 'Document Desk', Icon: FileText, on: 'bg-violet-600 text-white', off: 'bg-violet-100 text-violet-600', sel: 'bg-violet-50 border-violet-400 text-violet-900', bar: 'bg-violet-500' },
     timetable: { label: 'Timetable Engine', Icon: Calendar, on: 'bg-teal-600 text-white', off: 'bg-teal-100 text-teal-600', sel: 'bg-teal-50 border-teal-400 text-teal-900', bar: 'bg-teal-500' },
     setup: { label: 'Campus Setup', Icon: Building2, on: 'bg-indigo-600 text-white', off: 'bg-indigo-100 text-indigo-600', sel: 'bg-indigo-50 border-indigo-400 text-indigo-900', bar: 'bg-indigo-500' },
     mess: { label: 'Mess Kitchen Forecast', Icon: Utensils, on: 'bg-amber-600 text-white', off: 'bg-amber-100 text-amber-600', sel: 'bg-amber-50 border-amber-400 text-amber-900', bar: 'bg-amber-500' },
-    csv: { label: `Legacy CSV Ingest Engine (${importedUsers.length})`, Icon: FileSpreadsheet, on: 'bg-purple-600 text-white', off: 'bg-purple-100 text-purple-600', sel: 'bg-purple-50 border-purple-400 text-purple-900', bar: 'bg-purple-500' },
+    csv: { label: `Import Students (CSV) (${importedUsers.length})`, Icon: FileSpreadsheet, on: 'bg-purple-600 text-white', off: 'bg-purple-100 text-purple-600', sel: 'bg-purple-50 border-purple-400 text-purple-900', bar: 'bg-purple-500' },
     metrics: { label: 'System Health & Sync Engine', Icon: Database, on: 'bg-sky-600 text-white', off: 'bg-sky-100 text-sky-600', sel: 'bg-sky-50 border-sky-400 text-sky-900', bar: 'bg-sky-500' },
     security: { label: 'Password Reset Desk', Icon: ShieldCheck, on: 'bg-rose-600 text-white', off: 'bg-rose-100 text-rose-600', sel: 'bg-rose-50 border-rose-400 text-rose-900', bar: 'bg-rose-500' },
   };
@@ -923,7 +948,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
   const activeGroup = adminGroups.find(g => g.ids.includes(activeTab)) || adminGroups[0];
   const adminKpis = [
     { label: 'Total Enrolled Students', value: campusStats.studentCount != null ? campusStats.studentCount.toLocaleString() : (importedUsers.length > 0 ? importedUsers.length : '—'), note: 'Active Rosters', dot: 'bg-purple-500', pill: 'bg-purple-100 text-purple-800' },
-    { label: 'Micro-Segments', value: campusStats.blockCount != null ? campusStats.blockCount.toLocaleString() : '—', note: 'Hostel Blocks', dot: 'bg-blue-500', pill: 'bg-blue-100 text-blue-800' },
+    { label: 'Hostel Blocks', value: campusStats.blockCount != null ? campusStats.blockCount.toLocaleString() : '—', note: 'On the live roster', dot: 'bg-blue-500', pill: 'bg-blue-100 text-blue-800' },
     { label: 'Resolution SLA Rate', value: campusStats.slaResolutionRate != null ? `${campusStats.slaResolutionRate}%` : '—', note: 'Target: >90%', dot: 'bg-emerald-500', pill: 'bg-emerald-100 text-emerald-800' },
     { label: 'Teachers', value: staffLoaded ? staff.teachers.length.toLocaleString() : '—', note: 'Faculty on roster', dot: 'bg-amber-500', pill: 'bg-amber-100 text-amber-800' },
   ];
@@ -1847,7 +1872,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
                 }`}>
                   {messForecast.operatorConfigured
                     ? `Operator: ${messForecast.operatorPhone}`
-                    : '⚠ Operator phone not set (.env)'}
+                    : '⚠ Mess operator phone not set up'}
                 </span>
                 <button onClick={() => setShowOperatorHelp((v) => !v)} className="text-[10px] font-bold text-slate-500 hover:text-slate-800 cursor-pointer">
                   {showOperatorHelp ? 'hide details' : 'how does this reach the operator?'}
@@ -1858,8 +1883,8 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
 
           {showOperatorHelp && (
             <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-[11px] text-slate-600 leading-relaxed space-y-1.5">
-              <p><b className="text-slate-800">The flow:</b> students opt out of meals in their app → RSVP locks 3h before cooking → the server computes the final headcount from the real roster → ONE SMS goes to the operator's number (set <code className="font-mono bg-slate-100 px-1 rounded">CANTEEN_OPERATOR_PHONE</code> in .env, keep it in <code className="font-mono bg-slate-100 px-1 rounded">SMS_ALLOWLIST</code> during the demo).</p>
-              <p>4 meals a day = 4 SMS total. Below, each meal shows whether its alert has been sent (and via which mode: real gateway / simulated / dry-run).</p>
+              <p><b className="text-slate-800">The flow:</b> students opt out of meals in their app → RSVP locks 3h before cooking → the server computes the final headcount from the real roster → ONE SMS goes to the mess operator's registered number.</p>
+              <p>4 meals a day = 4 SMS total. Below, each meal shows whether its alert has been sent.</p>
             </div>
           )}
 
@@ -1899,7 +1924,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
                   const alert = m.operatorAlert;
                   const alertChip = alert
                     ? (<span className={`text-[10px] font-mono font-extrabold px-2 py-1 rounded-full border ${alert.mode === 'gateway' ? 'text-emerald-800 bg-emerald-50 border-emerald-200' : alert.mode === 'dry-run' ? 'text-slate-600 bg-slate-100 border-slate-300' : 'text-blue-700 bg-blue-50 border-blue-200'}`}>
-                        {alert.mode === 'gateway' ? '📱 SMS SENT' : alert.mode === 'dry-run' ? '📵 DRY-RUN (allowlist)' : '🧪 SIMULATED'} {new Date(alert.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {alert.mode === 'gateway' ? '📱 SMS SENT' : alert.mode === 'dry-run' ? '📵 TEST MODE (not sent)' : '🧪 SIMULATED'} {new Date(alert.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                       </span>)
                     : m.cutoffPassed && m.windowOver
                       ? (<span className="text-[10px] font-mono font-extrabold px-2 py-1 rounded-full border text-slate-500 bg-slate-100 border-slate-300" title="Serving window ended before the operator SMS could fire — server skips stale alerts on purpose">⏭ Skipped — window over</span>)
@@ -1956,49 +1981,66 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
             {/* Metric 1 */}
             <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2">
               <span className="text-[11px] font-mono text-slate-500 block uppercase">1) Server Node Status</span>
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-bold text-slate-900 font-mono">Port 5000</span>
-                <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                  ● ONLINE
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm font-bold text-slate-900 font-mono">API server</span>
+                <span className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold border ${
+                  !health ? 'bg-slate-100 text-slate-600 border-slate-200'
+                    : health.online ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                    : 'bg-rose-50 text-rose-700 border-rose-200'}`}>
+                  {!health ? 'CHECKING…' : health.online ? '● ONLINE' : '● OFFLINE'}
                 </span>
               </div>
-              <p className="text-[11px] text-slate-500 font-mono">Express REST Router Active</p>
+              <p className="text-[11px] text-slate-500 font-mono">
+                {!health ? 'Pinging /api/health…' : health.online ? `Responded in ${health.rttMs} ms` : 'No response from the server'}
+              </p>
             </div>
 
             {/* Metric 2 */}
             <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2">
               <span className="text-[11px] font-mono text-slate-500 block uppercase">2) Ollama Model Latency</span>
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2">
                 <span className="text-sm font-bold text-purple-700 font-mono">campusdebug-ai</span>
-                <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-purple-50 text-purple-700 border border-purple-200">
-                  340ms
+                <span className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold border ${
+                  !health ? 'bg-slate-100 text-slate-600 border-slate-200'
+                    : health.ai?.reachable && health.ai?.modelLoaded ? 'bg-purple-50 text-purple-700 border-purple-200'
+                    : 'bg-amber-50 text-amber-800 border-amber-200'}`}>
+                  {!health ? 'CHECKING…'
+                    : health.ai?.reachable ? `${health.ai.latencyMs}ms`
+                    : 'NOT RUNNING'}
                 </span>
               </div>
-              <p className="text-[11px] text-slate-500 font-mono">Confidence: 98.4% JSON parse</p>
+              <p className="text-[11px] text-slate-500 font-mono">
+                {!health ? 'Probing the local AI server…'
+                  : !health.ai?.reachable ? 'Complaints use the keyword fallback'
+                  : health.ai.modelLoaded ? 'Model loaded on Ollama'
+                  : 'Ollama is up, model not installed'}
+              </p>
             </div>
 
             {/* Metric 3 */}
             <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2">
-              <span className="text-[11px] font-mono text-slate-500 block uppercase">3) IndexedDB Queue Depth</span>
+              <span className="text-[11px] font-mono text-slate-500 block uppercase">3) Offline Queue</span>
               <div className="flex items-center justify-between">
                 <span className="text-xl font-bold text-emerald-600 font-mono">{queueDepth}</span>
                 <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-slate-200 text-slate-700">
                   Pending
                 </span>
               </div>
-              <p className="text-[11px] text-slate-500 font-mono">Offline-first PWA Buffer</p>
+              <p className="text-[11px] text-slate-500 font-mono">Actions saved offline, waiting to sync</p>
             </div>
 
             {/* Metric 4 */}
             <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2">
               <span className="text-[11px] font-mono text-slate-500 block uppercase">4) Clustered vs Resolved</span>
               <div className="flex items-center justify-between">
-                <span className="text-sm font-bold text-sky-700 font-mono">4 Clusters</span>
+                <span className="text-sm font-bold text-sky-700 font-mono">{campusStats.clusterCount ?? '—'} Clusters</span>
                 <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                  12 Resolved
+                  {campusStats.recentTickets ? `${campusStats.recentResolved} Resolved` : '— Resolved'}
                 </span>
               </div>
-              <p className="text-[11px] text-slate-500 font-mono">Spatial Deduplication: Active</p>
+              <p className="text-[11px] text-slate-500 font-mono">
+                {campusStats.recentTickets ? `Resolved = of the latest ${campusStats.recentTickets} tickets` : 'No tickets yet'}
+              </p>
             </div>
           </div>
         </section>
@@ -2062,7 +2104,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
             <div className="border-b border-slate-100 pb-3">
               <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
                 <Send className="w-5 h-5 text-emerald-600" />
-                <span>Micro-Segmented Notice Dispatcher</span>
+                <span>Send a Notice</span>
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
                 Target notifications strictly to affected students without broadcasting irrelevant alerts campus-wide.
@@ -2118,7 +2160,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
                     </select>
                     <p className="text-[10px] text-slate-500 mt-1.5 leading-relaxed">
                       {noticeForm.hostelBlock === 'All Hostels'
-                        ? 'Campus wide: every active app device gets a push; keypad-phone students get an automatic SMS from the roster (capped + allowlist-gated).'
+                        ? 'Campus wide: every active app device gets a push; keypad-phone students get an automatic SMS.'
                         : 'Targeted: hostellers of this block get the notice — activated ones by push, others by SMS. Day scholars in the directory are told in the notice title, not SMSed. Floor nuance: put it in the title.'}
                     </p>
                   </div>
@@ -2189,7 +2231,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
 
                   <p className="text-[10px] text-slate-500 leading-relaxed">
                     {noticeForm.campusMode === 'ALL'
-                      ? 'Campus wide: every active app device gets a push; keypad-phone students get an automatic SMS from the roster (capped + allowlist-gated).'
+                      ? 'Campus wide: every active app device gets a push; keypad-phone students get an automatic SMS.'
                       : 'Targeted academic audience: matching students get the notice — activated ones by push, others by SMS. Resolved live from the roster, so transfer/section changes are always reflected.'}
                   </p>
                 </div>
@@ -2272,13 +2314,13 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
               <div>
                 <label className="block text-slate-700 font-medium mb-1">
                   SMS Fallback Targets
-                  <span className="ml-2 text-[10px] font-mono text-slate-400">(optional — keypad phones get real SMS; comma-separated numbers; must be on SMS_ALLOWLIST while demo-safety is on)</span>
+                  <span className="ml-2 text-[10px] font-mono text-slate-400">(optional — students on keypad phones get it by SMS)</span>
                 </label>
                 <input
                   type="text"
                   value={noticeForm.smsPhones}
                   onChange={(e) => setNoticeForm({ ...noticeForm, smsPhones: e.target.value })}
-                  placeholder="+91 94370 12345, +91 98120 45670  — leave blank for notification-only"
+                  placeholder="10-digit mobile numbers, comma-separated — leave blank for notification-only"
                   className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 focus:outline-none focus:border-emerald-600"
                 />
               </div>
@@ -2306,7 +2348,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
             <div className="space-y-3.5">
               {dispatchedNotices.length === 0 && (
                 <p className="text-[11px] text-slate-500 py-4 text-center">
-                  No notices dispatched yet — the bus is empty.
+                  No notices sent yet.
                 </p>
               )}
               {dispatchedNotices.map((n) => {
@@ -2377,10 +2419,10 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
             <div>
               <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
                 <FileSpreadsheet className="w-5 h-5 text-purple-600" />
-                <span>Zero-Disruption Legacy CSV Importer Overlay</span>
+                <span>Import Students from CSV</span>
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                Ingests existing student allotment rolls into IndexedDB in milliseconds without modifying legacy college ERP schemas.
+                Upload the existing student allotment list (CSV) to add students to the college directory.
               </p>
             </div>
 
@@ -2419,7 +2461,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
               <div className="flex items-center space-x-2">
                 <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                 <span>
-                  <strong>{importStats.count} Records Ingested</strong> into IndexedDB store (`users`) in <strong>{importStats.timeMs}ms</strong>
+                  <strong>{importStats.count} records imported</strong> in <strong>{importStats.timeMs}ms</strong>
                 </span>
               </div>
               <span className="text-slate-500 text-[11px] hidden sm:inline">{importStats.type}</span>

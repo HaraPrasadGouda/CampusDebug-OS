@@ -9,6 +9,7 @@ import RequestGatePassModal from './components/modals/RequestGatePassModal';
 import ViewPassQRModal from './components/modals/ViewPassQRModal';
 import ReportIssueModal from './components/modals/ReportIssueModal';
 import MessFeedbackModal from './components/modals/MessFeedbackModal';
+import MyAttendanceModal from './components/modals/MyAttendanceModal';
 import TimetableModal from './components/modals/TimetableModal';
 import DocRequestModal from './components/modals/DocRequestModal';
 import FeeDuesModal from './components/modals/FeeDuesModal';
@@ -954,6 +955,12 @@ export default function App() {
         isOpen={activeModal === 'mess'}
         onClose={() => setActiveModal(null)}
         onFeedbackSubmitted={handleFeedbackSubmitted}
+      />
+
+      <MyAttendanceModal
+        isOpen={activeModal === 'attendance'}
+        onClose={() => setActiveModal(null)}
+        recordPct={session?.attendance ?? null}
       />
 
       <TimetableModal

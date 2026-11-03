@@ -17,7 +17,7 @@ const statusChips = {
   APPROVED_NOT_OUT: { cls: 'bg-emerald-50 text-emerald-700 border-emerald-200', label: 'Approved — not yet out' },
   OUT: { cls: 'bg-sky-50 text-sky-700 border-sky-200', label: 'Out of campus (leave)' },
   REJECTED: { cls: 'bg-rose-50 text-rose-700 border-rose-200', label: 'Rejected today' },
-  EXPIRED: { cls: 'bg-slate-50 text-slate-600 border-slate-200', label: 'Expired (16:30 close)' }
+  EXPIRED: { cls: 'bg-slate-50 text-slate-600 border-slate-200', label: 'Expired' }
 };
 
 const LIST_PREVIEW = 5;

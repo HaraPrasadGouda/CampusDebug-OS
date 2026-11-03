@@ -119,7 +119,7 @@ export default function LeaveQRModal({ isOpen, onClose, onToast }) {
       APPROVED: { cls: 'bg-emerald-50 border-emerald-300 text-emerald-800', icon: CheckCircle2, text: 'APPROVED — SHOW QR AT GATE' },
       OUT: { cls: 'bg-sky-50 border-sky-300 text-sky-800', icon: LogOut, text: 'OUT OF CAMPUS (LEAVE)' },
       REJECTED: { cls: 'bg-rose-50 border-rose-300 text-rose-700', icon: XCircle, text: 'REQUEST REJECTED' },
-      EXPIRED: { cls: 'bg-slate-50 border-slate-300 text-slate-600', icon: XCircle, text: 'EXPIRED (16:30 GATE CLOSE)' }
+      EXPIRED: { cls: 'bg-slate-50 border-slate-300 text-slate-600', icon: XCircle, text: 'EXPIRED' }
     };
     const m = map[anyStatus];
     const Icon = m.icon;

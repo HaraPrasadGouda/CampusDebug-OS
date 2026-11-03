@@ -1,139 +1,18 @@
 import React from 'react';
-import { X, Building, GraduationCap, ShieldCheck, Calendar, MapPin, KeyRound, ClipboardList } from 'lucide-react';
+import { X, Building, GraduationCap, ShieldCheck, Calendar, KeyRound } from 'lucide-react';
 
-// Per-role profile data — each dashboard shows its own account details
+// Per-role look only (badge, colour, ID label). Every detail row below is
+// built from the signed-in profile — nothing about batch, RFID, wardens,
+// rooms, shifts or SLAs is made up here.
 const ROLE_PROFILES = {
-  Student: {
-    badge: 'Student Account',
-    gradient: 'from-blue-600 to-indigo-600',
-    identityLabel: 'Registration Number',
-    fallbackIdentity: '—',
-    details: [
-      {
-        icon: GraduationCap,
-        color: 'text-blue-600',
-        label: 'Academic Program',
-        value: 'Per the college directory record'
-      },
-      {
-        icon: Building,
-        color: 'text-emerald-600',
-        label: 'Hostel Residence',
-        value: 'Assigned by the hostel office'
-      },
-      {
-        icon: ShieldCheck,
-        color: 'text-purple-600',
-        label: 'Biometric & RFID Status',
-        value: 'Active & Synced to Main Gate',
-        live: true
-      },
-      {
-        icon: Calendar,
-        color: 'text-amber-600',
-        label: 'Academic Session',
-        value: '2022 - 2026 Batch • Semester 5'
-      }
-    ]
-  },
-  Warden: {
-    badge: 'Warden Account',
-    gradient: 'from-amber-500 to-orange-600',
-    identityLabel: 'Warden ID',
-    fallbackIdentity: 'WDN-001',
-    details: [
-      {
-        icon: KeyRound,
-        color: 'text-amber-600',
-        label: 'Staff Designation',
-        value: 'Dr. S. K. Mohanty (Chief Warden) • Hostel Authority'
-      },
-      {
-        icon: Building,
-        color: 'text-emerald-600',
-        label: 'Duty Jurisdiction',
-        value: 'Boys Hostel Block B • 84 Students / 28 Rooms'
-      },
-      {
-        icon: ClipboardList,
-        color: 'text-blue-600',
-        label: 'Approval Authority',
-        value: 'Gate Pass Sign-off • SLA Escalation to Dean • Cluster Review'
-      },
-      {
-        icon: Calendar,
-        color: 'text-purple-600',
-        label: 'On-Duty Schedule',
-        value: '24x7 Rotation • Pass Approval SLA: 15 mins'
-      }
-    ]
-  },
-  Guard: {
-    badge: 'Security Guard Account',
-    gradient: 'from-indigo-600 to-violet-700',
-    identityLabel: 'Staff ID',
-    fallbackIdentity: 'GATE-01-MAIN',
-    details: [
-      {
-        icon: KeyRound,
-        color: 'text-indigo-600',
-        label: 'Staff Designation',
-        value: 'Security Personnel • Main Exit Gate Post'
-      },
-      {
-        icon: MapPin,
-        color: 'text-emerald-600',
-        label: 'Assigned Checkpoint',
-        value: 'Main Exit Gate (Gate 01) • Entry/Exit QR Scanner'
-      },
-      {
-        icon: ShieldCheck,
-        color: 'text-purple-600',
-        label: 'Scanner Device Status',
-        value: 'Paired • Offline Signed-QR Verification Enabled',
-        live: true
-      },
-      {
-        icon: Calendar,
-        color: 'text-amber-600',
-        label: 'Current Shift',
-        value: 'Day Shift • 08:00 AM - 08:00 PM'
-      }
-    ]
-  },
-  Admin: {
-    badge: 'Admin Account',
-    gradient: 'from-slate-700 to-slate-900',
-    identityLabel: 'Admin ID',
-    fallbackIdentity: 'ADM-XYZ-01',
-    details: [
-      {
-        icon: KeyRound,
-        color: 'text-slate-700',
-        label: 'Staff Designation',
-        value: 'Dean of Student Affairs • Campus Operations Admin'
-      },
-      {
-        icon: ClipboardList,
-        color: 'text-blue-600',
-        label: 'Console Access',
-        value: 'Full Analytics • Complaint Clustering • Pass Audit Trail'
-      },
-      {
-        icon: Building,
-        color: 'text-emerald-600',
-        label: 'Supervisory Scope',
-        value: 'All Hostel Blocks • All SLA Benchmarks • Data Exports'
-      },
-      {
-        icon: Calendar,
-        color: 'text-amber-600',
-        label: 'Academic Session',
-        value: '2022 - 2026 Batch • Semester 5 Oversight'
-      }
-    ]
-  }
+  Student: { badge: 'Student Account', gradient: 'from-blue-600 to-indigo-600', identityLabel: 'Registration Number' },
+  Warden: { badge: 'Warden Account', gradient: 'from-amber-500 to-orange-600', identityLabel: 'Staff ID' },
+  Guard: { badge: 'Security Guard Account', gradient: 'from-indigo-600 to-violet-700', identityLabel: 'Staff ID' },
+  Admin: { badge: 'Admin Account', gradient: 'from-slate-700 to-slate-900', identityLabel: 'Staff ID' },
+  Teacher: { badge: 'Teacher Account', gradient: 'from-cyan-600 to-blue-700', identityLabel: 'Staff ID' }
 };
+
+const NOT_SET = 'Not set in profile';
 
 export default function ProfileModal({ isOpen, onClose, session, currentRole }) {
   if (!isOpen) return null;
@@ -144,49 +23,38 @@ export default function ProfileModal({ isOpen, onClose, session, currentRole }) 
     Student: 'Student',
     Warden: 'Hostel Warden',
     Guard: 'Security Officer',
-    Admin: 'System Administrator'
+    Admin: String(session?.profileRole || '').toUpperCase() === 'DEAN' ? 'Dean' : 'System Administrator',
+    Teacher: 'Teacher'
   };
   const displayName = session?.name || 'Profile';
-  const identity = session?.identity || profile.fallbackIdentity;
+  const identity = session?.identity || '—';
+  const isStudent = (currentRole || 'Student') === 'Student';
+  const program = [session?.department, session?.course, session?.section ? `Section ${session.section}` : null]
+    .filter(Boolean).join(' • ');
 
-  // Details render REAL session values when available (same data the
-  // sidebar/sub-line uses); the static skeleton is only a last-resort
-  // fallback and never invents a specific student's records.
-  const details = session || profile
+  // Only real profile fields. Unknown values say so instead of inventing one.
+  const details = isStudent
     ? [
-        {
-          icon: GraduationCap,
-          color: 'text-blue-600',
-          label: 'Academic Program',
-          value: session?.department
-            ? `${session.department} Department • Logged-in Profile`
-            : 'Per the college directory record'
-        },
+        { icon: GraduationCap, color: 'text-blue-600', label: 'Academic Program', value: program || NOT_SET },
         {
           icon: Building,
           color: 'text-emerald-600',
           label: 'Hostel Residence',
           value: session?.residentType === 'dayscholar'
-            ? 'Day Scholar — commutes from home, no hostel residence'
+            ? 'Day Scholar — commutes from home'
             : session?.block
-              ? `${session.block}${session.room ? ` • Room ${session.room}` : ''}`
-              : 'Assigned by the hostel office'
+              ? `${session.block} • Room ${session.room || NOT_SET}`
+              : NOT_SET
         },
-        {
-          icon: ShieldCheck,
-          color: 'text-purple-600',
-          label: 'Account & Gate Authority',
-          value: 'Verified college record • HMAC-signed gate passes',
-          live: true
-        },
-        {
-          icon: Calendar,
-          color: 'text-amber-600',
-          label: 'Session Status',
-          value: `Authenticated session • ${identity}`
-        }
+        { icon: ShieldCheck, color: 'text-purple-600', label: 'Account', value: 'Verified college record', live: true },
+        { icon: Calendar, color: 'text-amber-600', label: profile.identityLabel, value: identity }
       ]
-    : profile.details;
+    : [
+        { icon: KeyRound, color: 'text-amber-600', label: 'Role', value: roleNames[currentRole] || currentRole },
+        { icon: Building, color: 'text-emerald-600', label: 'Department', value: session?.department || NOT_SET },
+        { icon: ShieldCheck, color: 'text-purple-600', label: 'Account', value: 'Verified college record', live: true },
+        { icon: Calendar, color: 'text-amber-600', label: profile.identityLabel, value: identity }
+      ];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs animate-in fade-in duration-200">

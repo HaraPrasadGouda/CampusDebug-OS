@@ -446,12 +446,29 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
     return `${Math.floor(diff / 86400000)}d ago`;
   };
 
-  // Real SLA risk: pending tickets whose 4h SLA window has <1h remaining (or already breached)
-  const slaAtRiskCount = allTickets.filter(t => {
-    const isPending = ['PENDING', 'IN_PROGRESS', 'ASSIGNED'].includes(String(t.status || '').toUpperCase());
-    const ms = t.createdAtMs || (t.createdAt ? new Date(t.createdAt).getTime() : (t.created_at ? new Date(t.created_at).getTime() : 0));
-    return isPending && ms > 0 && (Date.now() - ms) > 3 * 3600 * 1000;
-  }).length;
+  // ONE critical-SLA counter for the whole screen (top card, section chip
+  // and the heatmap's "Critical" column all read this): open clusters whose
+  // SLA is used up + open/escalated tickets the SLA engine marks breached.
+  const slaOfCluster = (c) => (typeof c.slaHoursLeft === 'number' ? c.slaHoursLeft : 4);
+  const openClustersAll = displayClusters.filter(c => c.status !== 'RESOLVED' && String(c.status || '').toUpperCase() !== 'CLOSED');
+  const breachedClustersAll = openClustersAll.filter(c => slaOfCluster(c) <= 0);
+  const breachedTicketsAll = allTickets.filter(t =>
+    ['PENDING', 'ASSIGNED', 'IN_PROGRESS', 'ESCALATED_TO_DEAN'].includes(String(t.status || '').toUpperCase()) && t.slaState === 'breached'
+  );
+  const slaAtRiskCount = breachedClustersAll.length + breachedTicketsAll.length;
+
+  // Real average resolution time: resolved/closed tickets in the loaded list,
+  // created_at → last update (updated_at is bumped by the DB trigger when the
+  // ticket is resolved/closed). null = nothing resolved yet → tile says so.
+  const avgResolutionHours = (() => {
+    const done = allTickets.map(t => {
+      if (!['RESOLVED', 'CLOSED'].includes(String(t.status || '').toUpperCase())) return null;
+      const start = t.createdAtMs || (t.created_at ? new Date(t.created_at).getTime() : 0);
+      const end = t.updated_at ? new Date(t.updated_at).getTime() : 0;
+      return start > 0 && end > start ? (end - start) / 3600000 : null;
+    }).filter(h => h !== null);
+    return done.length ? done.reduce((a, b) => a + b, 0) / done.length : null;
+  })();
 
   // Real impacted-student count from actual cluster data (not hardcoded)
   const impactedStudentsCount = clusters.reduce(
@@ -503,7 +520,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
         <div className="bg-gradient-to-br from-[#faf5ff] to-[#f3e8ff] border border-[#e9d5ff] rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 flex items-center justify-between gap-2 min-w-0">
           <div className="min-w-0">
             <span className="block text-[11px] sm:text-xs font-extrabold text-purple-950 leading-snug">Master Clusters</span>
-            <span className="block text-[10px] sm:text-[11px] text-purple-800 font-bold leading-snug">{impactedStudentsCount} Students · <span className="font-mono">AI Grouped</span></span>
+            <span className="block text-[10px] sm:text-[11px] text-purple-800 font-bold leading-snug">{impactedStudentsCount} Students · <span className="font-mono">Auto-grouped</span></span>
           </div>
           <span className="text-2xl sm:text-3xl font-extrabold font-mono text-purple-900 shrink-0">{clusters.length}</span>
         </div>
@@ -511,7 +528,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
         <div className="bg-gradient-to-br from-[#fff1f2] to-[#ffe4e6] border border-[#fecdd3] rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 flex items-center justify-between gap-2 min-w-0">
           <div className="min-w-0">
             <span className="block text-[11px] sm:text-xs font-extrabold text-rose-950 leading-snug">Critical SLA At-Risk</span>
-            <span className="block text-[10px] sm:text-[11px] text-rose-800 font-bold leading-snug">{slaAtRiskCount > 0 ? '<1h Remaining' : 'No breaches'} · <span className="font-mono">Escalated</span></span>
+            <span className="block text-[10px] sm:text-[11px] text-rose-800 font-bold leading-snug">{slaAtRiskCount > 0 ? 'SLA breached' : 'No breaches'} · <span className="font-mono">Escalated</span></span>
           </div>
           <span className="text-2xl sm:text-3xl font-extrabold font-mono text-rose-600 shrink-0">{slaAtRiskCount}</span>
         </div>
@@ -519,9 +536,9 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
         <div className="bg-gradient-to-br from-[#eff6ff] to-[#dbeafe] border border-[#bfdbfe] rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 flex items-center justify-between gap-2 min-w-0">
           <div className="min-w-0">
             <span className="block text-[11px] sm:text-xs font-extrabold text-blue-950 leading-snug">Avg Resolution Time</span>
-            <span className="block text-[10px] sm:text-[11px] text-blue-800 font-bold leading-snug">Within SLA · <span className="font-mono">Target: 4h</span></span>
+            <span className="block text-[10px] sm:text-[11px] text-blue-800 font-bold leading-snug">{avgResolutionHours === null ? 'No resolved tickets yet' : avgResolutionHours <= 4 ? 'Within SLA' : 'Above SLA'} · <span className="font-mono">Target: 4h</span></span>
           </div>
-          <span className="text-2xl sm:text-3xl font-extrabold font-mono text-blue-950 shrink-0">3.2<span className="text-base font-normal text-blue-800">h</span></span>
+          <span className="text-2xl sm:text-3xl font-extrabold font-mono text-blue-950 shrink-0">{avgResolutionHours === null ? '—' : avgResolutionHours < 10 ? avgResolutionHours.toFixed(1) : Math.round(avgResolutionHours)}{avgResolutionHours !== null && <span className="text-base font-normal text-blue-800">h</span>}</span>
         </div>
       </section>
 
@@ -713,7 +730,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                 <span className={`shrink-0 text-[11px] font-mono font-bold px-2.5 py-1 rounded-full border ${pendingPasses.length > 0 ? 'text-white bg-emerald-600 border-emerald-600' : 'text-slate-600 bg-slate-50 border-slate-200'}`}>{pendingPasses.length}</span>
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                Approving creates the signed gate QR (Ed25519) that guard phones can check offline.
+                Approving creates the student's secure gate QR, which guard phones can check even offline.
               </p>
             </div>
             <button
@@ -965,14 +982,12 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
 
       {/* --- TAB 3: SLA AGING HEATMAP (all values derived from live ticket/cluster data) --- */}
       {(() => {
-        const slaOf = (c) => (typeof c.slaHoursLeft === 'number' ? c.slaHoursLeft : 4);
-        const openClusters = displayClusters.filter(c => c.status !== 'RESOLVED' && String(c.status || '').toUpperCase() !== 'CLOSED');
+        const slaOf = slaOfCluster;
+        const openClusters = openClustersAll;
         const onTrack = openClusters.filter(c => slaOf(c) > 2);
         const warnZone = openClusters.filter(c => slaOf(c) <= 2 && slaOf(c) > 0);
-        const breached = openClusters.filter(c => slaOf(c) <= 0);
-        const breachedTickets = allTickets.filter(t =>
-          ['PENDING', 'ASSIGNED', 'IN_PROGRESS', 'ESCALATED_TO_DEAN'].includes(String(t.status || '').toUpperCase()) && t.slaState === 'breached'
-        );
+        const breached = breachedClustersAll;       // same counter as the top card
+        const breachedTickets = breachedTicketsAll;
         return (
           <section id="wd-sla" className={`order-4 xl:order-1 xl:col-start-8 xl:col-span-5 xl:row-start-1 xl:flex xl:flex-col xl:max-h-[600px] scroll-mt-[124px] min-w-0 bg-white border-2 border-rose-200 rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm ${tabCls('sla')}`}>
           <div className="flex items-start justify-between gap-3 border-b border-rose-100 pb-3">

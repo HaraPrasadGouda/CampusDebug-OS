@@ -140,8 +140,8 @@ export default function SettingsModal({ isOpen, onClose }) {
             <div className="flex items-center gap-3">
               <RefreshCw className="w-5 h-5 text-purple-600" />
               <div>
-                <p className="text-xs font-semibold text-slate-800">Live Auto-Polling</p>
-                <p className="text-[11px] text-slate-600">Refresh gate scanner status every 3s</p>
+                <p className="text-xs font-semibold text-slate-800">Live updates</p>
+                <p className="text-[11px] text-slate-600">Keep pass status up to date automatically</p>
               </div>
             </div>
             <button 

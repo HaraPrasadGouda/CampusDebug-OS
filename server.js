@@ -1238,11 +1238,13 @@ app.post('/api/parse-ticket', authenticateUser, async (req, res) => {
 // ----------------------------------------------------
 app.post('/api/approve-pass', authenticateUser, requireRole('WARDEN', 'ADMIN', 'DEAN'), async (req, res) => {
     try {
-        const {
-            passId,
-            wardenId = "a0000000-0000-0000-0000-000000000002"
-        } = req.body;
-        let studentPhone = req.body.studentPhone || "+91 94370 12345"; // let: the directory's real phone overrides this below
+        const { passId } = req.body;
+        // The approver is whoever is signed in (route is warden/admin/dean
+        // only) — not a seed UUID and not a value from the request body.
+        const wardenId = req.user?.profile?.id || null;
+        // No made-up fallback number: when neither the body nor the directory
+        // has a phone, the SMS is simply skipped (dispatchSms → 'skipped').
+        let studentPhone = req.body.studentPhone || null; // let: the directory's real phone overrides this below
 
         if (!passId) {
             return res.status(400).json({ success: false, error: 'passId is required' });
@@ -1358,7 +1360,7 @@ app.post('/api/approve-pass', authenticateUser, requireRole('WARDEN', 'ADMIN', '
                     }
                 }
                 if (!studentRoll) {
-                    const digits = String(studentPhone).replace(/\D/g, '').slice(-10);
+                    const digits = String(studentPhone || '').replace(/\D/g, '').slice(-10);
                     if (digits) {
                         const { data: match } = await supabase
                             .from('profiles')
@@ -2512,8 +2514,26 @@ app.post('/api/push/unsubscribe', authenticateUser, (req, res) => {
 // Public connectivity heartbeat for the header status pill. A dedicated
 // lightweight GET endpoint — HEAD responses were being rejected by Chromium's
 // fetch, and dashboard-data is too heavy to poll every 3 seconds.
-app.get('/api/health', (req, res) => {
-    res.json({ success: true, online: true, time: new Date().toISOString() });
+app.get('/api/health', async (req, res) => {
+    const out = { success: true, online: true, time: new Date().toISOString() };
+    // ?ai=1 (Admin → System Health): really probe the local Ollama server
+    // instead of showing a made-up latency. Short timeout; never throws.
+    if (req.query.ai) {
+        const t0 = Date.now();
+        try {
+            const r = await axios.get('http://localhost:11434/api/tags', { timeout: 2000 });
+            const names = (r.data?.models || []).map(m => String(m.name || m.model || ''));
+            out.ai = {
+                reachable: true,
+                latencyMs: Date.now() - t0,
+                model: 'campusdebug-ai',
+                modelLoaded: names.some(n => n.startsWith('campusdebug-ai'))
+            };
+        } catch {
+            out.ai = { reachable: false, latencyMs: null, model: 'campusdebug-ai', modelLoaded: false };
+        }
+    }
+    res.json(out);
 });
 
 // The auth identity (req.user.id) is a Supabase Auth UUID — profiles rows use
@@ -2714,9 +2734,15 @@ app.get('/api/dashboard-data', authenticateUser, async (req, res) => {
                 const allReal = tickets.length > 0 ? tickets : ticketsDB;
                 const resolvedReal = allReal.filter(t => ['RESOLVED', 'CLOSED'].includes(String(t.status || '').toUpperCase()));
                 if (resolvedReal.length > 0) {
+                    // Resolution time = when the ticket was resolved/closed − when it
+                    // was filed. tickets has no resolved_at column; updated_at is the
+                    // closest real stamp (the DB trigger bumps it on the RESOLVED /
+                    // CLOSED update). The old "now − created" drifted to 0% as soon
+                    // as a resolved ticket was more than 4 h old.
                     const inSla = resolvedReal.filter(t => {
                         const ms = t.createdAtMs || (t.created_at ? new Date(t.created_at).getTime() : 0);
-                        return ms > 0 && (Date.now() - ms) <= (Number(t.sla_hours) || 4) * 3600 * 1000;
+                        const doneMs = t.updated_at ? new Date(t.updated_at).getTime() : 0;
+                        return ms > 0 && doneMs >= ms && (doneMs - ms) <= (Number(t.sla_hours) || 4) * 3600 * 1000;
                     }).length;
                     slaResolutionRate = Math.round((inSla / resolvedReal.length) * 1000) / 10;
                 }
@@ -2725,15 +2751,9 @@ app.get('/api/dashboard-data', authenticateUser, async (req, res) => {
 
         return res.json({
             success: true,
-            profile: profile || {
-                full_name: req.user?.name || "Debasish Sahoo",
-                roll_number: "2201106190",
-                department: "Computer Science & Engineering",
-                hostel_block: "Block B",
-                room_number: "304",
-                attendance_percentage: 86.4,
-                fee_due_balance: 3200.00
-            },
+            // No made-up fallback (was "Debasish Sahoo", Block B 304, 86.4%,
+            // ₹3200): when the profile can't be read the cards show "—".
+            profile: profile || null,
             studentCount,
             blockCount,
             blocks,

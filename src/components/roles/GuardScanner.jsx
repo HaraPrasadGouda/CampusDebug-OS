@@ -39,6 +39,16 @@ export default function GuardScanner({ searchQuery = '' }) {
     // in this browser's ledger (IndexedDB). No fabricated history.
   ]);
   const [cameraError, setCameraError] = useState(null);
+  // Live connection state for the header chip (the scanner works either way;
+  // offline scans are saved and synced when the connection returns).
+  const [isOnline, setIsOnline] = useState(() => typeof navigator === 'undefined' || navigator.onLine !== false);
+  useEffect(() => {
+    const on = () => setIsOnline(true);
+    const off = () => setIsOnline(false);
+    window.addEventListener('online', on);
+    window.addEventListener('offline', off);
+    return () => { window.removeEventListener('online', on); window.removeEventListener('offline', off); };
+  }, []);
   const [manualInput, setManualInput] = useState('');
   const [manualBusy, setManualBusy] = useState(false);
   const html5QrCodeRef = useRef(null);
@@ -976,16 +986,23 @@ export default function GuardScanner({ searchQuery = '' }) {
             <ShieldCheck className="w-6 h-6" />
           </div>
           <div>
-            <div className="flex items-center space-x-2">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
               <h2 className="text-base sm:text-lg font-extrabold text-slate-900 tracking-tight">
-                Main Gate Offline QR Verifier
+                Main Gate QR Verifier
               </h2>
-              <span className="text-xs font-mono px-2.5 py-0.5 rounded-full bg-emerald-200 text-emerald-900 font-bold border border-emerald-400">
-                100% OFFLINE
+              <span
+                role="status"
+                className={`inline-flex items-center gap-1.5 text-xs font-mono px-2.5 py-0.5 rounded-full font-bold border ${
+                  isOnline
+                    ? 'bg-emerald-200 text-emerald-900 border-emerald-400'
+                    : 'bg-amber-100 text-amber-900 border-amber-400'}`}
+              >
+                <span className={`w-2 h-2 rounded-full shrink-0 ${isOnline ? 'bg-emerald-600' : 'bg-amber-500 animate-pulse'}`} />
+                {isOnline ? 'Online · works offline too' : 'Offline mode — scans saved, will sync'}
               </span>
             </div>
             <p className="text-xs text-slate-600 mt-0.5 font-medium">
-              Signed QR (Ed25519) • Secure offline gate verification
+              Secure QR check • works without internet
             </p>
           </div>
         </div>
@@ -1094,7 +1111,7 @@ export default function GuardScanner({ searchQuery = '' }) {
             <div className="flex items-center justify-between border-b-2 border-slate-100 pb-2">
               <h3 className="text-xs sm:text-sm font-mono uppercase tracking-wider text-slate-700 font-extrabold flex items-center space-x-2">
                 <FileCheck className="w-4 h-4 text-emerald-600" />
-                <span>Cryptographic Verification Output</span>
+                <span>Scan Result</span>
               </h3>
               {scanResult && (
                 <span className={`text-xs font-mono px-2.5 py-1 rounded font-extrabold border-2 ${
@@ -1140,7 +1157,7 @@ export default function GuardScanner({ searchQuery = '' }) {
                             ? (scanResult.leave?.pendingSync
                                 ? 'OFFLINE — EXITED (SYNC PENDING) ✓'
                                 : 'LEAVE EXIT REGISTERED — STUDENT IS OUT ✓')
-                            : 'CRYPTOGRAPHICALLY VALID PASS'}
+                            : 'VALID PASS ✓'}
                   </span>
                 </div>
 
@@ -1148,7 +1165,7 @@ export default function GuardScanner({ searchQuery = '' }) {
                     again — tell the guard plainly instead of alarming them. */}
                 {scanResult.mode === 'return' && scanResult.alreadyReturned && (
                   <div className="p-3 bg-sky-50 border border-sky-300 rounded-lg text-xs text-sky-800 leading-relaxed">
-                    <strong className="font-extrabold">✓ Trip already completed.</strong> This QR was scanned again after the return was recorded — no new gate record was created, and the pass signature is intact (no tampering).
+                    <strong className="font-extrabold">✓ Trip already completed.</strong> This QR was scanned again after the return was recorded — no new gate record was created, and the QR is genuine.
                   </div>
                 )}
 
@@ -1303,7 +1320,7 @@ export default function GuardScanner({ searchQuery = '' }) {
               <div className="bg-rose-50 border-2 border-rose-500 rounded-xl p-4 sm:p-5 space-y-3.5 shadow-sm animate-in zoom-in-95 duration-150">
                 <div className="flex items-center space-x-2 bg-rose-600 text-white px-3 py-1.5 rounded-lg font-mono text-xs font-bold tracking-wider">
                   <ShieldAlert className="w-4 h-4" />
-                  <span>ACCESS DENIED — {scanResult.isExpired ? 'PASS EXPIRED' : scanResult.reasonKind === 'state' ? 'PASS NOT USABLE FOR EXIT' : 'SECURITY TAMPER DETECTED'}</span>
+                  <span>ACCESS DENIED — {scanResult.isExpired ? 'PASS EXPIRED' : scanResult.reasonKind === 'state' ? 'PASS NOT USABLE FOR EXIT' : 'QR NOT VALID'}</span>
                 </div>
 
                 <div className="p-3 bg-white border border-rose-200 rounded-lg text-xs text-rose-800 leading-relaxed font-mono">
@@ -1314,8 +1331,8 @@ export default function GuardScanner({ searchQuery = '' }) {
                   {scanResult.typed
                     ? 'Pass number check — do not permit student exit on this number.'
                     : scanResult.reasonKind === 'state'
-                    ? 'The QR signature is authentic, but this pass is not authorised for exit right now (approval pending, rejected, or the trip is already completed). Do not permit student exit.'
-                    : 'The digital signature does not match the campus cryptographic seed or the allowed time window has elapsed. Do not permit student exit.'}
+                    ? 'The QR is genuine, but this pass can\'t be used for exit right now (approval pending, rejected, or the trip is already completed). Do not permit student exit.'
+                    : 'QR not valid — ask the student to reopen their pass and show the fresh QR. Do not permit exit until it scans as valid.'}
                 </p>
 
                 <button
@@ -1347,7 +1364,7 @@ export default function GuardScanner({ searchQuery = '' }) {
         <div className="flex items-center justify-between border-b border-slate-100 pb-3">
           <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
             <Clock className="w-4 h-4 text-emerald-600" />
-            <span>Today's Offline Gate Movement Log</span>
+            <span>Today's Gate Log</span>
           </h3>
           <span className="text-xs font-mono text-slate-500">
             {gateLogs.length} Verified Records

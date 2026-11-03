@@ -56,7 +56,7 @@ export default function ViewPassQRModal({ isOpen, onClose, pass: passIn }) {
             </div>
             <div>
               <h3 className="text-base font-bold text-slate-900">
-                Cryptographic Gate Pass
+                Gate Pass
               </h3>
               <p className="text-xs text-slate-500">
                 {isApproved && !isUsed
@@ -124,7 +124,7 @@ export default function ViewPassQRModal({ isOpen, onClose, pass: passIn }) {
                     ? 'You have exited and returned to campus — this pass history is complete. A new pass can be requested anytime.'
                     : isUsed
                       ? 'This pass has already been scanned and verified at the Main Gate. It cannot be reused.'
-                      : 'A secure QR code is only generated after the Hostel Warden cryptographically signs your pass. Once approved, the scannable QR will appear here automatically.'}
+                      : 'A secure QR code is only generated after the Hostel Warden approves your pass. Once approved, the scannable QR will appear here automatically.'}
               </p>
 
               <div className="w-full grid grid-cols-2 gap-2 mt-1 text-left text-xs font-mono">
@@ -147,7 +147,7 @@ export default function ViewPassQRModal({ isOpen, onClose, pass: passIn }) {
               {/* Active Status Ribbon */}
               <div className="flex items-center space-x-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 px-3 py-1 rounded-full text-xs font-mono font-semibold mb-2.5">
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                <span>ACTIVE & CRYPTO-VERIFIED</span>
+                <span>ACTIVE · SECURE QR</span>
               </div>
 
               <div className="w-full flex flex-col min-[380px]:flex-row items-center gap-3">
@@ -184,8 +184,8 @@ export default function ViewPassQRModal({ isOpen, onClose, pass: passIn }) {
 
               {/* Signature Hash Preview */}
               <div className="w-full mt-2.5 px-3 py-1.5 bg-white rounded-lg text-[10px] font-mono text-slate-500 truncate flex items-center justify-between border border-slate-200">
-                <span className="text-slate-400">SIGNATURE:</span>
-                <span className="text-emerald-700 truncate ml-1">Ed25519 · server-signed · rotates</span>
+                <span className="text-slate-400">QR:</span>
+                <span className="text-emerald-700 truncate ml-1">Secure · guard checks it even offline</span>
               </div>
             </div>
           )}
@@ -237,10 +237,10 @@ export default function ViewPassQRModal({ isOpen, onClose, pass: passIn }) {
             <div className="bg-amber-50 border border-amber-300 rounded-xl p-4 flex flex-col items-center justify-center text-center gap-2.5">
               <Hourglass className="w-10 h-10 text-amber-600 animate-pulse" />
               <div className="text-sm font-extrabold tracking-wide font-mono text-amber-800">
-                SIGNATURE SYNCING…
+                QR SYNCING…
               </div>
               <p className="text-xs text-slate-600 font-medium leading-relaxed">
-                Your pass is approved and cryptographically signed by the warden. The secure QR
+                Your pass is approved by the warden. Your secure QR
                 arrives on this device within seconds — close this popup and reopen it if it hasn't yet.
               </p>
             </div>
