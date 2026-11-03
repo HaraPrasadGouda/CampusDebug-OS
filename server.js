@@ -886,18 +886,48 @@ setInterval(async () => {
 // ----------------------------------------------------
 app.post('/api/parse-ticket', authenticateUser, async (req, res) => {
     try {
-        const { 
-            complaintText, 
-            hostelBlock = "Block B", 
-            floor = "3rd Floor", 
-            room = "304", 
-            studentId = req.user?.profile?.id || req.user?.id || "10000000-0000-0000-0000-000000000001",
-            urgency = "MEDIUM"
-        } = req.body;
+        const { complaintText } = req.body || {};
 
         if (!complaintText) {
             return res.status(400).json({ success: false, error: 'Complaint text is required' });
         }
+
+        // WHO and WHERE come from the signed-in account, never from the form.
+        // A student's name/roll live on their profile row (tickets.student_id
+        // links to it), and block/room are read from that same row — so a
+        // student can't file a complaint under another student's name or room
+        // by editing the request. Staff (warden/admin/dean) may still log a
+        // ticket for any location, and on behalf of a student by studentId.
+        // Offline-dev (no Supabase) keeps the old body-driven behaviour.
+        const ticketRole = String(req.user?.role || '').toUpperCase();
+        let hostelBlock, floor, room, studentId;
+        if (supabase && ticketRole === 'STUDENT') {
+            const me = (req.user?.profile && req.user.profile.id)
+                ? req.user.profile
+                : await findProfileByIdOrRoll(req.user?.id, req.user?.rollNumber);
+            if (!me?.id) {
+                return res.status(400).json({ success: false, error: 'No college profile is linked to this account.' });
+            }
+            if (String(me.resident_type || '').trim().toLowerCase() === 'dayscholar') {
+                return res.status(403).json({ success: false, error: 'Hostel Issue reporting is for hostel residents only.' });
+            }
+            if (!String(me.hostel_block || '').trim()) {
+                return res.status(400).json({ success: false, error: 'Your hostel block is not set in your profile yet — please ask the warden to update it.' });
+            }
+            hostelBlock = String(me.hostel_block).trim();
+            room = String(me.room_number || '').trim();
+            floor = '';   // the directory has no floor column — never guessed
+            studentId = me.id;
+        } else {
+            hostelBlock = String(req.body.hostelBlock || 'Block B');
+            floor = String(req.body.floor || '');
+            room = String(req.body.room || '');
+            const mayFileForOthers = ['WARDEN', 'ADMIN', 'DEAN'].includes(ticketRole) || !supabase;
+            studentId = (mayFileForOthers && req.body.studentId)
+                || req.user?.profile?.id || req.user?.id || "10000000-0000-0000-0000-000000000001";
+        }
+        // "Hostel Block B, Room 101" — empty parts (unknown floor/room) are skipped
+        const locationOf = (blk) => ['Hostel ' + blk, floor.trim(), room ? `Room ${room}` : ''].filter(Boolean).join(', ');
 
         // 1. Ollama (qwen2.5:1.5b) or Regex Fallback Parsing
         // The AI classifies/normalizes the complaint ONLY — it never picks the
@@ -906,7 +936,7 @@ app.post('/api/parse-ticket', authenticateUser, async (req, res) => {
         // whole block has a hard 15s timeout and a deterministic fallback.
         let parsedAI = {};
         const cleanBlockPre = hostelBlock.replace(/^Hostel\s*/i, '');
-        const fullLocationPre = `Hostel ${cleanBlockPre}, ${floor}, Room ${room}`;
+        const fullLocationPre = locationOf(cleanBlockPre);
         const AI_SCHEMA = `Return ONLY JSON exactly like: {"category":"Electrical|Plumbing|Wi-Fi / LAN|Furniture|Cleanliness","title":"short title of the actual problem","urgency":"LOW|MEDIUM|HIGH|CRITICAL","severity":"LOW|MEDIUM|HIGH|CRITICAL","keywords":["word1","word2"],"summary":"one-line problem description"}`;
         try {
             const response = await axios.post('http://localhost:11434/api/generate', {
@@ -969,7 +999,7 @@ app.post('/api/parse-ticket', authenticateUser, async (req, res) => {
             const fallbackUrgency = normalizeUrgency(complaintText);
             parsedAI = {
                 category,
-                title: `${category}: Room #${room} - ${complaintText}`.slice(0, 120),
+                title: `${category}: ${room ? `Room #${room} - ` : ''}${complaintText}`.slice(0, 120),
                 urgency: fallbackUrgency,
                 severity: fallbackUrgency,
                 keywords: textKeywords(complaintText).slice(0, 8),
@@ -985,7 +1015,7 @@ app.post('/api/parse-ticket', authenticateUser, async (req, res) => {
         const aiCategory = parsedAI._aiCategory || null;
         const cleanBlock = hostelBlock.replace(/^Hostel\s*/i, '');
         const cleanFloor = floor.trim();
-        const fullLocation = `Hostel ${cleanBlock}, ${cleanFloor}, Room ${room}`;
+        const fullLocation = locationOf(cleanBlock);
         const urgencyLevel = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].includes(String(req.body.urgency || '').toUpperCase())
             ? String(req.body.urgency).toUpperCase()
             : String(parsedAI.urgency || 'MEDIUM').toUpperCase();
@@ -1120,7 +1150,7 @@ app.post('/api/parse-ticket', authenticateUser, async (req, res) => {
             id: (insertedTicket && insertedTicket.id) || `TKT-${Math.floor(10000 + Math.random() * 90000)}`,
             type: 'ticket',
             category,
-            title: parsedAI.title || `${category}: Room #${room} - ${complaintText}`,
+            title: parsedAI.title || `${category}: ${room ? `Room #${room} - ` : ''}${complaintText}`,
             description: complaintText,
             summary: parsedAI.summary || complaintText,
             location: fullLocation,
@@ -1756,6 +1786,19 @@ async function mealAggregates(mealKey, today) {
   return { plates, optedOut: optedOutStudents, wasteKg };
 }
 
+// Who may RSVP for which meal: role STUDENT only; day scholars → lunch only.
+// Returns null when allowed, or { code, error } with a friendly message.
+function mealRsvpDenied(profile, mealKey) {
+  if (String(profile?.role || '').toUpperCase() !== 'STUDENT') {
+    return { code: 403, error: 'Meal RSVP is only for students.' };
+  }
+  const isDayScholar = String(profile?.resident_type || '').toLowerCase() === 'dayscholar';
+  if (isDayScholar && String(mealKey || '').toLowerCase() !== 'lunch') {
+    return { code: 403, error: 'Day scholars can RSVP for lunch only.' };
+  }
+  return null;
+}
+
 // GET — live RSVP state for the signed-in student + campus-wide aggregates
 app.get('/api/meal-rsvp', authenticateUser, async (req, res) => {
   try {
@@ -1800,22 +1843,31 @@ app.post('/api/meal-rsvp', authenticateUser, async (req, res) => {
   try {
     const { studentId, mealType, status } = req.body || {};
     if (supabase) {
-      if (isMealCutoffPassed(String(mealType || '').toLowerCase())) {
-        return res.status(400).json({ success: false, error: 'RSVP cutoff passed for this meal (locks 3 hrs before cooking)' });
-      }
       const rsvpRole = String(req.user?.role || '').toUpperCase();
       let sid = studentId;
+      let target = null;
       if (!['WARDEN', 'ADMIN', 'DEAN'].includes(rsvpRole) || !sid) {
         const me = await findProfileByIdOrRoll(req.user.id, req.user.rollNumber);
         if (!me?.id) return res.status(400).json({ success: false, error: 'No college profile linked to this account' });
         sid = me.id;
+        target = me;
       }
       // `student_id` in the DB is the profile UUID. Older offline flushes sent
       // roll numbers — resolve them to a real profile id.
-      if (sid && !/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(String(sid))) {
-        const { data: prof } = await supabase.from('profiles')
-          .select('id').ilike('roll_number', String(sid).trim()).maybeSingle();
-        if (prof?.id) sid = prof.id;
+      if (!target) {
+        target = /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(String(sid))
+          ? await findProfileByIdOrRoll(sid, null)
+          : await findProfileByIdOrRoll(null, sid);
+        if (!target?.id) return res.status(404).json({ success: false, error: 'Student not found' });
+        sid = target.id;
+      }
+      // Same rule as the toggle: students only; day scholars lunch only
+      // (for staff marking on a student's behalf, the student's own rule).
+      const mealSlot = String(mealType || 'LUNCH').toLowerCase();
+      const mealDenied = mealRsvpDenied(target, mealSlot.includes('snack') ? 'snacks' : mealSlot);
+      if (mealDenied) return res.status(mealDenied.code).json({ success: false, error: mealDenied.error });
+      if (isMealCutoffPassed(mealSlot)) {
+        return res.status(400).json({ success: false, error: 'RSVP cutoff passed for this meal (locks 3 hrs before cooking)' });
       }
       const { data, error } = await supabase
         .from('meal_rsvps')
@@ -1850,15 +1902,19 @@ app.post('/api/meal-rsvp/toggle', authenticateUser, async (req, res) => {
         : 'lunch';
 
     if (!supabase) return res.status(503).json({ success: false, error: 'Database not configured' });
-    if (isMealCutoffPassed(slot)) {
-      return res.status(400).json({ success: false, error: 'RSVP cutoff passed for this meal (locks 3 hrs before cooking)' });
-    }
 
     // Identity ALWAYS comes from the signed-in token — never from the body.
     // meal_rsvps.student_id references profiles.id (not the auth UUID).
     const profile = await findProfileByIdOrRoll(req.user.id, req.user.rollNumber);
     const profileId = profile?.id;
     if (!profileId) return res.status(400).json({ success: false, error: 'No college profile linked to this account' });
+    // Only students eat from the plate count, and day scholars are on campus
+    // for lunch only — the same rule GET /api/meal-rsvp uses for what it shows.
+    const mealDenied = mealRsvpDenied(profile, slot);
+    if (mealDenied) return res.status(mealDenied.code).json({ success: false, error: mealDenied.error });
+    if (isMealCutoffPassed(slot)) {
+      return res.status(400).json({ success: false, error: 'RSVP cutoff passed for this meal (locks 3 hrs before cooking)' });
+    }
     const today = localDateStr();
 
     const { data: existingRows } = await supabase

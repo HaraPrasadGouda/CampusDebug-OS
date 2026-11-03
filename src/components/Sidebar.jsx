@@ -170,9 +170,14 @@ export default function Sidebar({
                     {isStudent && (session?.block || session?.residentType) && (
                       <div className="flex flex-wrap items-center gap-1 mt-1.5">
                         {session?.block && session?.residentType !== 'dayscholar' && (
-                          <span className="inline-flex items-center gap-1 text-[9px] font-extrabold px-1.5 py-0.5 rounded-md bg-sky-100 text-sky-800 border border-sky-200 whitespace-nowrap">
+                          <span className="inline-flex items-center gap-1 max-w-full text-[9px] font-extrabold px-1.5 py-0.5 rounded-md bg-sky-100 text-sky-800 border border-sky-200">
                             <MapPin className="w-2.5 h-2.5 shrink-0" />
-                            {session.block}
+                            {/* "Block B · Room 101" — each half stays whole; on a very
+                                narrow drawer the room drops under the block. */}
+                            <span className="min-w-0 flex flex-wrap gap-x-1">
+                              <span className="whitespace-nowrap">{session.block}{session?.room ? ' ·' : ''}</span>
+                              {session?.room && <span className="whitespace-nowrap">Room {session.room}</span>}
+                            </span>
                           </span>
                         )}
                         <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded-md border whitespace-nowrap ${

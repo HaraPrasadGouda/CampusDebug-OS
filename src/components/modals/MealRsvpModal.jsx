@@ -6,7 +6,8 @@ import {
   TrendingDown, 
   ChefHat, 
   Leaf, 
-  Clock 
+  Clock,
+  AlertTriangle
 } from 'lucide-react';
 
 import { getTodayMenu, MEAL_WINDOWS, RSVP_CUTOFF_MINUTES, fmtTime12 } from '../../data/messMenu';
@@ -73,6 +74,7 @@ export default function MealRsvpModal({ isOpen, onClose, session }) {
 
   const [loadingMeal, setLoadingMeal] = useState(null);
   const [savedNotification, setSavedNotification] = useState(null);
+  const [rsvpError, setRsvpError] = useState(null);
   const [serverLive, setServerLive] = useState(false);
 
   useEffect(() => {
@@ -128,6 +130,11 @@ export default function MealRsvpModal({ isOpen, onClose, session }) {
             : `Opted out for ${mealKey.toUpperCase()}. Plate count deducted to prevent food waste.`
         );
         setTimeout(() => setSavedNotification(null), 3500);
+      } else {
+        // Server refused (wrong role / meal not allowed / cutoff) — show why,
+        // leave the toggle as it was.
+        setRsvpError(data.error || 'Could not update your RSVP.');
+        setTimeout(() => setRsvpError(null), 4500);
       }
     } catch (e) {
       setMeals(prev => prev.map(m => {
@@ -213,6 +220,13 @@ export default function MealRsvpModal({ isOpen, onClose, session }) {
             <div className="bg-slate-900 text-white text-xs px-3.5 py-2.5 rounded-xl font-medium flex items-center gap-2 shadow-md animate-in slide-in-from-top-2 duration-200">
               <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
               <span>{savedNotification}</span>
+            </div>
+          )}
+
+          {rsvpError && (
+            <div role="alert" className="bg-rose-50 border border-rose-200 text-rose-800 text-xs px-3.5 py-2.5 rounded-xl font-semibold flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+              <span>{rsvpError}</span>
             </div>
           )}
 
