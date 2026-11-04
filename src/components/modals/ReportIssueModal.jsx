@@ -4,7 +4,6 @@ import {
   X, 
   MapPin, 
   AlertTriangle, 
-  Layers, 
   WifiOff, 
   CheckCircle2, 
   Zap, 
@@ -348,14 +347,6 @@ export default function ReportIssueModal({ isOpen, onClose, onTicketCreated }) {
               <Sparkles className="w-3.5 h-3.5 text-amber-600 shrink-0" />
               <span>⚡ Category, Urgency & SLA will be auto-calculated by CampusDebug AI</span>
             </div>
-          </div>
-
-          {/* Spatial Clustering Notice */}
-          <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-start space-x-2.5">
-            <Layers className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-            <p className="text-[11px] text-amber-900 leading-relaxed font-mono">
-              Spatial Deduplication Active: If students in {me.block ? me.block.replace(/^Hostel\s*/i, '') : 'your block'} submit identical complaints, tickets collapse into 1 Master Ticket with multi-student confirmation.
-            </p>
           </div>
 
           {submitError && (
