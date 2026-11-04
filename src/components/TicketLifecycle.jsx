@@ -47,17 +47,17 @@ export function LifecycleProgress({ ticket, viewer = 'student' }) {
   ];
   const fill = idx <= 0 ? '0%' : idx === 1 ? '50%' : '100%';
   return (
-    <div className="w-full" aria-label={`Progress: ${steps[idx].label}`}>
-      <div className="relative mx-[16.66%] h-1.5 rounded-full bg-slate-200 mt-2.5">
+    <div className="relative w-full pt-1" aria-label={`Progress: ${steps[idx].label}`}>
+      <div className="absolute left-[16.66%] right-[16.66%] top-[14px] h-1.5 -translate-y-1/2 rounded-full bg-slate-200">
         <div className="absolute inset-y-0 left-0 rounded-full bg-emerald-500 transition-all" style={{ width: fill }} />
       </div>
-      <div className="grid grid-cols-3 -mt-[13px]">
+      <div className="relative grid grid-cols-3">
         {steps.map((s, i) => {
           const done = i <= idx;
           return (
             <div key={s.label} className="flex flex-col items-center text-center min-w-0 px-0.5">
-              <span className={`w-5 h-5 rounded-full flex items-center justify-center ring-4 ring-white ${done ? 'bg-emerald-500 text-white' : 'bg-white border-2 border-slate-300'}`}>
-                {done && <Check className="w-3.5 h-3.5" strokeWidth={3} />}
+              <span className={`w-5 h-5 rounded-full flex items-center justify-center leading-none ring-4 ring-white ${done ? 'bg-emerald-500 text-white' : 'bg-white border-2 border-slate-300'}`}>
+                {done && <Check className="w-3 h-3 block" strokeWidth={3.5} />}
               </span>
               <span className={`mt-1 text-[11px] font-bold leading-tight ${done ? 'text-emerald-800' : 'text-slate-500'}`}>{s.label}</span>
               <span className="text-[10px] leading-tight text-slate-500 font-medium break-words">
