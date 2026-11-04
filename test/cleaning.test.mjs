@@ -207,3 +207,52 @@ test('warden view: per-room status, who answered, counts', async () => {
   assert.equal(r101.answeredByName, 'Ajay');
   assert.equal(v.counts.vacant, 1);
 });
+
+test('a closed day is final: a room that was no_reply stays no_reply even if everyone leaves later', async () => {
+  const st = memStore(); const rooms = roomsFixture(); const d = deps(st, rooms);
+  await closeWindow(d, { block: 'Block B', date: '2026-11-08' });
+  assert.equal((await st.getCheck('Block B', '101', '2026-11-08')).status, 'no_reply');
+  rooms['Block B|101'].away = new Set(['R1', 'R2', 'R3']); // all leave on Monday
+  await closeWindow(d, { block: 'Block B', date: '2026-11-08' });
+  assert.equal((await st.getCheck('Block B', '101', '2026-11-08')).status, 'no_reply');
+});
+
+test('a room answered Haan is cleaned and gets no ticket; Nahi from the first answerer files the ticket under that student', async () => {
+  const st = memStore(); const d = deps(st);
+  await answerRoom(d, { block: 'Block B', room: '103', roll: 'R6', answer: 'yes', now: SUN_15, settings: S });
+  await answerRoom(d, { block: 'Block B', room: '104', roll: 'R8', answer: 'no', now: SUN_15, settings: S });
+  await closeWindow(d, { block: 'Block B', date: '2026-11-08' });
+  assert.equal(d.tickets.length, 1);
+  assert.deepEqual(d.tickets[0], { block: 'Block B', room: '104', date: '2026-11-08', from: 'R8' });
+});
+
+test('answer exactly at 21:00 is closed, at 20:59 still open (boundaries)', async () => {
+  const st = memStore(); const d = deps(st);
+  assert.equal((await answerRoom(d, { block: 'Block B', room: '101', roll: 'R1', answer: 'yes', now: SUN_2059, settings: S })).status, 200);
+  assert.equal((await answerRoom(d, { block: 'Block B', room: '101', roll: 'R1', answer: 'no', now: SUN_21, settings: S })).status, 403);
+  assert.equal((await st.getCheck('Block B', '101', '2026-11-08')).answer, 'yes', 'the 21:00 attempt changed nothing');
+});
+
+test('warden may change days: a Wednesday-only block has no window on Sunday', () => {
+  const wed = normalizeSettings({ weekdays: [3], start_time: '09:00', end_time: '12:00' }, 'Block A');
+  assert.equal(answerWindow(wed, SUN_15).state, 'none');
+  assert.equal(answerWindow(wed, ist('2026-11-11T06:30:00Z')).state, 'open'); // Wed 12:00 IST = window opens at the end time
+  assert.equal(answerWindow(wed, ist('2026-11-11T06:29:00Z')).state, 'before');
+});
+
+test('warden view reports Not fixed counts for the red alert', async () => {
+  const st = memStore(); const d = deps(st);
+  await answerRoom(d, { block: 'Block B', room: '104', roll: 'R7', answer: 'no', now: SUN_15, settings: S });
+  await closeWindow(d, { block: 'Block B', date: '2026-11-08' });
+  const checks = await st.listChecks({ block: 'Block B', date: '2026-11-08' });
+  const rooms = Object.values(roomsFixture());
+  const t = checks.find((c) => c.room === '104').ticket_id;
+  const v = wardenBlockView({ settings: S, rooms, checks, cleaners: [], ticketsById: new Map([[String(t), { not_fixed_count: 2 }]]) });
+  assert.equal(v.rooms.find((r) => r.room === '104').notFixedCount, 2);
+});
+
+test('SMS text never exceeds 160 chars, even with 300 rooms', () => {
+  const rooms = Array.from({ length: 300 }, (_, i) => ({ room: String(1000 + i) }));
+  const t = pendingSmsText({ block: 'Block D', rooms, endTime: '13:00' });
+  assert.ok(t.length <= 160 && /\+\d+ more\. Please clean today by 1 PM$/.test(t), t);
+});

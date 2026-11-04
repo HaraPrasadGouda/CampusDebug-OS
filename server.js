@@ -8611,6 +8611,19 @@ async function cleaningMorningSms({ block, date, settings, now }) {
 
 // One pass: close every block's last finished window, then the morning SMS.
 // Safe to run any number of times; the tick below runs it every minute.
+// The first day this feature ran on this server: older cleaning days are not back-filled
+// (a week with no answers because the feature did not exist yet is not a "no reply" week).
+const CLEANING_META_FILE = path.join(__dirname, 'data', 'cleaning_meta.json');
+function cleaningLiveFrom(now) {
+    try {
+        const saved = JSON.parse(fs.readFileSync(CLEANING_META_FILE, 'utf8'));
+        if (saved && /^\d{4}-\d{2}-\d{2}$/.test(saved.liveFrom || '')) return saved.liveFrom;
+    } catch { /* first run */ }
+    const liveFrom = istParts(now).ymd;
+    try { fs.writeFileSync(CLEANING_META_FILE, JSON.stringify({ liveFrom }), 'utf8'); } catch (e) { console.warn('cleaning meta not saved:', e.message); }
+    return liveFrom;
+}
+
 async function cleaningTick(now = new Date()) {
     if (!supabase || cleaningTickBusy) return;
     cleaningTickBusy = true;
@@ -8619,7 +8632,7 @@ async function cleaningTick(now = new Date()) {
             try {
                 const settings = await cleaningSettingsFor(block);
                 const date = lastClosedWindowDate(settings, now);
-                if (!date) continue;
+                if (!date || date < cleaningLiveFrom(now)) continue;
                 await closeWindow({
                     store: cleaningStore,
                     roster: async (b) => [...(await cleaningRoster()).rooms.values()].filter(r => r.block === b),
