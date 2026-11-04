@@ -9,6 +9,8 @@ import { createClient } from '@supabase/supabase-js';
 import { MEAL_WINDOWS, MEAL_ORDER, RSVP_CUTOFF_MINUTES } from './src/data/messMenu.js';
 import { initPassSigning, passPublicKeyInfo, verifyPassQr, passQrFresh, signPassQrBatch, PASS_QR_ROTATE_MS, PASS_QR_MAX_AGE_MS } from './passSigning.js';
 import { leaveNumber, normalizePassNumber } from './src/utils/passNumber.js';
+import { istParts, normalizeSettings, answerWindow, lastClosedWindowDate, studentView, answerRoom, closeWindow, morningSms, wardenBlockView, hmToMin, fmtClock, ANSWER_HOURS, RED_ALERT_NOT_FIXED } from './cleaning.js';
+import { createCleaningStore } from './cleaning-store.js';
 
 dotenv.config();
 
@@ -8450,6 +8452,313 @@ app.use((req, res) => {
             res.status(200).send(`CampusDebug OS Unified Backend Active on http://localhost:${PORT}`);
         }
     });
+});
+
+
+// ----------------------------------------------------
+// 9. ROOM CLEANING CHECKS (rules: cleaning.js · storage: cleaning-store.js)
+// Hostellers in a room answer "Aaj room saaf hua?" on cleaning day, 1-9 PM.
+// The first answer locks the room. At close, each not-cleaned room gets one
+// Cleanliness complaint; next morning 07:30 one SMS per block to its cleaners.
+// Times are Asia/Kolkata. Everything here is idempotent (the tick runs every minute).
+// ----------------------------------------------------
+const cleaningStore = createCleaningStore({ supabase, file: path.join(__dirname, 'data', 'cleaning_store.json') });
+const CLEANING_ROSTER_TTL_MS = 30 * 1000;
+let cleaningRosterCache = { at: 0, rooms: null, roster: null, byRoll: null };
+let cleaningTickBusy = false;
+
+const cleaningBlockName = (raw) => {
+    const s = String(raw || '').trim().replace(/^Hostel\s*/i, '');
+    if (!s) return '';
+    return /^block\b/i.test(s) ? s.replace(/^block\s*/i, 'Block ') : `Block ${s}`;
+};
+
+// Hostel rooms with their residents, and who is away (approved leave or out on a gate pass).
+async function cleaningRoster(now = new Date()) {
+    if (Date.now() - cleaningRosterCache.at < CLEANING_ROSTER_TTL_MS && cleaningRosterCache.rooms) return cleaningRosterCache;
+    if (!supabase) throw new Error('Database offline');
+    const people = [];
+    for (let from = 0; ; from += 1000) {
+        const { data, error } = await supabase.from('profiles')
+            .select('id, roll_number, full_name, hostel_block, room_number, resident_type')
+            .eq('role', 'STUDENT').not('hostel_block', 'is', null).not('room_number', 'is', null)
+            .order('roll_number').range(from, from + 999);
+        if (error) throw new Error(error.message);
+        people.push(...(data || []));
+        if (!data || data.length < 1000) break;
+    }
+    const hostellers = people.filter(p => !p.resident_type || String(p.resident_type).toLowerCase() === 'hosteller');
+    const rooms = new Map();
+    const byRoll = new Map();
+    for (const p of hostellers) {
+        const block = cleaningBlockName(p.hostel_block);
+        const room = String(p.room_number || '').trim();
+        if (!block || !room) continue;
+        const key = `${block}|${room}`;
+        if (!rooms.has(key)) rooms.set(key, { block, room, rolls: [], ids: {}, names: {}, away: new Set() });
+        const r = rooms.get(key);
+        const roll = String(p.roll_number || '');
+        r.rolls.push(roll); r.ids[roll] = p.id; r.names[roll] = p.full_name || roll;
+        byRoll.set(roll, p.id);
+    }
+    // Away: approved leave, or out on a gate pass (USED = out, not yet RETURNED).
+    const ids = hostellers.map(p => p.id);
+    const rolls = hostellers.map(p => String(p.roll_number || ''));
+    const awayRolls = new Set();
+    const nowIso = now.toISOString();
+    for (let i = 0; i < ids.length; i += 100) {
+        const { data: passes } = await supabase.from('gate_passes')
+            .select('student_id, status, valid_until').in('student_id', ids.slice(i, i + 100))
+            .in('status', ['APPROVED', 'USED']);
+        const idToRoll = new Map(hostellers.map(p => [p.id, String(p.roll_number || '')]));
+        (passes || []).forEach(g => {
+            const until = g.valid_until ? new Date(g.valid_until).toISOString() : null;
+            const out = String(g.status).toUpperCase() === 'USED';
+            if (out || !until || until >= nowIso) awayRolls.add(idToRoll.get(g.student_id));
+        });
+    }
+    for (let i = 0; i < rolls.length; i += 100) {
+        const { data: leaves } = await supabase.from('leave_requests')
+            .select('student_roll, status, scanned_at, created_at')
+            .in('student_roll', rolls.slice(i, i + 100))
+            .gte('created_at', new Date(`${istParts(now).ymd}T00:00:00+05:30`).toISOString());
+        (leaves || []).forEach(l => {
+            const st = String(l.status || '').toUpperCase();
+            if (st === 'OUT' || (st === 'APPROVED' && !l.scanned_at)) awayRolls.add(String(l.student_roll));
+        });
+    }
+    for (const r of rooms.values()) r.away = new Set(r.rolls.filter(x => awayRolls.has(x)));
+    cleaningRosterCache = { at: Date.now(), rooms, byRoll };
+    return cleaningRosterCache;
+}
+
+async function cleaningRoomOf(block, room) {
+    const { rooms } = await cleaningRoster();
+    return rooms.get(`${block}|${room}`) || null;
+}
+
+async function cleaningSettingsFor(block) {
+    const rows = await cleaningStore.listSettings();
+    return normalizeSettings(rows.find(r => r.block === block) || {}, block);
+}
+
+async function cleaningBlocks() {
+    const { rooms } = await cleaningRoster();
+    const set = new Set([...rooms.values()].map(r => r.block));
+    return [...set].sort();
+}
+
+// A cleaning complaint: category Cleanliness, assigned to the block's cleaner pair.
+// The student is the one who answered No (the filer), so the student's own
+// Resolved / Not fixed actions apply.
+async function cleaningCreateTicket({ block, room, date, check, roster }) {
+    const cleaners = (await cleaningStore.listCleaners()).filter(c => c.block === block);
+    const nowIso = new Date().toISOString();
+    const studentId = check?.answered_by_id || roster?.ids?.[check?.answered_by] || null;
+    const row = {
+        student_id: studentId,
+        raw_text: `Room not cleaned on cleaning day ${date} (answered No by ${check?.answered_by_name || 'a roommate'}).`,
+        category: 'Cleanliness',
+        location: `Hostel ${block}, Room ${room}`,
+        urgency: 'MEDIUM',
+        sla_hours: slaHoursFor('MEDIUM', 'Cleanliness'),
+        status: cleaners.length ? 'ASSIGNED' : 'PENDING',
+        ...(cleaners.length ? { assigned_technician_id: cleaners[0].id, assigned_by: 'AUTO', assigned_at: nowIso } : {}),
+        updated_at: nowIso
+    };
+    const { data, error } = await supabase.from('tickets').insert(row).select('id').single();
+    if (error) throw new Error(`cleaning complaint not saved: ${error.message}`);
+    console.log(`🧹 [CLEANING] ${block} Room ${room} not cleaned on ${date} → complaint #${shortTicketCode(data.id)}`);
+    return data.id;
+}
+
+// Morning SMS to the block's cleaners, plus a ledger line on each ticket.
+async function cleaningMorningSms({ block, date, settings, now }) {
+    const result = await morningSms({
+        store: cleaningStore,
+        cleanersOf: async (b) => (await cleaningStore.listCleaners()).filter(c => c.block === b),
+        sendSms: async (cleaner, text) => {
+            try { return await dispatchSms(cleaner.phone, text); }
+            catch (err) { return { mode: 'error', gatewayError: err.message }; }
+        },
+        repeatCounts: async (b, d) => {
+            const counts = {};
+            const rows = (await cleaningStore.listChecks({ block: b })).filter(c => c.status === 'not_cleaned' && c.check_date < d);
+            rows.forEach(c => { counts[c.room] = (counts[c.room] || 0) + 1; });
+            return counts;
+        }
+    }, { block, date, settings, now });
+    if (result.sent) {
+        for (const tid of result.ticketIds) {
+            const id = String(tid);
+            const entries = result.to.map((cid, i) => ({
+                kind: 'cleaning', to: cid, status: smsStatusWord(result.results[i]),
+                mode: result.results[i]?.mode, chars: result.text.length, text: result.text, at: now.toISOString()
+            }));
+            const led = ticketLedgerDB[id] || {};
+            ticketLedgerDB[id] = { ...led, sms: [...(led.sms || []), ...entries].slice(-10) };
+        }
+        saveLedger();
+        console.log(`📨 [CLEANING SMS] ${block} ${date}: ${result.text.length} chars to ${result.to.length} cleaner(s)`);
+    }
+    return result;
+}
+
+// One pass: close every block's last finished window, then the morning SMS.
+// Safe to run any number of times; the tick below runs it every minute.
+async function cleaningTick(now = new Date()) {
+    if (!supabase || cleaningTickBusy) return;
+    cleaningTickBusy = true;
+    try {
+        for (const block of await cleaningBlocks()) {
+            const settings = await cleaningSettingsFor(block);
+            const date = lastClosedWindowDate(settings, now);
+            if (!date) continue;
+            await closeWindow({
+                store: cleaningStore,
+                roster: async (b) => [...(await cleaningRoster()).rooms.values()].filter(r => r.block === b),
+                createTicket: cleaningCreateTicket
+            }, { block, date });
+            await cleaningMorningSms({ block, date, settings, now });
+        }
+    } catch (err) {
+        console.warn('cleaning tick skipped:', err.message);
+    } finally {
+        cleaningTickBusy = false;
+    }
+}
+setInterval(() => { cleaningTick(new Date()); }, 60 * 1000);
+
+// What a student sees on their home card (their room only).
+async function cleaningProfileFor(req) {
+    const roll = String(req.user?.rollNumber || req.user?.profile?.roll_number || '').trim();
+    if (!roll || !supabase) return null;
+    const { data } = await supabase.from('profiles')
+        .select('id, roll_number, full_name, hostel_block, room_number, resident_type')
+        .ilike('roll_number', roll).maybeSingle();
+    return data || null;
+}
+
+app.get('/api/cleaning/mine', authenticateUser, requireRole('STUDENT'), async (req, res) => {
+    try {
+        if (!supabase) return res.json({ success: true, show: false, reason: 'offline' });
+        const me = await cleaningProfileFor(req);
+        const block = cleaningBlockName(me?.hostel_block);
+        const room = String(me?.room_number || '').trim();
+        if (!me || !block || !room || (me.resident_type && String(me.resident_type).toLowerCase() !== 'hosteller')) {
+            return res.json({ success: true, show: false, reason: 'not_hosteller' });
+        }
+        const settings = await cleaningSettingsFor(block);
+        const w = answerWindow(settings, new Date());
+        if (w.state !== 'open') return res.json({ success: true, show: false, reason: w.state });
+        const r = await cleaningRoomOf(block, room);
+        const check = r ? await cleaningStore.getCheck(block, room, w.date) : null;
+        const view = studentView({ settings, now: new Date(), roll: me.roll_number, away: r ? r.away : new Set(), check });
+        if (!view.show) return res.json({ success: true, ...view });
+        const closesAt = new Date(`${w.date}T${String(Math.floor(view.closesAtMin / 60)).padStart(2, '0')}:${String(view.closesAtMin % 60).padStart(2, '0')}:00+05:30`).toISOString();
+        return res.json({
+            success: true, show: true, state: view.state, answer: view.answer || null,
+            answeredByName: view.answeredByName || null, block, room, closesAt,
+            closesLabel: fmtClock(view.closesAtMin)
+        });
+    } catch (e) {
+        return res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+app.post('/api/cleaning/answer', authenticateUser, requireRole('STUDENT'), async (req, res) => {
+    try {
+        if (!supabase) return res.status(503).json({ success: false, error: 'Database offline' });
+        const me = await cleaningProfileFor(req);
+        const block = cleaningBlockName(me?.hostel_block);
+        const room = String(me?.room_number || '').trim();
+        if (!me || !block || !room) return res.status(403).json({ success: false, error: 'Only hostel residents answer the room check.' });
+        const settings = await cleaningSettingsFor(block);
+        const out = await answerRoom({
+            store: cleaningStore,
+            roomOf: async (b, r) => cleaningRoomOf(b, r)
+        }, { block, room, roll: me.roll_number, answer: String(req.body?.answer || '').toLowerCase(), now: new Date(), settings });
+        return res.status(out.status).json({ success: out.ok, ...out.body });
+    } catch (e) {
+        return res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// Warden: settings per block, today's result, history and red alerts.
+app.get('/api/cleaning/warden', authenticateUser, requireRole('WARDEN', 'ADMIN', 'DEAN'), async (req, res) => {
+    try {
+        if (!supabase) return res.status(503).json({ success: false, error: 'Database offline' });
+        const now = new Date();
+        const { rooms } = await cleaningRoster(now);
+        const blocks = await cleaningBlocks();
+        const settingsRows = await cleaningStore.listSettings();
+        const cleaners = await cleaningStore.listCleaners();
+        const alerts = [];
+        const out = [];
+        for (const block of blocks) {
+            const settings = normalizeSettings(settingsRows.find(r => r.block === block) || {}, block);
+            const day = String(req.query.date || '') || lastClosedWindowDate(settings, now) || answerWindow(settings, now).date || '';
+            const checks = await cleaningStore.listChecks({ block });
+            const dayChecks = checks.filter(c => c.check_date === day);
+            const ticketIds = checks.map(c => c.ticket_id).filter(Boolean);
+            let tickets = [];
+            if (ticketIds.length) {
+                const { data } = await supabase.from('tickets').select('id, not_fixed_count, status, closed_at').in('id', ticketIds);
+                tickets = data || [];
+            }
+            const ticketsById = new Map(tickets.map(t => [String(t.id), t]));
+            const blockRooms = [...rooms.values()].filter(r => r.block === block);
+            const view = wardenBlockView({
+                settings, rooms: blockRooms, checks: dayChecks,
+                cleaners: cleaners.filter(c => c.block === block).map(c => ({ id: c.id, name: c.name, phone: c.phone })),
+                ticketsById
+            });
+            // history: the last five cleaning days of this block
+            const days = [...new Set(checks.map(c => c.check_date))].sort().reverse().slice(0, 5);
+            const history = days.map(d => {
+                const counts = { cleaned: 0, not_cleaned: 0, no_reply: 0, vacant: 0 };
+                checks.filter(c => c.check_date === d).forEach(c => { if (counts[c.status] !== undefined) counts[c.status] += 1; });
+                return { date: d, counts };
+            });
+            view.rooms.forEach(r => {
+                if (r.notFixedCount >= RED_ALERT_NOT_FIXED) alerts.push({ block, room: r.room, ticketId: r.ticketId, notFixedCount: r.notFixedCount });
+            });
+            out.push({ ...view, date: day, history });
+        }
+        return res.json({
+            success: true,
+            setupPending: !!cleaningStore.state.setupPending,
+            blocks: out,
+            alerts,
+            cleanersReady: cleaners.length > 0
+        });
+    } catch (e) {
+        return res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+app.post('/api/cleaning/settings', authenticateUser, requireRole('WARDEN'), async (req, res) => {
+    try {
+        if (!supabase) return res.status(503).json({ success: false, error: 'Database offline' });
+        const block = cleaningBlockName(req.body?.block);
+        const blocks = await cleaningBlocks();
+        if (!blocks.includes(block)) return res.status(400).json({ success: false, error: 'Unknown block.' });
+        const weekdays = Array.isArray(req.body?.weekdays) ? req.body.weekdays.map(Number) : null;
+        if (!weekdays || !weekdays.length || weekdays.some(n => !Number.isInteger(n) || n < 0 || n > 6)) {
+            return res.status(400).json({ success: false, error: 'Pick at least one day.' });
+        }
+        const startTime = String(req.body?.startTime || '');
+        const endTime = String(req.body?.endTime || '');
+        if (!/^\d{2}:\d{2}$/.test(startTime) || !/^\d{2}:\d{2}$/.test(endTime)) return res.status(400).json({ success: false, error: 'Times look like 08:00.' });
+        const s = hmToMin(startTime), e = hmToMin(endTime);
+        if (e <= s) return res.status(400).json({ success: false, error: 'The cleaning window must end after it starts.' });
+        if (e + ANSWER_HOURS * 60 > 23 * 60 + 59) return res.status(400).json({ success: false, error: 'The answer window (8 hours) must end the same day.' });
+        const norm = normalizeSettings({ weekdays, start_time: startTime, end_time: endTime }, block);
+        const saved = await cleaningStore.saveSettings(block, { weekdays: norm.weekdays, start_time: startTime, end_time: endTime, active: true });
+        return res.json({ success: true, settings: normalizeSettings(saved || {}, block), setupPending: !!cleaningStore.state.setupPending });
+    } catch (err) {
+        return res.status(500).json({ success: false, error: err.message });
+    }
 });
 
 app.listen(PORT, () => {
