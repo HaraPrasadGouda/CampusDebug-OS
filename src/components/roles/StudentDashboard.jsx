@@ -28,7 +28,6 @@ import {
   Compass,
   FileText,
   MessageSquare,
-  Layers,
   ChevronDown,
   ChevronUp,
   Lock
@@ -1091,11 +1090,6 @@ export default function StudentDashboard({
                                     <Wrench className="w-3 h-3" /> {act.assignedTo}
                                   </span>
                                 )}
-                                {act.masterJoined && (
-                                  <span className="text-[10px] text-purple-700 flex items-center gap-0.5">
-                                    <Layers className="w-3 h-3" /> Clustered — one fix serves all matches
-                                  </span>
-                                )}
                                 {!isDoc && <AiCategoryChip ticket={act} />}
                                 {act.aiFallback && (
                                   <span className="text-[10px] text-slate-500 italic">AI offline — deterministic classification</span>
@@ -1260,12 +1254,6 @@ export default function StudentDashboard({
                   "{ticketDetail.description || ticketDetail.raw_text || '—'}"
                 </p>
               </div>
-              {ticketDetail.masterJoined && (
-                <p className="text-[11px] text-purple-700 flex items-start gap-1.5 font-bold">
-                  <Layers className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                  Clustered into a Master Incident — one technician fix resolves all matching complaints on this floor.
-                </p>
-              )}
               {isDocDetail && ticketDetail.remarks && (
                 <p className="text-[11px] text-slate-500 px-1">
                   <b className="text-slate-700">Office remarks:</b> {ticketDetail.remarks}
