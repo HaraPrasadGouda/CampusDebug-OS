@@ -132,10 +132,10 @@ async function loadTechnicians(reason = 'refresh') {
         return technicianState;
     }
     try {
-        const { data, error } = await supabase
-            .from('technicians')
-            .select('id, full_name, role, category, phone_number, active, created_at')
-            .order('id', { ascending: true });
+        const readTechs = (cols) => supabase.from('technicians').select(cols).order('id', { ascending: true });
+        // `block` exists only after the cleaning migration; read without it if the column is missing.
+        let { data, error } = await readTechs('id, full_name, role, category, phone_number, active, created_at, block');
+        if (error && /block/i.test(error.message || '')) ({ data, error } = await readTechs('id, full_name, role, category, phone_number, active, created_at'));
         if (error) throw new Error(error.message || String(error.code || 'query failed'));
         technicianState.list = (data || []).map(r => ({
             id: String(r.id),
@@ -143,6 +143,7 @@ async function loadTechnicians(reason = 'refresh') {
             role: r.role || '',
             category: r.category,
             phone: r.phone_number || '',
+            block: r.block || null,
             active: r.active !== false
         }));
         technicianState.loadedAt = new Date().toISOString();
@@ -167,9 +168,16 @@ function techniciansAvailable() {
 }
 
 // The active technician for a complaint category, or null (never invented).
-function getTechnicianFor(category) {
+// Cleanliness has two cleaners per hostel block: pass the block to get one of that block's pair.
+function getTechnicianFor(category, block = '') {
     const key = normalizeCategory(category);
-    return technicianState.list.find(t => t.active && t.category === key) || null;
+    const active = technicianState.list.filter(t => t.active && t.category === key);
+    if (key === 'Cleanliness' && block) {
+        const b = String(block).replace(/^(Hostel|Block)\s*/gi, '').trim().toLowerCase();
+        const mine = active.find(t => t.block && String(t.block).replace(/^(Hostel|Block)\s*/gi, '').trim().toLowerCase() === b);
+        if (mine) return mine;
+    }
+    return active[0] || null;
 }
 
 // Any technician by id (inactive too — old complaints still show who it was).
@@ -1190,7 +1198,7 @@ app.post('/api/parse-ticket', authenticateUser, async (req, res) => {
         const summaryText = parsedAI.summary || complaintText;
         // Technician for this category from the technicians table (null if
         // the list is unavailable — the complaint is still saved).
-        let tech = getTechnicianFor(category);
+        let tech = getTechnicianFor(category, cleanBlock);
         let smsCoveredBy = null;           // duplicate of a complaint whose technician was already texted
         const isCritical = urgencyLevel === 'CRITICAL';
         const severityLabel = {
@@ -1998,7 +2006,7 @@ app.post('/api/tickets/:id/not-fixed', authenticateUser, async (req, res) => {
     // Who fixes it now: the technician already on it, else the category's.
     let tech = getTechnicianById(row.assigned_technician_id);
     const autoAssigning = !tech || !tech.active;
-    if (autoAssigning) tech = getTechnicianFor(row.category);
+    if (autoAssigning) tech = getTechnicianFor(row.category, (/Block\s*([A-Za-z0-9]+)/i.exec(row.location || '') || [])[1] || '');
     const update = {
       // An SLA-breached complaint stays escalated (the Dean already sees it);
       // otherwise it goes back to ASSIGNED (PENDING if nobody can take it).

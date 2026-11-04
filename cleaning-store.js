@@ -90,7 +90,9 @@ export function createCleaningStore({ supabase, file }) {
         let { data, error } = await read('id, full_name, phone_number, active, block, category');
         if (error && MISSING.test(`${error.message} ${error.code || ''}`)) ({ data, error } = await read('id, full_name, phone_number, active, category'));
         if (error) return [];
-        return (data || []).map((t) => ({ id: String(t.id), name: t.full_name, phone: t.phone_number || '', block: t.block || null }));
+        const list = (data || []).map((t) => ({ id: String(t.id), name: t.full_name, phone: t.phone_number || '', block: t.block || null }));
+        // once any cleaner has a block, block-less rows (old supervisor) are not cleaners
+        return list.some((c) => c.block) ? list.filter((c) => c.block) : list;
       } catch { return []; }
     }
   };
