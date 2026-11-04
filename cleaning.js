@@ -203,7 +203,8 @@ export async function closeWindow(deps, { block, date }) {
   const out = { block, date, counts: { cleaned: 0, not_cleaned: 0, no_reply: 0, vacant: 0 }, tickets: 0, rooms: [] };
   for (const r of rooms) {
     const check = byRoom.get(String(r.room)) || null;
-    const status = classifyRoom({ occupants: r.rolls, away: r.away, check });
+    // Once a room has a result for the day it is final (later leave/gate changes must not rewrite it).
+    const status = check && check.status ? check.status : classifyRoom({ occupants: r.rolls, away: r.away, check });
     let row = check ? { ...check } : { block, room: String(r.room), check_date: date, locked: false };
     let changed = !check || row.status !== status;
     row.status = status;

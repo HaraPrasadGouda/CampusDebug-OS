@@ -33,6 +33,7 @@ import {
   Lock
 } from 'lucide-react';
 import AiCategoryChip from '../AiCategoryChip';
+import CleaningCheckCard from '../CleaningCheckCard';
 import { StudentTicketActions, StageTicks, hasLifecycle, ticketCode } from '../TicketLifecycle';
 import { getTodayMenuKey, getTodayMenu, getTomorrowMenu, isFeastDay, getTodayDayLabel, getMealStatus, fmtDuration, MEAL_ORDER } from '../../data/messMenu';
 import { isLeaveWindowOpen } from '../../utils/leaveWindow';
@@ -351,6 +352,9 @@ export default function StudentDashboard({
           </div>
         </div>
       )}
+
+      {/* 1c. Room cleaning check — shows itself only on cleaning day 1-9 PM for hostellers */}
+      <div className="order-2 col-span-full empty:hidden"><CleaningCheckCard /></div>
 
       {/* 2. Quick Actions — phone: swipe row of round icons (after the Gate
           Pass strip); desktop: one row of 6 tiles right under the greeting */}

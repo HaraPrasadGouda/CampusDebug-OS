@@ -81,14 +81,16 @@ export function createCleaningStore({ supabase, file }) {
       );
       return data;
     },
+    // Cleaners = active Cleanliness technicians. technicians.block (migration) says which block;
+    // before the migration there is no block column, so the one Cleanliness technician covers every block.
     async listCleaners() {
-      if (!supabase || state.setupPending) return [];
+      if (!supabase) return [];
+      const read = async (cols) => supabase.from('technicians').select(cols).eq('category', 'Cleanliness').eq('active', true).order('id');
       try {
-        const { data, error } = await supabase.from('technicians')
-          .select('id, full_name, phone_number, active, block, category')
-          .eq('category', 'Cleanliness').eq('active', true).not('block', 'is', null).order('id');
-        if (error) { if (MISSING.test(`${error.message} ${error.code || ''}`)) { state.setupPending = true; state.lastError = error.message; } return []; }
-        return (data || []).map((t) => ({ id: String(t.id), name: t.full_name, phone: t.phone_number || '', block: t.block }));
+        let { data, error } = await read('id, full_name, phone_number, active, block, category');
+        if (error && MISSING.test(`${error.message} ${error.code || ''}`)) ({ data, error } = await read('id, full_name, phone_number, active, category'));
+        if (error) return [];
+        return (data || []).map((t) => ({ id: String(t.id), name: t.full_name, phone: t.phone_number || '', block: t.block || null }));
       } catch { return []; }
     }
   };

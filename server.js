@@ -7746,6 +7746,7 @@ function techSmsSummary(id) {
         smsStatus: last.status,
         smsKind: last.kind,
         smsAt: last.at || null,
+        smsDeadline: last.deadline || null,
         smsCoveredBy: last.coveredBy ? shortTicketCode(last.coveredBy) : null,
         smsLog: log.map(e => ({ kind: e.kind, status: e.status, at: e.at, coveredBy: e.coveredBy ? shortTicketCode(e.coveredBy) : undefined }))
     };
@@ -7753,9 +7754,11 @@ function techSmsSummary(id) {
 
 function studentSafeTicket(t) {
     if (!t) return t;
-    const { smsLog, smsStatus, smsKind, smsAt, smsCoveredBy, ...rest } = t;
+    const { smsLog, smsStatus, smsKind, smsAt, smsDeadline, smsCoveredBy, ...rest } = t;
     return {
         ...rest,
+        // Cleaning complaints: the student may see that the cleaners were told and by when.
+        cleanerInformed: smsKind === 'cleaning' && smsAt ? { at: smsAt, deadline: smsDeadline || null } : null,
         technician: t.technician ? { id: t.technician.id, name: t.technician.name, role: t.technician.role, category: t.technician.category } : null
     };
 }
@@ -8445,16 +8448,6 @@ app.post('/api/notices/ack', authenticateUser, (req, res) => {
     return res.json({ success: true, noticeId: key, isRead: isRead !== false, readCount: Object.keys(acks[key]).length });
 });
 
-// Production Unified App Shell Fallback Route
-app.use((req, res) => {
-    res.sendFile(path.join(__dirname, 'dist', 'index.html'), err => {
-        if (err) {
-            res.status(200).send(`CampusDebug OS Unified Backend Active on http://localhost:${PORT}`);
-        }
-    });
-});
-
-
 // ----------------------------------------------------
 // 9. ROOM CLEANING CHECKS (rules: cleaning.js · storage: cleaning-store.js)
 // Hostellers in a room answer "Aaj room saaf hua?" on cleaning day, 1-9 PM.
@@ -8501,20 +8494,23 @@ async function cleaningRoster(now = new Date()) {
         r.rolls.push(roll); r.ids[roll] = p.id; r.names[roll] = p.full_name || roll;
         byRoll.set(roll, p.id);
     }
-    // Away: approved leave, or out on a gate pass (USED = out, not yet RETURNED).
+    // Away = out on a gate pass (USED and not yet RETURNED), an approved home-leave pass that is
+    // still valid, or a leave request that is approved/out. A pass that is only APPROVED (not used yet) does not count.
     const ids = hostellers.map(p => p.id);
     const rolls = hostellers.map(p => String(p.roll_number || ''));
     const awayRolls = new Set();
     const nowIso = now.toISOString();
+    const idToRoll = new Map(hostellers.map(p => [p.id, String(p.roll_number || '')]));
     for (let i = 0; i < ids.length; i += 100) {
         const { data: passes } = await supabase.from('gate_passes')
-            .select('student_id, status, valid_until').in('student_id', ids.slice(i, i + 100))
+            .select('*').in('student_id', ids.slice(i, i + 100))
             .in('status', ['APPROVED', 'USED']);
-        const idToRoll = new Map(hostellers.map(p => [p.id, String(p.roll_number || '')]));
         (passes || []).forEach(g => {
-            const until = g.valid_until ? new Date(g.valid_until).toISOString() : null;
-            const out = String(g.status).toUpperCase() === 'USED';
-            if (out || !until || until >= nowIso) awayRolls.add(idToRoll.get(g.student_id));
+            const status = String(g.status || '').toUpperCase();
+            const returned = String(g.status_label || '').toUpperCase().includes('RETURNED');
+            const stillValid = g.valid_until ? new Date(g.valid_until).toISOString() >= nowIso : false;
+            const homeLeave = String(g.pass_category || '').toUpperCase() === 'HOME_LEAVE';
+            if ((status === 'USED' && !returned) || (status === 'APPROVED' && homeLeave && stillValid)) awayRolls.add(idToRoll.get(g.student_id));
         });
     }
     for (let i = 0; i < rolls.length; i += 100) {
@@ -8552,7 +8548,7 @@ async function cleaningBlocks() {
 // The student is the one who answered No (the filer), so the student's own
 // Resolved / Not fixed actions apply.
 async function cleaningCreateTicket({ block, room, date, check, roster }) {
-    const cleaners = (await cleaningStore.listCleaners()).filter(c => c.block === block);
+    const cleaners = (await cleaningStore.listCleaners()).filter(c => !c.block || c.block === block).slice(0, 2);
     const nowIso = new Date().toISOString();
     const studentId = check?.answered_by_id || roster?.ids?.[check?.answered_by] || null;
     const row = {
@@ -8576,7 +8572,7 @@ async function cleaningCreateTicket({ block, room, date, check, roster }) {
 async function cleaningMorningSms({ block, date, settings, now }) {
     const result = await morningSms({
         store: cleaningStore,
-        cleanersOf: async (b) => (await cleaningStore.listCleaners()).filter(c => c.block === b),
+        cleanersOf: async (b) => (await cleaningStore.listCleaners()).filter(c => !c.block || c.block === b),
         sendSms: async (cleaner, text) => {
             try { return await dispatchSms(cleaner.phone, text); }
             catch (err) { return { mode: 'error', gatewayError: err.message }; }
@@ -8593,7 +8589,8 @@ async function cleaningMorningSms({ block, date, settings, now }) {
             const id = String(tid);
             const entries = result.to.map((cid, i) => ({
                 kind: 'cleaning', to: cid, status: smsStatusWord(result.results[i]),
-                mode: result.results[i]?.mode, chars: result.text.length, text: result.text, at: now.toISOString()
+                mode: result.results[i]?.mode, chars: result.text.length, text: result.text, at: now.toISOString(),
+                deadline: `today ${fmtClock(hmToMin(settings.endTime))}`
             }));
             const led = ticketLedgerDB[id] || {};
             ticketLedgerDB[id] = { ...led, sms: [...(led.sms || []), ...entries].slice(-10) };
@@ -8611,15 +8608,19 @@ async function cleaningTick(now = new Date()) {
     cleaningTickBusy = true;
     try {
         for (const block of await cleaningBlocks()) {
-            const settings = await cleaningSettingsFor(block);
-            const date = lastClosedWindowDate(settings, now);
-            if (!date) continue;
-            await closeWindow({
-                store: cleaningStore,
-                roster: async (b) => [...(await cleaningRoster()).rooms.values()].filter(r => r.block === b),
-                createTicket: cleaningCreateTicket
-            }, { block, date });
-            await cleaningMorningSms({ block, date, settings, now });
+            try {
+                const settings = await cleaningSettingsFor(block);
+                const date = lastClosedWindowDate(settings, now);
+                if (!date) continue;
+                await closeWindow({
+                    store: cleaningStore,
+                    roster: async (b) => [...(await cleaningRoster()).rooms.values()].filter(r => r.block === b),
+                    createTicket: cleaningCreateTicket
+                }, { block, date });
+                await cleaningMorningSms({ block, date, settings, now });
+            } catch (err) {
+                console.warn(`cleaning tick: ${block} skipped:`, err.message);
+            }
         }
     } catch (err) {
         console.warn('cleaning tick skipped:', err.message);
@@ -8697,7 +8698,8 @@ app.get('/api/cleaning/warden', authenticateUser, requireRole('WARDEN', 'ADMIN',
         const out = [];
         for (const block of blocks) {
             const settings = normalizeSettings(settingsRows.find(r => r.block === block) || {}, block);
-            const day = String(req.query.date || '') || lastClosedWindowDate(settings, now) || answerWindow(settings, now).date || '';
+            const win = answerWindow(settings, now);
+            const day = String(req.query.date || '') || (win.state === 'open' ? win.date : lastClosedWindowDate(settings, now)) || '';
             const checks = await cleaningStore.listChecks({ block });
             const dayChecks = checks.filter(c => c.check_date === day);
             const ticketIds = checks.map(c => c.ticket_id).filter(Boolean);
@@ -8710,7 +8712,7 @@ app.get('/api/cleaning/warden', authenticateUser, requireRole('WARDEN', 'ADMIN',
             const blockRooms = [...rooms.values()].filter(r => r.block === block);
             const view = wardenBlockView({
                 settings, rooms: blockRooms, checks: dayChecks,
-                cleaners: cleaners.filter(c => c.block === block).map(c => ({ id: c.id, name: c.name, phone: c.phone })),
+                cleaners: cleaners.filter(c => !c.block || c.block === block).map(c => ({ id: c.id, name: c.name, phone: c.phone })),
                 ticketsById
             });
             // history: the last five cleaning days of this block
@@ -8720,8 +8722,11 @@ app.get('/api/cleaning/warden', authenticateUser, requireRole('WARDEN', 'ADMIN',
                 checks.filter(c => c.check_date === d).forEach(c => { if (counts[c.status] !== undefined) counts[c.status] += 1; });
                 return { date: d, counts };
             });
-            view.rooms.forEach(r => {
-                if (r.notFixedCount >= RED_ALERT_NOT_FIXED) alerts.push({ block, room: r.room, ticketId: r.ticketId, notFixedCount: r.notFixedCount });
+            // Red alerts: any cleaning complaint of this block (any day) that the student marked Not fixed twice or more.
+            checks.forEach(c => {
+                const t = c.ticket_id ? ticketsById.get(String(c.ticket_id)) : null;
+                const n = t ? Number(t.not_fixed_count) || 0 : 0;
+                if (n >= RED_ALERT_NOT_FIXED && !t.closed_at) alerts.push({ block, room: String(c.room), date: c.check_date, ticketId: c.ticket_id, notFixedCount: n });
             });
             out.push({ ...view, date: day, history });
         }
@@ -8759,6 +8764,15 @@ app.post('/api/cleaning/settings', authenticateUser, requireRole('WARDEN'), asyn
     } catch (err) {
         return res.status(500).json({ success: false, error: err.message });
     }
+});
+
+// Production Unified App Shell Fallback Route
+app.use((req, res) => {
+    res.sendFile(path.join(__dirname, 'dist', 'index.html'), err => {
+        if (err) {
+            res.status(200).send(`CampusDebug OS Unified Backend Active on http://localhost:${PORT}`);
+        }
+    });
 });
 
 app.listen(PORT, () => {
