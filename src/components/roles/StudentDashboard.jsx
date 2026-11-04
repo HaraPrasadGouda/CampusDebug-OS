@@ -33,7 +33,7 @@ import {
   Lock
 } from 'lucide-react';
 import AiCategoryChip from '../AiCategoryChip';
-import { StudentTicketActions, hasLifecycle, ticketCode } from '../TicketLifecycle';
+import { StudentTicketActions, StageTicks, hasLifecycle, ticketCode } from '../TicketLifecycle';
 import { getTodayMenuKey, getTodayMenu, getTomorrowMenu, isFeastDay, getTodayDayLabel, getMealStatus, fmtDuration, MEAL_ORDER } from '../../data/messMenu';
 import { isLeaveWindowOpen } from '../../utils/leaveWindow';
 import { leaveNumber } from '../../utils/passNumber';
@@ -1211,24 +1211,7 @@ export default function StudentDashboard({
                   (with Resolved / Not fixed) further down. */}
               {!(!isDocDetail && hasLifecycle(ticketDetail)) && (
               <div className="pt-1">
-                <div className="flex gap-1.5">
-                  {Array.from({ length: stageCount }, (_, i) => {
-                    const done = i < stage;
-                    return (
-                      <div key={i} className={`flex-1 h-1.5 rounded-full transition-colors ${
-                        docRejected && !done ? 'bg-rose-400'
-                          : done ? 'bg-emerald-500' : 'bg-slate-200'
-                      }`} />
-                    );
-                  })}
-                </div>
-                <div className="flex justify-between mt-1">
-                  {stageLabels.map((label, i) => (
-                    <span key={label} className={`text-[9px] font-bold ${i < stage && !docRejected ? 'text-emerald-700' : 'text-slate-400'}`}>
-                      {label}
-                    </span>
-                  ))}
-                </div>
+                <StageTicks labels={stageLabels} stage={stage} rejected={docRejected} />
               </div>
               )}
 
