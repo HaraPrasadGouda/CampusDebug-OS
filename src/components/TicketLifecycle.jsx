@@ -72,7 +72,7 @@ export function LifecycleProgress({ ticket, viewer = 'student' }) {
 }
 
 // Student side: Resolved / Not fixed under their own complaint.
-export function StudentTicketActions({ ticket, busy, onResolve, onNotFixed }) {
+export function StudentTicketActions({ ticket, busy, onResolve, onNotFixed, compact = false }) {
   const stage = lifecycleStageOf(ticket);
   const cat = ticket.category || 'hostel';
   const stop = (fn) => (e) => { e.stopPropagation(); if (!busy) fn(ticket); };
@@ -88,34 +88,34 @@ export function StudentTicketActions({ ticket, busy, onResolve, onNotFixed }) {
       {ticket.reminderActive && stage === 'REPORTED' && (
         <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-[11.5px] font-bold text-amber-900 flex items-start gap-2">
           <BellRing className="w-4 h-4 shrink-0 mt-0.5" />
-          <span>Was your {cat} issue fixed? Tap Resolved or Not fixed.</span>
+          <span>{compact ? `Was your ${cat} issue fixed? Tap Resolved, or open this complaint if it is not fixed.` : `Was your ${cat} issue fixed? Tap Resolved or Not fixed.`}</span>
         </div>
       )}
       {stage === 'REPORTED' && (
-        <div className="grid grid-cols-2 gap-2">
+        <div className={compact ? 'grid grid-cols-1 gap-2' : 'grid grid-cols-2 gap-2'}>
           <button type="button" disabled={busy} onClick={stop(onResolve)}
             className="min-h-[44px] px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white text-[12.5px] font-bold flex items-center justify-center gap-1.5 cursor-pointer active:scale-[0.98] transition">
             <CheckCircle2 className="w-4 h-4 shrink-0" /> Resolved
           </button>
-          <button type="button" disabled={busy} onClick={stop(onNotFixed)}
+          {!compact && <button type="button" disabled={busy} onClick={stop(onNotFixed)}
             className="min-h-[44px] px-3 rounded-xl bg-white border-2 border-rose-200 hover:bg-rose-50 disabled:opacity-60 text-rose-700 text-[12.5px] font-bold flex items-center justify-center gap-1.5 cursor-pointer active:scale-[0.98] transition">
             <RotateCcw className="w-4 h-4 shrink-0" /> Not fixed
-          </button>
+          </button>}
         </div>
       )}
       {stage === 'REPORTED' && (
         <p className="text-[10.5px] text-slate-500 leading-snug">
-          Tap <b>Resolved</b> only after you checked the fix in your room. <b>Not fixed</b> sends it back to the technician.
+          Tap <b>Resolved</b> only after you checked the fix in your room.{!compact && <> <b>Not fixed</b> sends it back to the technician.</>}
           {ticket.notFixedCount > 0 && <> Sent back {ticket.notFixedCount}× so far.</>}
         </p>
       )}
       {stage === 'RESOLVED' && (
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <p className="text-[11.5px] font-bold text-emerald-800 min-w-0">You marked it resolved · waiting for the warden to close it.</p>
-          <button type="button" disabled={busy} onClick={stop(onNotFixed)}
+          {!compact && <button type="button" disabled={busy} onClick={stop(onNotFixed)}
             className="min-h-[44px] px-3 rounded-xl bg-white border border-slate-300 hover:bg-slate-50 disabled:opacity-60 text-slate-700 text-[12px] font-bold flex items-center gap-1.5 cursor-pointer">
             <RotateCcw className="w-4 h-4 shrink-0" /> Problem back? Not fixed
-          </button>
+          </button>}
         </div>
       )}
       {stage === 'CLOSED' && (

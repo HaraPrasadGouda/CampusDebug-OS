@@ -83,11 +83,12 @@ export default function StudentDashboard({
       setTicketBusy(null);
     }
   };
-  const renderTicketLifecycle = (t) => (
+  const renderTicketLifecycle = (t, compact = false) => (
     <>
       <StudentTicketActions
         ticket={t}
         busy={ticketBusy === t.id}
+        compact={compact}
         onResolve={(x) => ticketAction(x, 'resolve')}
         onNotFixed={(x) => ticketAction(x, 'not-fixed')}
       />
@@ -1110,7 +1111,7 @@ export default function StudentDashboard({
                       {/* Complaint lifecycle: progress + Resolved / Not fixed (own complaint) */}
                       {showLifecycle && (
                         <div className="basis-full w-full border-t border-slate-100 pt-2.5 mt-0.5 cursor-default" onClick={(e) => e.stopPropagation()}>
-                          {renderTicketLifecycle(act)}
+                          {renderTicketLifecycle(act, true)}
                         </div>
                       )}
                     </div>
