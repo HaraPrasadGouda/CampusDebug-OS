@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { AlertTriangle, Ban } from 'lucide-react';
+import { AlertTriangle, Ban, Undo2 } from 'lucide-react';
 import { tfetch } from '../../utils/teacherApi';
 
 // Admin / dean banner: a class of an absent teacher that nobody took.
@@ -20,6 +20,12 @@ export default function AdminCoverAlerts({ onNotification }) {
     onNotification?.(r.message || r.error || 'Done', r.ok ? 'success' : 'error');
     await load(); setBusy(null);
   };
+  const undo = async (b) => {
+    setBusy(b.id);
+    const r = await tfetch(`/api/admin/cover-board/${encodeURIComponent(b.id)}/undo-cancel`, 'POST', {});
+    onNotification?.(r.message || r.error || 'Done', r.ok ? 'success' : 'error');
+    await load(); setBusy(null);
+  };
   return (
     <div className="space-y-2" id="admin-cover-alerts" role="alert">
       {banners.map(b => (
@@ -34,6 +40,11 @@ export default function AdminCoverAlerts({ onNotification }) {
           {b.canCancel && (
             <button type="button" disabled={busy === b.id} onClick={() => cancel(b)} className="min-h-[44px] px-4 rounded-xl bg-white border-2 border-amber-400 hover:bg-amber-100 text-amber-900 text-xs font-extrabold cursor-pointer transition-colors disabled:opacity-60">
               Mark class cancelled
+            </button>
+          )}
+          {b.canUndo && (
+            <button type="button" data-testid="undo-cancel" disabled={busy === b.id} onClick={() => undo(b)} className="min-h-[44px] px-4 rounded-xl bg-white border-2 border-rose-400 hover:bg-rose-100 text-rose-900 text-xs font-extrabold cursor-pointer transition-colors disabled:opacity-60 inline-flex items-center justify-center gap-1.5">
+              <Undo2 className="w-4 h-4" /> Undo
             </button>
           )}
         </div>

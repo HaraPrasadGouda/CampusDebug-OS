@@ -263,3 +263,45 @@ export function wardenBlockView({ settings, rooms, checks, cleaners, ticketsById
   list.forEach((r) => { counts[r.status] = (counts[r.status] || 0) + 1; });
   return { block: settings.block, settings, cleaners, counts, rooms: list };
 }
+
+
+// ---- 1 PM "Room check" push (one per student per cleaning day) ------------------------------------
+export const PUSH_TITLE = 'Room check';
+export function pushBody(closesAtMin) {
+  return `Was your room cleaned today? Answer before ${fmtClock(closesAtMin)}.`;
+}
+
+// Who gets the push: the same students who are asked on the card — hostellers of the block who are
+// not away and whose room is not already locked by a roommate's answer — minus those already pushed today.
+// rooms: [{ block, room, rolls, away:Set }]; checks: rows of this block for the day; alreadyPushed: Set of rolls.
+export function pushRecipients({ rooms = [], checks = [], alreadyPushed = new Set() }) {
+  const answered = new Set(checks.filter((c) => c && c.answered_by).map((c) => String(c.room)));
+  const out = [];
+  for (const r of rooms) {
+    if (answered.has(String(r.room))) continue;
+    for (const roll of r.rolls || []) {
+      if (r.away && r.away.has(roll)) continue;
+      if (alreadyPushed.has(String(roll))) continue;
+      out.push(String(roll));
+    }
+  }
+  return out;
+}
+
+// One block, one tick. Only while the answer window is OPEN (never before it opens, never after it closes).
+// deps: store.listChecks / listPushed / markPushed, roster(block) → rooms, send(rolls, { title, body }).
+// Returns { sent, date } — sent is the number of students pushed this tick (0 on a re-tick).
+export async function openingPush(deps, { block, settings, now }) {
+  const w = answerWindow(settings, now);
+  if (w.state !== 'open') return { sent: 0, date: w.date, reason: w.state };
+  const [rooms, checks, already] = await Promise.all([
+    deps.roster(block),
+    deps.store.listChecks({ block, date: w.date }),
+    deps.store.listPushed({ block, date: w.date })
+  ]);
+  const rolls = pushRecipients({ rooms, checks, alreadyPushed: already });
+  if (!rolls.length) return { sent: 0, date: w.date, reason: 'nobody_left' };
+  await deps.store.markPushed({ block, date: w.date, rolls });   // log first: at most once per student per day
+  await deps.send(rolls, { title: PUSH_TITLE, body: pushBody(w.closesAt) });
+  return { sent: rolls.length, date: w.date };
+}
