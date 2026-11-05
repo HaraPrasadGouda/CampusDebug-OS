@@ -33,7 +33,7 @@ export default function Sidebar({
   const isTeacherRole = currentRole === 'Teacher';
   const teacherNav = useTeacherNav();
   const navItems = [
-    { id: 'home', label: 'Home', icon: Home, onClick: isTeacherRole ? () => goTeacherTab('today') : undefined },
+    { id: 'home', label: 'Home', icon: Home, onClick: isTeacherRole ? () => goTeacherTab('today') : (currentRole === 'Admin' ? () => { if (setActiveNav) setActiveNav('home'); window.dispatchEvent(new Event('admin-go-home')); } : undefined) },
     { id: 'profile', label: 'Profile', icon: User, onClick: onOpenProfile },
     { id: 'settings', label: 'Settings', icon: Settings, onClick: onOpenSettings },
     { id: 'logout', label: 'Logout', icon: LogOut, onClick: onSignOut, isDanger: true }
