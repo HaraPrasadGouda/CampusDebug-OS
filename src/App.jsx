@@ -907,6 +907,7 @@ export default function App() {
               onNotification={(msg) => showToast(msg, 'success')}
               masterClusters={masterClusters}
               searchQuery={searchQuery}
+              session={session}
             />
           )} 
 
