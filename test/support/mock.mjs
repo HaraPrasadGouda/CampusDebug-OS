@@ -5,6 +5,7 @@ const profiles = JSON.parse(fs.readFileSync(process.env.PROFILES_FILE || new URL
 const SEED = process.env.SEED_FILE ? JSON.parse(fs.readFileSync(process.env.SEED_FILE,'utf8')) : {};
 const tables = { profiles, gate_passes: [], leave_requests: SEED.leave_requests||[], pass_scans: [], meal_rsvps: [], tickets: [], master_incidents: [], document_requests: [] };
 let seq = 1;
+const authUsers = [];
 function splitTop(s){ const out=[]; let d=0, cur=''; for (const ch of s){ if(ch==='(')d++; if(ch===')')d--; if(ch===','&&d===0){out.push(cur);cur='';} else cur+=ch;} if(cur)out.push(cur); return out; }
 function cond(row, col, op, val){
   const cell=row[col];
@@ -54,6 +55,22 @@ http.createServer((req,res)=>{
       if(!p) return send(401,{code:401,msg:'invalid JWT'});
       return send(200,{id:p.id,email:p.roll_number.toLowerCase()+'@campusdebug.os',aud:'authenticated',role:'authenticated'});
     }
+    // --- Supabase Auth (admin users + password sign-in), just enough for the login flow ---
+    if(u.pathname==='/__auth_users' && req.method==='POST'){ const list=JSON.parse(body||'[]'); list.forEach(x=>authUsers.push(x)); return send(200,{count:authUsers.length}); }
+    if(u.pathname==='/auth/v1/admin/users' && req.method==='GET'){
+      const page=Math.max(1,Number(u.searchParams.get('page')||1)), per=Math.max(1,Number(u.searchParams.get('per_page')||50));
+      return send(200,{users:authUsers.slice((page-1)*per,page*per).map(x=>({id:x.id||('au-'+x.email),email:x.email,aud:'authenticated'})),aud:'authenticated'},{'x-total-count':String(authUsers.length)});
+    }
+    if(u.pathname==='/auth/v1/admin/users' && req.method==='POST'){
+      const b=JSON.parse(body||'{}'); if(authUsers.some(x=>x.email===b.email)) return send(422,{code:422,error_code:'email_exists',msg:'A user with this email address has already been registered'});
+      const nu={id:'au-'+b.email,email:b.email,password:b.password}; authUsers.push(nu); return send(200,{id:nu.id,email:nu.email,aud:'authenticated'});
+    }
+    if(u.pathname==='/auth/v1/token' && req.method==='POST'){
+      const b=JSON.parse(body||'{}'); const au=authUsers.find(x=>x.email===b.email && x.password!==undefined && x.password===b.password);
+      if(!au) return send(400,{code:400,error_code:'invalid_credentials',msg:'Invalid login credentials'});
+      const roll=au.email.split('@')[0].toUpperCase();
+      return send(200,{access_token:'tok-'+(profiles.find(p=>p.roll_number.toLowerCase()===roll.toLowerCase())||{roll_number:roll}).roll_number,refresh_token:'rt-'+roll,expires_in:3600,token_type:'bearer',user:{id:au.id,email:au.email,aud:'authenticated'}});
+    }
     if(u.pathname==='/__dump') return send(200,tables[u.searchParams.get('t')]||[]);
     const m=/^\/rest\/v1\/([a-z_]+)/.exec(u.pathname);
     if(!m) return send(404,{msg:'mock: unknown '+u.pathname});
@@ -64,7 +81,18 @@ http.createServer((req,res)=>{
       if(single){ if(rows.length!==1) return send(406,{code:'PGRST116',message:'JSON object requested, multiple (or no) rows returned',details:'',hint:null}); return send(code,rows[0]); }
       return send(code,rows,{'content-range':`0-${Math.max(rows.length-1,0)}/${rows.length}`});
     };
-    if(req.method==='GET'||req.method==='HEAD'){ const all=tbl.filter(r=>match(r,params)); const rows=shape(all,params);
+    if(req.method==='GET'||req.method==='HEAD'){
+      // PostgREST resource embedding, as far as the app uses it: `alias:profiles!fk_col(cols)` attaches the profile
+      // the FK column points at. `gate_passes` has TWO FKs to profiles (student_id, approved_by), so a bare
+      // `profiles(...)` embed is ambiguous and the real PostgREST answers 300 PGRST201 (the P1-4 bug).
+      const sel=(params.find(([k])=>k==='select')||[,''])[1];
+      const embeds=[...sel.matchAll(/(?:(\w+):)?(\w+)(?:!(\w+))?\(([^()]*)\)/g)].map(x=>({alias:x[1]||x[2],target:x[2],hint:x[3],cols:x[4].split(',').map(c=>c.trim())}));
+      for(const e of embeds){
+        if(m[1]==='gate_passes' && e.target==='profiles' && !e.hint)
+          return send(300,{code:'PGRST201',details:[{cardinality:'many-to-one',relationship:'gate_passes_student_id_fkey'},{cardinality:'many-to-one',relationship:'gate_passes_approved_by_fkey'}],hint:"Try changing 'profiles' to one of the following: 'profiles!gate_passes_student_id_fkey', 'profiles!gate_passes_approved_by_fkey'.",message:"Could not embed because more than one relationship was found for 'gate_passes' and 'profiles'"});
+      }
+      const embed=(row)=>{ if(!embeds.length) return row; const o={...row}; for(const e of embeds){ const fk=(e.hint||'').replace(/^gate_passes_|_fkey$/g,'')||'student_id'; const p=profiles.find(x=>String(x.id)===String(row[fk])); o[e.alias]=p? Object.fromEntries(e.cols.filter(c=>c in p).map(c=>[c,p[c]])) : null; } return o; };
+      const all=tbl.filter(r=>match(r,params)); const rows=shape(all,params).map(embed);
       if(single) return out(rows);
       return send(200,rows,{'content-range':`0-${Math.max(rows.length-1,0)}/${all.length}`}); }
     let parsed=[]; try{parsed=JSON.parse(body||'[]');}catch{}

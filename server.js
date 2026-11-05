@@ -23,7 +23,13 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ extended: true, limit: '25mb' }));
-app.use(express.static(path.join(__dirname, 'dist')));
+// The page shell and the service worker must be revalidated on every load (P1-11):
+// they name the current build's hashed files. The hashed /assets/* files can be cached freely.
+app.use(express.static(path.join(__dirname, 'dist'), {
+    setHeaders: (res, filePath) => {
+        if (/(^|[\\/])(sw\.js|index\.html)$/.test(filePath)) res.setHeader('Cache-Control', 'no-cache');
+    }
+}));
 
 // ----------------------------------------------------
 // 1. SUPABASE CLIENT INITIALIZATION & RESILIENCE
@@ -781,7 +787,88 @@ export const requireRole = (...allowed) => (req, res, next) => {
     next();
 };
 
-// Public: check an ID exists in the college directory (login screen "Verify Record")
+// Auth users (Supabase Auth) — find one by email across ALL pages. listUsers()
+// alone returns only the first page (50 accounts by default), so on a bigger
+// roster a student on page 2 looked "not activated" (and an admin password
+// reset said "never activated").
+async function findAuthUserByEmail(email) {
+    const want = String(email || '').toLowerCase();
+    const PER_PAGE = 1000;
+    for (let page = 1; page <= 20; page++) {
+        const { data, error } = await supabaseAuth.auth.admin.listUsers({ page, perPage: PER_PAGE });
+        if (error) return null;
+        const users = data?.users || [];
+        const hit = users.find(u => String(u.email || '').toLowerCase() === want);
+        if (hit) return hit;
+        if (users.length < PER_PAGE) return null;
+    }
+    return null;
+}
+
+// ----------------------------------------------------
+// Login rate limit (P2-17). Counts WRONG attempts only; a successful sign-in
+// clears the counters. Three buckets over a 10-minute window:
+//   • same roll number from the same IP : 10  (a student mistyping 5 times is fine)
+//   • same roll number from anywhere    : 30  (stops a slow distributed guess at one account
+//                                              without letting a stranger lock a student out
+//                                              with just 10 attempts of their own)
+//   • same IP, any roll number          : 60  (a whole hostel behind one college Wi-Fi/NAT
+//                                              shares an IP, so this one is generous)
+// ----------------------------------------------------
+const LOGIN_FAIL_WINDOW_MS = 10 * 60 * 1000;
+const LOGIN_FAIL_LIMITS = { rollIp: 10, roll: 30, ip: 60 };
+const loginFails = new Map();           // bucket key -> [timestamps of wrong attempts]
+function clientIp(req) {
+    // Behind a proxy (Render/Railway/nginx) the real client is the first X-Forwarded-For hop.
+    const xff = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+    return xff || req.socket?.remoteAddress || 'unknown';
+}
+const loginKeys = (ip, roll) => {
+    const r = String(roll || '').trim().toLowerCase();
+    return [['rollIp', `ri|${r}|${ip}`], ['roll', `r|${r}`], ['ip', `i|${ip}`]];
+};
+function loginFailPrune(arr, now) {
+    while (arr.length && now - arr[0] >= LOGIN_FAIL_WINDOW_MS) arr.shift();
+    return arr;
+}
+// Seconds the caller must wait (0 = allowed).
+function loginWaitSeconds(ip, roll) {
+    const now = Date.now();
+    let wait = 0;
+    for (const [kind, key] of loginKeys(ip, roll)) {
+        const arr = loginFails.get(key);
+        if (!arr) continue;
+        loginFailPrune(arr, now);
+        const limit = LOGIN_FAIL_LIMITS[kind];
+        if (arr.length >= limit) wait = Math.max(wait, Math.ceil((arr[arr.length - limit] + LOGIN_FAIL_WINDOW_MS - now) / 1000));
+    }
+    return wait;
+}
+function loginNoteFailure(ip, roll) {
+    const now = Date.now();
+    for (const [, key] of loginKeys(ip, roll)) {
+        const arr = loginFails.get(key) || [];
+        arr.push(now);
+        loginFails.set(key, loginFailPrune(arr, now));
+    }
+    if (loginFails.size > 5000) {            // keep memory bounded
+        for (const [k, arr] of loginFails) if (!loginFailPrune(arr, now).length) loginFails.delete(k);
+    }
+}
+function loginClearFailures(ip, roll) {
+    const [ri, r] = loginKeys(ip, roll);
+    loginFails.delete(ri[1]); loginFails.delete(r[1]);   // the IP bucket is shared by others: it ages out on its own
+}
+function loginWaitMessage(seconds) {
+    const mins = Math.max(1, Math.ceil(seconds / 60));
+    return `Too many wrong attempts. Please wait ${mins} minute${mins === 1 ? '' : 's'} and try again.`;
+}
+
+// Public: check an ID exists in the college directory (login screen "Verify Record").
+// Returns ONLY what the login screen needs: that the record exists, whether the
+// account is already activated, and the first name for the "Record Verified"
+// card. No full name, department, hostel block or phone-derived hints (this
+// endpoint needs no login and roll numbers are sequential, so it was a directory).
 app.post('/api/auth/verify-login', async (req, res) => {
     try {
         const { rollNumber } = req.body || {};
@@ -790,16 +877,14 @@ app.post('/api/auth/verify-login', async (req, res) => {
         if (!profile) {
             return res.status(404).json({ success: false, verified: false, error: 'This registration number is not in the college records' });
         }
-        const { data: authUser } = await supabaseAuth.auth.admin.listUsers();
-        const activated = (authUser?.users || []).some(u => String(u.email || '').toLowerCase() === authEmailFor(profile.roll_number));
+        const activated = !!(await findAuthUserByEmail(authEmailFor(profile.roll_number)));
+        const firstName = String(profile.full_name || '').trim().split(/\s+/)[0] || '';
         return res.json({
             success: true,
             verified: true,
             activated,
-            fullName: profile.full_name,
+            firstName,
             role: profile.role,
-            department: profile.department,
-            hostelBlock: profile.hostel_block,
             firstTimeHint: activated ? null : defaultPasswordFor(profile) ? 'firstname@last4-of-registered-mobile' : null
         });
     } catch (e) {
@@ -816,8 +901,17 @@ app.post('/api/auth/login', async (req, res) => {
         if (!supabase) return res.status(503).json({ success: false, error: 'Database offline' });
         if (!rollNumber || !password) return res.status(400).json({ success: false, error: 'Registration number and password are required' });
 
+        // Rate limit (P2-17): checked before any password is tried, so a locked
+        // caller learns nothing about whether a guess was right.
+        const ip = clientIp(req);
+        const waitS = loginWaitSeconds(ip, rollNumber);
+        if (waitS > 0) {
+            res.set('Retry-After', String(waitS));
+            return res.status(429).json({ success: false, error: loginWaitMessage(waitS), retryAfterSeconds: waitS });
+        }
+
         const profile = await findProfileByIdOrRoll(null, rollNumber);
-        if (!profile) return res.status(404).json({ success: false, error: 'This registration number is not in the college records' });
+        if (!profile) { loginNoteFailure(ip, rollNumber); return res.status(404).json({ success: false, error: 'This registration number is not in the college records' }); }
 
         const email = authEmailFor(profile.roll_number);
         let firstLogin = false;
@@ -836,6 +930,7 @@ app.post('/api/auth/login', async (req, res) => {
                 });
                 if (createErr) {
                     // e.g. user already exists with a different password
+                    loginNoteFailure(ip, rollNumber);
                     return res.status(401).json({ success: false, error: 'Incorrect password. If you changed it, use your new password.' });
                 }
                 firstLogin = true;
@@ -844,6 +939,7 @@ app.post('/api/auth/login', async (req, res) => {
                     return res.status(401).json({ success: false, error: 'Account created but sign-in failed — please try again.' });
                 }
             } else {
+                loginNoteFailure(ip, rollNumber);
                 return res.status(401).json({ success: false, error: 'Incorrect password. First time? Your default password is firstname@last-4-digits-of-your-registered-mobile.' });
             }
         }
@@ -851,6 +947,7 @@ app.post('/api/auth/login', async (req, res) => {
         // Activation ceremony complete → this student now has a smart
         // device session running the PWA → push notifications, not SMS.
         markStudentActivated(profile.roll_number);
+        loginClearFailures(ip, rollNumber);
 
         // Still on the college default pattern? (Fresh account, or an admin
         // reset, or a test-recovery reset.) Either way the user must set a
@@ -932,9 +1029,7 @@ app.post('/api/admin/reset-password', authenticateUser, requireRole('ADMIN', 'DE
         }
 
         // Find the existing auth user and reset (replace) the password
-        const { data: list } = await supabaseAuth.auth.admin.listUsers();
-        const email = authEmailFor(profile.roll_number);
-        const authUser = (list?.users || []).find(u => String(u.email || '').toLowerCase() === email);
+        const authUser = await findAuthUserByEmail(authEmailFor(profile.roll_number));
         if (!authUser) {
             // Account was never activated — nothing to reset; next login with
             // the default pattern will auto-provision anyway.
@@ -3192,9 +3287,18 @@ app.get('/api/dashboard-data', authenticateUser, async (req, res) => {
             blocks,
             mentor,
             slaResolutionRate,
-            gatePasses: passes.length > 0 ? passes.map(normalizeDashboardRow) : gatePassesDB.map(normalizeDashboardRow),
+            // Identity-scoped: students (and teachers / guards) only ever get THEIR OWN
+            // passes. The whole in-memory ledger is the fallback for staff only
+            // (the warden/admin screens read it); it used to be the fallback for
+            // everybody, so a student with no pass of their own received every
+            // other student's pass (name, roll, destination).
+            gatePasses: passes.length > 0
+                ? passes.map(normalizeDashboardRow)
+                : (isStaffRole || !supabase ? gatePassesDB : []).map(normalizeDashboardRow),
             // Students see who is coming (name + role), not the technician's phone or SMS log.
-            tickets: (tickets.length > 0 ? tickets : ticketsDB).map(enrichTicketRow).map(t => (isStaffRole ? t : studentSafeTicket(t))),
+            tickets: (tickets.length > 0 ? tickets : (supabase && String(req.user?.role || '').toUpperCase() === 'STUDENT'
+                ? ticketsDB.filter(t => String(t.student_id || '') === String(userId))   // a student's fallback is their OWN complaints only
+                : ticketsDB)).map(enrichTicketRow).map(t => (isStaffRole ? t : studentSafeTicket(t))),
             masterClusters: clusters.length > 0 ? clusters : masterClustersDB,
             // Staff only: technicians from the DB (+ workload); students never get phone numbers.
             ...(isStaffRole ? await technicianPanelData() : {})
@@ -3986,7 +4090,10 @@ app.post('/api/analyze-feedback', authenticateUser, async (req, res) => {
 let gpSupabaseOk = true; // flips false if pass_ref column is missing
 const gpDisableSupabase = (e) => {
     gpSupabaseOk = false;
-    console.warn('Supabase gate_passes persistence disabled for this session — run ALTER TABLE to add pass_ref/status_label/scanned_by/pass_category:', e.message);
+    // The cause is whatever Supabase said — missing pass_ref/status_label/scanned_by/pass_category
+    // columns (run the ALTER TABLE) OR a bad query (e.g. an ambiguous profiles embed:
+    // gate_passes has two FKs to profiles, so name one with profiles!student_id(...)).
+    console.warn('Supabase gate_passes persistence disabled for this session. Supabase said:', e && (e.message || e.code || JSON.stringify(e)), e && e.hint ? `(hint: ${e.hint})` : '', '— if the message names a missing column, run the ALTER TABLE for pass_ref/status_label/scanned_by/pass_category.');
 };
 const passTypeEnumOf = (t) => /overnight|home leave|weekend/i.test(String(t)) ? 'OVERNIGHT' : 'DAY';
 
@@ -4069,6 +4176,7 @@ async function resolveProfileIdForPass(passData) {
 // file a PENDING request for THEMSELVES: identity comes from the login token,
 // status/token/signature fields in the body are ignored.
 const PASS_STAFF_ROLES = ['WARDEN', 'ADMIN', 'DEAN'];
+const PASS_LOOKUP_ROLES = [...PASS_STAFF_ROLES, 'GUARD'];   // may look any pass up by id (guard scan / warden desk)
 const SELF_PASS_FIELDS = ['id', 'passId', 'destination', 'reason', 'passType', 'priority', 'validUntil', 'createdAt', 'createdAtMs'];
 
 app.post('/api/create-pass', authenticateUser, async (req, res) => {
@@ -4885,7 +4993,7 @@ app.post('/api/pass-token', authenticateUser, requireRole('STUDENT'), async (req
             } else if (supabase && gpSupabaseOk) {
                 const { data: row, error } = await supabase
                     .from('gate_passes')
-                    .select('*, student:profiles(full_name, roll_number)')
+                    .select('*, student:profiles!student_id(full_name, roll_number)')
                     .eq('pass_ref', id.toUpperCase())
                     .maybeSingle();
                 if (error) gpDisableSupabase(error);
@@ -5008,7 +5116,7 @@ app.get('/api/guard/pass-cache', authenticateUser, requireRole('GUARD'), async (
         if (supabase && gpSupabaseOk) {
             try {
                 const { data: rows, error } = await supabase.from('gate_passes')
-                    .select('*, student:profiles(full_name, roll_number)')
+                    .select('*, student:profiles!student_id(full_name, roll_number)')
                     .eq('status', 'APPROVED').limit(500);
                 if (error) gpDisableSupabase(error);
                 for (const row of rows || []) {
@@ -7922,8 +8030,19 @@ app.get('/api/attendance/me', authenticateUser, (req, res) => {
 app.get('/api/pass-status', authenticateUser, (req, res) => {
     const passId = String(req.query.id || '').trim();
     if (!passId) return res.status(400).json({ success: false, error: 'id required' });
-    const pass = gatePassesDB.find(p => String(p.id) === passId);
-    return res.json({ success: true, pass: pass || null });
+    let pass = gatePassesDB.find(p => String(p.id) === passId) || null;
+    // Owner or gate-pass staff only (guard/warden/admin/dean look passes up).
+    // Anyone else gets the same answer as for an unknown id, so the endpoint
+    // is neither a data leak nor a "does this pass exist" oracle.
+    // Offline dev mode (no Supabase) has no real identity, so it is unchanged.
+    if (pass && supabase) {
+        const role = String(req.user?.role || '').toUpperCase();
+        const myRoll = String(req.user?.rollNumber || '').trim().toLowerCase();
+        const owner = String(pass.rollNo || pass.studentId || '').trim().toLowerCase();
+        const mayView = PASS_LOOKUP_ROLES.includes(role) || (myRoll && owner && owner === myRoll);
+        if (!mayView) pass = null;
+    }
+    return res.json({ success: true, pass });
 });
 
 // Student directory search for WARDEN desk use (e.g. creating a gate pass
@@ -8034,7 +8153,7 @@ app.get('/api/pass-lookup', authenticateUser, requireRole('GUARD', 'ADMIN', 'WAR
         if (supabase && gpSupabaseOk) {
             const { data: row, error } = await supabase
                 .from('gate_passes')
-                .select('*, student:profiles(full_name, roll_number)')
+                .select('*, student:profiles!student_id(full_name, roll_number)')
                 .eq('pass_ref', raw)
                 .maybeSingle();
             if (error) gpDisableSupabase(error);
@@ -9459,6 +9578,7 @@ app.post('/api/cleaning/settings', authenticateUser, requireRole('WARDEN'), asyn
 
 // Production Unified App Shell Fallback Route
 app.use((req, res) => {
+    res.set('Cache-Control', 'no-cache');
     res.sendFile(path.join(__dirname, 'dist', 'index.html'), err => {
         if (err) {
             res.status(200).send(`CampusDebug OS Unified Backend Active on http://localhost:${PORT}`);

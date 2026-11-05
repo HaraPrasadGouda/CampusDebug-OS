@@ -122,7 +122,7 @@ const BrandIcon = ({ size = 'w-9 h-9' }) => (
 export default function LoginScreen({ onLogin }) {
   const [identity, setIdentity] = useState('');
   const [password, setPassword] = useState('');
-  const [verifyState, setVerifyState] = useState(null); // {fullName, role, department, hostelBlock, activated} | 'notfound' | null
+  const [verifyState, setVerifyState] = useState(null); // {firstName, role, activated} | 'notfound' | null
   const [verifying, setVerifying] = useState(false);
   const verifiedIdRef = useRef(null); // the ID whose verify already succeeded
   const [authBusy, setAuthBusy] = useState(false);
@@ -506,8 +506,7 @@ export default function LoginScreen({ onLogin }) {
                     Official College Record Verified!
                   </p>
                   <p className="mt-1.5 text-[#0f6b4f] leading-relaxed font-medium">
-                    {verifyState.fullName} • {verifyState.role === 'STUDENT' ? (verifyState.department || 'Student') : verifyState.role}
-                    {verifyState.hostelBlock ? ` • ${verifyState.hostelBlock}` : ''}
+                    {verifyState.firstName} • {verifyState.role === 'STUDENT' ? 'Student' : verifyState.role}
                   </p>
                   {!verifyState.activated && (
                     <p className="mt-1.5 text-[11px] text-emerald-800/90 leading-relaxed">
