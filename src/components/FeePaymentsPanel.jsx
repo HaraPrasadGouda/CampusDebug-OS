@@ -38,7 +38,7 @@ export function FeePaymentsView({ data, error = null, loading = false, onRefresh
       <div className="flex items-stretch gap-2 min-w-0">
         <label className="flex-1 flex items-center gap-2 min-h-[44px] min-w-0 px-3 rounded-xl border border-slate-200 bg-white focus-within:border-slate-400">
           <Search className="w-4 h-4 text-slate-400 shrink-0" />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, roll or receipt"
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Name, roll or receipt"
             className="flex-1 min-w-0 bg-transparent outline-none text-base sm:text-sm text-slate-800 placeholder:text-slate-400" />
         </label>
         <button type="button" onClick={onRefresh} disabled={loading} aria-label="Refresh fee payments"

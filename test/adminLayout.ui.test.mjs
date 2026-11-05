@@ -69,6 +69,7 @@ describe('Admin / Dean console phone layout (headless Chromium)', { skip: have ?
                     assert.deepEqual(o.fees.kpiLines, [1, 1], `totals wrap: ${o.fees.amounts}`);
                     assert.ok(o.fees.refreshW >= 44 && o.fees.refreshH >= 44 && o.fees.refreshRight <= o.fees.iw, `refresh ${JSON.stringify(o.fees)}`);
                     assert.ok(Math.abs(o.fees.refreshTop - o.fees.searchTop) < 12, 'refresh sits beside the search box');
+                    assert.ok(o.fee_search[0] <= o.fee_search[1] + 0.5, `fee search placeholder ${o.fee_search}`);
                     // Timetable: bounded scrolling section list, names not cut off
                     assert.ok(o.tt && o.tt.overflowY === 'auto' && o.tt.maxH > 0, `section list ${JSON.stringify(o.tt)}`);
                     for (const [name, fits] of o.tt.names) assert.ok(fits, `section name cut off: ${name}`);

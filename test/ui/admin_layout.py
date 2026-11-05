@@ -47,6 +47,7 @@ with sync_playwright() as p:
         time.sleep(1.8); scale(pg)
     tab('Support', 'fees'); time.sleep(.5)
     out['fees'] = pg.evaluate("""()=>{const root=document.querySelector('[data-testid=fee-payments]');const ps=[...root.querySelectorAll('.font-mono.font-extrabold')].slice(0,2);const kp=ps.map(p=>{const lh=parseFloat(getComputedStyle(p).lineHeight)||parseFloat(getComputedStyle(p).fontSize)*1.25;return Math.round(p.getBoundingClientRect().height/lh)});const rf=root.querySelector('button[aria-label="Refresh fee payments"]').getBoundingClientRect();const sr=root.querySelector('label').getBoundingClientRect();return {kpiLines:kp,refreshW:rf.width,refreshH:rf.height,refreshRight:rf.right,searchRight:sr.right,refreshLeft:rf.left,searchTop:sr.top,refreshTop:rf.top,iw:innerWidth,amounts:ps.map(p=>p.innerText)}}""")
+    out['fee_search'] = pg.evaluate("""()=>{const e=document.querySelector('[data-testid=fee-payments] input');const cs=getComputedStyle(e);const c=document.createElement('canvas').getContext('2d');c.font=cs.fontWeight+' '+cs.fontSize+' '+cs.fontFamily;return [c.measureText(e.placeholder).width, e.clientWidth-parseFloat(cs.paddingLeft)-parseFloat(cs.paddingRight)]}""")
     out['small_fees'] = small_targets(pg); out['side_fees'] = side_scroll(pg); shot(pg, 'fees')
     # 5) Timetable engine: section names are not cut off, and the section list scrolls inside a bounded box
     tab('Academics', 'timetable'); time.sleep(1)
