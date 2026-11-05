@@ -12,7 +12,7 @@ const timeHM = (iso) => (iso ? new Date(iso).toLocaleTimeString([], { hour: '2-d
 // untouched; this view is opened from the one compact card on it.
 export default function CoveringSection({
   groups = [], onBack, decide, busyId, noteDraft, setNoteDraft, onCreateLeave,
-  onMark, markOpen, openLabel, renderMenteeRow, createOpen = true, createLabel = '9:00 AM–4:30 PM'
+  onMark, markOpen, openLabel, renderMenteeRow, createOpen = true, createLabel = '9:00 AM–4:30 PM', embedded = false
 }) {
   const [sel, setSel] = useState(null);
   const [tab, setTab] = useState(null);
@@ -34,7 +34,8 @@ export default function CoveringSection({
     return () => { alive = false; };
   }, [g?.mentorRoll, g?.active, activeTab]);
 
-  const back = (
+  // embedded = inside the Students tab (a violet group): no 'My dashboard' back bar, no second title card
+  const back = embedded ? null : (
     <div className="flex items-center gap-3">
       <button
         type="button"
@@ -85,7 +86,7 @@ export default function CoveringSection({
       )}
 
       {/* Who + what, at a glance */}
-      <section className={`rounded-2xl border-2 shadow-sm p-4 sm:p-5 ${g.active ? 'border-indigo-200 bg-gradient-to-br from-indigo-50 via-white to-white' : 'border-slate-200 bg-white'}`}>
+      {!embedded && <section className={`rounded-2xl border-2 shadow-sm p-4 sm:p-5 ${g.active ? 'border-indigo-200 bg-gradient-to-br from-indigo-50 via-white to-white' : 'border-slate-200 bg-white'}`}>
         <div className="flex items-start gap-3">
           <span className={`w-11 h-11 rounded-2xl text-white flex items-center justify-center shrink-0 ${g.active ? 'bg-indigo-600' : 'bg-slate-500'}`}>
             <UserCheck className="w-5 h-5" />
@@ -98,7 +99,7 @@ export default function CoveringSection({
             </p>
           </div>
         </div>
-      </section>
+      </section>}
 
       {/* Tabs */}
       <div className="grid gap-1 p-1 rounded-2xl bg-slate-100 border border-slate-200" style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }} role="tablist" aria-label="Covered work">

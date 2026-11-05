@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import {
   CheckCircle2, X, Users, Coffee, RefreshCw, Clock, LogOut, Search, GraduationCap, ShieldAlert, Sun, CalendarDays, MapPin, UserCheck, ChevronRight, ArrowRightLeft
@@ -8,6 +8,9 @@ import AttendanceMarkModal from '../modals/AttendanceMarkModal';
 import { leaveNumber } from '../../utils/passNumber';
 import CoverPickerModal from '../teacher/CoverPickerModal';
 import CoveringSection from '../teacher/CoveringSection';
+import { AlertsBanner, NeedsRow, NeedsHeading, AllClearCard, NextClassCard, QuickActions, MeIdentity, MeRows, CoveringGroupHeader, GroupDivider, AttendanceList } from '../teacher/TeacherNavParts';
+import useBackgroundAlerts from '../../utils/useBackgroundAlerts';
+import { useTeacherNav, goTeacherTab, setTeacherCounts, savedScroll, takeAnchor, tabFromUrl } from '../../utils/teacherNav';
 import { isCoverWindowOpen, COVER_WINDOW_LABEL, profName } from '../../utils/teacherCover';
 import { isLeaveWindowOpen, LEAVE_WINDOW_LABEL } from '../../utils/leaveWindow';
 import TeacherHero from '../teacher/TeacherHero';
@@ -38,7 +41,7 @@ const timeHM = (iso) => (iso ? new Date(iso).toLocaleTimeString([], { hour: '2-d
 // Server timetable day keys are 'MON'..'SAT' (THUR spelled like the solver).
 const TT_TEACHER_TODAY = ['MON', 'MON', 'TUE', 'WED', 'THUR', 'FRI', 'SAT'][new Date().getDay()] || 'MON';
 
-export default function TeacherDashboard({ onNotification, searchQuery = '', session = null }) {
+export default function TeacherDashboard({ onNotification, searchQuery = '', session = null, onOpenNotices = null }) {
   const [queue, setQueue] = useState(null);          // server queue payload
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState(null);
@@ -75,7 +78,6 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
   // Substitute cover: the "who covers me" picker, and the separate Covering
   // view (the substitute's own home stays as it is).
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [coverView, setCoverView] = useState(false);
   const [declineFor, setDeclineFor] = useState(null);
   const [declining, setDeclining] = useState(false);
   // Cover board (cards I can take / that I took) — polled every 20 s.
@@ -231,7 +233,7 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
       });
       const j = await r.json();
       onNotification?.(j?.success ? j.message : (j?.error || 'Could not hand the work back.'), j?.success ? 'success' : 'error');
-      if (j?.success) { setDeclineFor(null); setCoverView(false); load(false); }
+      if (j?.success) { setDeclineFor(null); load(false); }
     } catch {
       onNotification?.('Offline — could not hand the work back.', 'error');
     }
@@ -419,15 +421,12 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
 
   // Section switcher chips (layout only): each chip scrolls to its own card.
   const ttTodayCount = ttMine ? (ttMine.slots || []).filter(s => s.day === TT_TEACHER_TODAY).length : null;
+  // (Students tab only: the chips jump between that tab's cards.)
   const sectionChips = [
     { id: 'td-approvals', label: 'Approval Queue', count: pendingLeaves.length, dot: 'bg-amber-500', hot: pendingLeaves.length > 0 },
     ...(decidedToday.length > 0 ? [{ id: 'td-decisions', label: "Today's Decisions", count: decidedToday.length, dot: 'bg-violet-500' }] : []),
-    { id: 'td-cover', label: 'Cover board', count: openCoverN, dot: 'bg-indigo-500', hot: openCoverN > 0 },
-    { id: 'td-timetable', label: 'My day', count: ttTodayCount, dot: 'bg-teal-500' },
     { id: 'td-mentees', label: 'My Mentees', count: mentees.length, dot: 'bg-cyan-500' },
-    { id: 'td-gatelog', label: 'Gate Log', count: dsScans ? (dsScans.scans || []).length : null, dot: 'bg-blue-500' },
-    { id: 'td-insights', label: 'Tools', count: null, dot: 'bg-violet-500' },
-    { id: 'td-status', label: queue?.onLeaveState?.onLeave ? 'On Leave Today' : 'Present today', count: null, dot: queue?.onLeaveState?.onLeave ? 'bg-amber-500' : 'bg-emerald-500', phoneOnly: true }
+    { id: 'td-gatelog', label: 'Gate Log', count: dsScans ? (dsScans.scans || []).length : null, dot: 'bg-blue-500' }
   ];
   const jumpToSection = (id) => (id === 'td-mentees'
     ? setMenteesOpen(true)
@@ -437,26 +436,63 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
     k, ...statusChips[k], n: mentees.filter(m => (m.todayStatus || 'NO_REQUEST_TODAY') === k).length
   }));
 
-  return (
-    <div className="p-4 sm:p-6 space-y-4 max-w-4xl xl:max-w-6xl 2xl:max-w-none mx-auto w-full">
-      {coverView ? (
-        <CoveringSection
-          groups={coverGroups}
-          onBack={() => setCoverView(false)}
-          decide={decide}
-          busyId={busyId}
-          noteDraft={noteDraft}
-          setNoteDraft={setNoteDraft}
-          onCreateLeave={openCreateLeave}
-          createOpen={createOpen}
-          createLabel={LEAVE_WINDOW_LABEL}
-          onMark={setMarkSlot}
-          markOpen={markOpen}
-          openLabel={openLabel}
-          renderMenteeRow={renderMenteeRow}
-          windowLabel={windowLabel}
-        />
-      ) : (<>
+  // ---------------- Navigation (Today / Students / Classes / Me) ----------------
+  // Everything above is unchanged: the same data, the same components. Only the active tab renders;
+  // data is still fetched once (state lives here, the tab is just a view).
+  const { tab, anchor: navAnchor } = useTeacherNav();
+  const alerts = useBackgroundAlerts(true);
+  const [alertsDismissed, setAlertsDismissed] = useState(() => { try { return localStorage.getItem('teacher_alerts_dismissed') === todayKey(); } catch { return false; } });
+  const [myLeavesOpen, setMyLeavesOpen] = useState(false);
+  const [insightsReq, setInsightsReq] = useState(null);
+  const dismissAlerts = () => { setAlertsDismissed(true); try { localStorage.setItem('teacher_alerts_dismissed', todayKey()); } catch { /* private mode: hide for this session only */ } };
+
+  const ownPendingAll = (queue?.leaves || []).filter(l => l.status === 'PENDING');
+  const ownOldest = ownPendingAll.map(l => l.created_at).filter(Boolean).sort()[0];
+  const coverActive = coverGroups.filter(g => g.active);
+  const coveringPending = coverActive.reduce((n, g) => n + (g.pendingCount || 0), 0);
+  const coverCardsN = (board?.open || []).length + (board?.mine || []).filter(c => !markedRec(c)).length;
+  const needsNow = ownPendingAll.length + coveringPending + coverCardsN;
+  const studentsBadge = ownPendingAll.length + coveringPending;
+  const quiet = needsNow === 0;
+  const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+
+  useEffect(() => { setTeacherCounts({ today: needsNow, students: studentsBadge }); }, [needsNow, studentsBadge]);
+  useEffect(() => () => setTeacherCounts({ today: 0, students: 0 }), []);
+  useEffect(() => {
+    const onHash = () => { const t = tabFromUrl(); if (t) goTeacherTab(t); };
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
+  // New tab on screen: jump to what was asked for (a card / a tool), else back to where this tab was scrolled.
+  useLayoutEffect(() => {
+    const a = takeAnchor();
+    const el = document.getElementById('app-scroll');
+    if (a && a.startsWith('insights:')) { setInsightsReq({ id: a.slice(9), n: Date.now() }); if (el) el.scrollTop = 0; return; }
+    if (a) { const t = document.getElementById(a); if (t) { t.scrollIntoView({ block: 'start' }); return; } }
+    if (el) el.scrollTop = savedScroll(tab);
+  }, [tab, navAnchor]);
+  useEffect(() => { if (tab === 'me') alerts.refresh(); }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const nextMarkState = !nextRow ? null : markedRec(nextRow) ? 'done' : markOpen(nextRow) ? 'open' : 'later';
+  const nextClassRow = nextRow ? { ...nextRow, openAt: openLabel(nextRow) } : null;
+  const coverBoardProps = { board, reload: () => { reloadBoard(); loadMarked(); }, onNotification, onMark: setMarkSlot, markOpen, openLabel, markedRec, onLeave, myCards };
+  const declineBlock = (g) => !g.active ? null : (declineFor === g.mentorRoll ? (
+    <div key={`d-${g.mentorRoll}`} className="rounded-2xl border border-indigo-100 bg-white px-4 py-3 space-y-2">
+      <p className="text-xs text-slate-700 leading-snug">Hand {profName(g.mentorName)}'s work back? They get a notification to pick another teacher.</p>
+      <div className="flex gap-2">
+        <button type="button" onClick={() => setDeclineFor(null)} className="flex-1 min-h-[44px] rounded-xl border-2 border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs cursor-pointer transition-colors">Keep covering</button>
+        <button type="button" disabled={declining} onClick={() => declineCover(g.mentorRoll)} className="flex-1 min-h-[44px] rounded-xl bg-rose-600 hover:bg-rose-700 disabled:opacity-60 text-white font-bold text-xs cursor-pointer transition-colors">{declining ? 'Working…' : "Yes, I can't cover"}</button>
+      </div>
+    </div>
+  ) : (
+    <div key={`d-${g.mentorRoll}`} className="flex justify-end">
+      <button type="button" onClick={() => setDeclineFor(g.mentorRoll)} className="min-h-[44px] px-3 rounded-xl text-[11px] font-bold text-rose-700 hover:bg-rose-50 cursor-pointer transition-colors">Can't cover {profName(g.mentorName)}</button>
+    </div>
+  ));
+
+  const todayTab = (
+    <div className="flex flex-col gap-4" data-testid="tab-today">
+      {alerts.on === false && !alertsDismissed && <AlertsBanner onTurnOn={alerts.toggle} onDismiss={dismissAlerts} busy={alerts.busy} msg={alerts.msg} />}
 
       {/* 0. Teacher hero — indigo identity, day strip of period ticks (same card language as the student wish card) */}
       <TeacherHero greeting={getGreeting()} firstName={teacherFirstName} dateLabel={dateLabel} periods={heroTicks} next={heroNext} stats={heroStats} note={onLeave ? `You're on leave today — your classes are on the cover board${coverSummaryText}.` : (ttMine && dayRows.length === 0 ? 'No classes on your timetable today — your teaching desk is clear.' : null)} />
@@ -529,51 +565,63 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
           </div>
         </div>
       </section>
-
-      {/* Covering for an absent colleague — ONE compact card (shown even with
-          0 pending); everything of theirs opens in the separate Covering view,
-          so this home stays as is. "Can't cover" hands it back. */}
-      {coverGroups.map(g => (
-        <div key={g.mentorRoll} className={`rounded-2xl border-2 shadow-sm overflow-hidden ${g.active ? 'border-indigo-200 bg-gradient-to-r from-indigo-50 to-white' : 'border-slate-200 bg-white'}`}>
-          <button
-            type="button"
-            onClick={() => { setCoverView(true); window.scrollTo?.({ top: 0 }); }}
-            className="w-full text-left px-4 py-3 min-h-[60px] flex items-center gap-3 hover:bg-indigo-50/60 transition-colors cursor-pointer"
-          >
-            <span className={`w-10 h-10 rounded-xl text-white flex items-center justify-center shrink-0 ${g.active ? 'bg-indigo-600' : 'bg-slate-500'}`}>
-              <UserCheck className="w-5 h-5" />
-            </span>
-            <span className="flex-1 min-w-0">
-              <span className="block text-sm font-extrabold text-slate-900 break-words">
-                {g.active ? `Covering ${profName(g.mentorName)}` : `${profName(g.mentorName)} is back`}
-              </span>
-              <span className="block text-[11px] font-semibold text-slate-600 mt-0.5">
-                {g.active
-                  ? <><span className={g.pendingCount > 0 ? 'text-amber-700' : ''}>{g.pendingCount} pending</span> · leave approvals</>
-                  : 'Their leave approvals are back with them'}
-              </span>
-            </span>
-            <ChevronRight className="w-5 h-5 text-indigo-600 shrink-0" />
-          </button>
-          {g.active && (declineFor === g.mentorRoll ? (
-            <div className="border-t border-indigo-100 bg-white px-4 py-3 space-y-2">
-              <p className="text-xs text-slate-700 leading-snug">Hand {profName(g.mentorName)}'s work back? They get a notification to pick another teacher.</p>
-              <div className="flex gap-2">
-                <button type="button" onClick={() => setDeclineFor(null)} className="flex-1 min-h-[44px] rounded-xl border-2 border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs cursor-pointer transition-colors">Keep covering</button>
-                <button type="button" disabled={declining} onClick={() => declineCover(g.mentorRoll)} className="flex-1 min-h-[44px] rounded-xl bg-rose-600 hover:bg-rose-700 disabled:opacity-60 text-white font-bold text-xs cursor-pointer transition-colors">{declining ? 'Working…' : "Yes, I can't cover"}</button>
-              </div>
-            </div>
+      <div className="flex flex-col gap-4 xl:grid xl:grid-cols-12 xl:items-start">
+        <div className="flex flex-col gap-3 xl:col-span-7">
+          {quiet ? (
+            <>
+              <AllClearCard />
+              <NextClassCard row={nextClassRow} minsLeft={nextRow ? nextRow.startMin - nowM : 0} markState={nextMarkState} onMark={() => nextRow && setMarkSlot(nextRow.slot)} />
+              <QuickActions createOpen={createOpen} onCreateLeave={openCreateLeave} onGateLog={() => goTeacherTab('students', 'td-gatelog')} onLessonPlan={() => goTeacherTab('classes', 'insights:plan')} />
+              <p data-testid="cover-quiet-line" className="px-1 text-[12px] font-semibold text-slate-500">Cover board: no open requests</p>
+            </>
           ) : (
-            <div className="border-t border-indigo-100/70 px-4 py-1.5 flex justify-end">
-              <button type="button" onClick={() => setDeclineFor(g.mentorRoll)} className="min-h-[44px] px-3 rounded-xl text-[11px] font-bold text-rose-700 hover:bg-rose-50 cursor-pointer transition-colors">Can't cover</button>
-            </div>
-          ))}
+            <>
+              <NeedsHeading count={needsNow} />
+              {ownPendingAll.length > 0 && (
+                <NeedsRow testId="row-own-requests" tone="amber" count={ownPendingAll.length} title={`${plural(ownPendingAll.length, 'leave request')} waiting`}
+                  sub={`Your own mentees${ownOldest ? ` · oldest ${timeHM(ownOldest)}` : ''}`} onClick={() => goTeacherTab('students', 'td-approvals')} />
+              )}
+              {coverActive.filter(g => g.pendingCount > 0).map(g => (
+                <NeedsRow key={g.mentorRoll} testId="row-covering" tone="violet" count={g.pendingCount} title={`Covering ${profName(g.mentorName)}'s mentees`}
+                  sub={`${plural(g.pendingCount, 'leave request')} · until they are back`} onClick={() => goTeacherTab('students', 'td-covering')} />
+              ))}
+              <CoverBoardSection {...coverBoardProps} compact />
+            </>
+          )}
         </div>
-      ))}
+        <div className="xl:col-span-5 flex flex-col">
+      {/* My day — today's classes as a period timeline (+ covers I took) */}
+      <PeriodTimeline rows={dayRows} loaded={!!ttMine} onMark={setMarkSlot} markOpen={markOpen} openLabel={openLabel} markedRec={markedRec} nowMin={nowM} />
+        </div>
+      </div>
+    </div>
+  );
 
-      {/* Cover board — classes of absent colleagues I may take (free + my section) */}
-      <CoverBoardSection board={board} reload={() => { reloadBoard(); loadMarked(); }} onNotification={onNotification} onMark={setMarkSlot} markOpen={markOpen} openLabel={openLabel} markedRec={markedRec} onLeave={onLeave} myCards={myCards} />
-
+  const studentsTab = (
+    <div className="flex flex-col gap-4" data-testid="tab-students">
+      {coverGroups.length > 0 && (
+        <div id="td-covering" className="scroll-mt-[124px] space-y-3 rounded-3xl border-2 border-violet-200 bg-violet-50/50 p-3 sm:p-4">
+          <CoveringGroupHeader active={coverActive.length > 0} name={coverGroups.map(g => profName(g.mentorName)).join(' & ')} pending={coveringPending} />
+          <CoveringSection
+            embedded
+            groups={coverGroups}
+            decide={decide}
+            busyId={busyId}
+            noteDraft={noteDraft}
+            setNoteDraft={setNoteDraft}
+            onCreateLeave={openCreateLeave}
+            createOpen={createOpen}
+            createLabel={LEAVE_WINDOW_LABEL}
+            onMark={setMarkSlot}
+            markOpen={markOpen}
+            openLabel={openLabel}
+            renderMenteeRow={renderMenteeRow}
+            windowLabel={windowLabel}
+          />
+          {coverGroups.map(declineBlock)}
+        </div>
+      )}
+      {coverGroups.length > 0 && <GroupDivider>Your own mentees</GroupDivider>}
       {/* Header */}
       <div className="bg-white/90 backdrop-blur-sm border border-slate-200/50 rounded-2xl p-4 sm:p-5 shadow-sm flex flex-row flex-wrap sm:flex-nowrap items-start sm:items-center justify-between gap-3">
         <div className="min-w-0 basis-full sm:basis-auto sm:flex-1">
@@ -618,7 +666,6 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
           </button>
         </div>
       </div>
-
       {/* Section switcher — tap a chip to jump to that section (layout only) */}
       <nav aria-label="Dashboard sections" className="sticky top-[51px] sm:top-[54px] z-20 -mx-4 sm:-mx-6 px-4 sm:px-6 py-2 bg-[#F1F5F9]/90 backdrop-blur-md">
         <div className="flex gap-2 overflow-x-auto scrollbar-none -mx-4 pl-4 pr-16 sm:mx-0 sm:pl-0 xl:pr-0 xl:flex-wrap [mask-image:linear-gradient(to_right,#000_calc(100%_-_64px),rgba(0,0,0,0.12))] [-webkit-mask-image:linear-gradient(to_right,#000_calc(100%_-_64px),rgba(0,0,0,0.12))] xl:[mask-image:none] xl:[-webkit-mask-image:none]">
@@ -640,7 +687,6 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
           ))}
         </div>
       </nav>
-
       {/* Search (sidebar search + local input both apply) */}
       <div className="relative">
         <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -651,10 +697,6 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
           className="w-full min-h-[44px] pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 bg-white/90 text-sm outline-none focus:border-slate-400 transition-colors"
         />
       </div>
-
-      {/* Sections: phone = one column (Approvals first); laptop (xl) = two equal-height
-          columns — Approvals + Decisions + Gate Log on the left, Timetable + availability +
-          My Mentees (summary; the list opens on tap) on the right */}
       <div className="flex flex-col gap-4 xl:grid xl:grid-cols-12 xl:items-stretch">
         <div className="contents xl:flex xl:flex-col xl:gap-4 xl:col-span-6">
       {/* APPROVAL QUEUE — the always-works path */}
@@ -732,7 +774,6 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
         )}
         </div>
       </section>
-
       {/* Today's decided requests (audit trail) */}
       {decidedToday.length > 0 && (
         <section id="td-decisions" className="order-3 scroll-mt-[124px] bg-white border border-violet-200 rounded-2xl shadow-sm overflow-hidden">
@@ -764,6 +805,8 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
           </div>
         </section>
       )}
+        </div>
+        <div className="contents xl:flex xl:flex-col xl:gap-4 xl:col-span-6">
       {/* My Mentees — kept separate: a summary card here, the full list opens
           only on tap (bottom sheet on phone, side panel on laptop) */}
       <section id="td-mentees" className="order-5 xl:grow xl:flex xl:flex-col scroll-mt-[124px] bg-white border border-cyan-200 rounded-2xl shadow-sm overflow-hidden">
@@ -805,12 +848,6 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
         )}
         </div>
       </section>
-        </div>
-
-        <div className="contents xl:flex xl:flex-col xl:gap-4 xl:col-span-6">
-      {/* My day — today's classes as a period timeline (+ covers I took) */}
-      <PeriodTimeline rows={dayRows} loaded={!!ttMine} onMark={setMarkSlot} markOpen={markOpen} openLabel={openLabel} markedRec={markedRec} nowMin={nowM} />
-
       {/* Mentor's Day-Scholar Gate Log — server-scoped to THIS mentor's own
           mentees. The warden has no access to this data (moved out of the
           warden register deliberately). Shows LEAVE exits + COMMUTE in/outs. */}
@@ -899,13 +936,37 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
         </div>
       </section>
         </div>
-
       </div>
+    </div>
+  );
 
-      {/* Teaching tools: class analytics · lesson plan · my leaves */}
-      <TeacherInsights />
+  const classesTab = (
+    <div className="flex flex-col gap-4 xl:grid xl:grid-cols-12 xl:items-start" data-testid="tab-classes">
+      <div className="flex flex-col gap-4 xl:col-span-6">
+        <AttendanceList rows={dayRows} loaded={!!ttMine} markedRec={markedRec} markOpen={markOpen} openLabel={openLabel} onMark={setMarkSlot} nowMin={nowM} />
+        <CoverBoardSection {...coverBoardProps} />
+      </div>
+      <div className="xl:col-span-6">
+        <TeacherInsights only={['plan', 'analytics']} title="Lesson plan & analytics" request={insightsReq} />
+      </div>
+    </div>
+  );
 
-      </>)}
+  const meTab = (
+    <div className="flex flex-col gap-3 max-w-xl" data-testid="tab-me">
+      <MeIdentity name={session?.name} identity={session?.identity} />
+      <MeRows onNotices={onOpenNotices} myLeavesOpen={myLeavesOpen} onToggleLeaves={() => setMyLeavesOpen(v => !v)} alerts={alerts} />
+      {myLeavesOpen && <TeacherInsights only={['leaves']} title="My leaves" sectionId="td-myleaves" />}
+    </div>
+  );
+
+  return (
+    <div className="p-4 sm:p-6 space-y-4 max-w-4xl xl:max-w-6xl 2xl:max-w-none mx-auto w-full" data-teacher-tab={tab}>
+      {tab === 'today' && todayTab}
+      {tab === 'students' && studentsTab}
+      {tab === 'classes' && classesTab}
+      {tab === 'me' && meTab}
+
 
       {/* "On Leave Today" — pick who covers (also used for "Change") */}
       <CoverPickerModal

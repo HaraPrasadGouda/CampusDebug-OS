@@ -19,6 +19,7 @@ import SettingsModal from './components/modals/SettingsModal';
 import MealRsvpModal from './components/modals/MealRsvpModal';
 import LeaveQRModal from './components/modals/LeaveQRModal';
 import TeacherDashboard from './components/roles/TeacherDashboard';
+import TeacherBottomBar from './components/teacher/TeacherBottomBar';
 import LoginScreen from './components/auth/LoginScreen';
 import { onPageActive, POLL_ACTIVE_MS, POLL_IDLE_MS } from './utils/livePoll';
 import { canAutoRefresh, onLiveUpdatesChange } from './utils/liveUpdates';
@@ -832,7 +833,7 @@ export default function App() {
       />
 
       {/* 2. Main Page Container (Scrolls independently while sidebar stays pinned on the left) */}
-      <div className="flex-1 w-full min-w-0 h-screen flex flex-col overflow-y-auto overflow-x-hidden transition-main">
+      <div id="app-scroll" className="flex-1 w-full min-w-0 h-screen flex flex-col overflow-y-auto overflow-x-hidden transition-main">
         
         {/* Top Header */}
         <Header
@@ -925,6 +926,7 @@ export default function App() {
               onNotification={(msg) => showToast(msg, 'success')}
               searchQuery={searchQuery}
               session={session}
+              onOpenNotices={() => setActiveModal('notices')}
             />
           )}
 
@@ -935,7 +937,12 @@ export default function App() {
           CampusDebug OS • Unified Campus Operations & Offline Action Feed
         </footer>
 
+        {/* Teacher phone layout: room under the fixed bottom bar so nothing hides behind it */}
+        {currentRole === 'Teacher' && <div className="lg:hidden shrink-0 h-[calc(76px+env(safe-area-inset-bottom))]" aria-hidden="true" />}
+
       </div>
+
+      {currentRole === 'Teacher' && <TeacherBottomBar appModalOpen={activeModal !== null} />}
 
       {/* --- Interactive Modals --- */}
       <RequestGatePassModal

@@ -172,14 +172,18 @@ function MyLeaves() {
   );
 }
 
-export default function TeacherInsights() {
-  const [tab, setTab] = useState('analytics');
+// `only` narrows the card to some of the tools (Classes tab: analytics + lesson plan; Me tab: my leaves);
+// `request` ({ id, n }) switches to a tool from outside (Today's "Lesson plan" quick action).
+export default function TeacherInsights({ only = null, title = 'Teaching tools', request = null, sectionId = 'td-insights' }) {
+  const tabs = only ? only.map(id => TABS.find(t => t.id === id)).filter(Boolean) : TABS;
+  const [tab, setTab] = useState(tabs[0].id);
+  useEffect(() => { if (request && tabs.some(t => t.id === request.id)) setTab(request.id); }, [request?.n]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
-    <section id="td-insights" className="scroll-mt-[124px] rounded-2xl border border-indigo-100 bg-white shadow-sm overflow-hidden">
-      <div className="px-4 pt-3 pb-0 bg-gradient-to-r from-indigo-50 to-white border-b border-indigo-100">
-        <h3 className="text-[15px] font-extrabold text-slate-900 mb-2">Teaching tools</h3>
-        <div role="tablist" className="flex gap-1">
-          {TABS.map(t => {
+    <section id={sectionId} data-testid={sectionId} className="scroll-mt-[124px] rounded-2xl border border-indigo-100 bg-white shadow-sm overflow-hidden">
+      <div className={`px-4 pt-3 ${tabs.length > 1 ? 'pb-0' : 'pb-3'} bg-gradient-to-r from-indigo-50 to-white border-b border-indigo-100`}>
+        <h3 className={`text-[15px] font-extrabold text-slate-900 ${tabs.length > 1 ? 'mb-2' : ''}`}>{title}</h3>
+        {tabs.length > 1 && <div role="tablist" className="flex gap-1">
+          {tabs.map(t => {
             const Icon = t.icon;
             return (
               <button key={t.id} role="tab" aria-selected={tab === t.id} type="button" onClick={() => setTab(t.id)}
@@ -188,7 +192,7 @@ export default function TeacherInsights() {
               </button>
             );
           })}
-        </div>
+        </div>}
       </div>
       <div className="p-3 sm:p-4">
         {tab === 'analytics' && <Analytics />}
