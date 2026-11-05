@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   CreditCard,
   X,
@@ -26,11 +26,15 @@ export default function FeeDuesModal({ isOpen, onClose, onFeePaid, session }) {
     session?.feeDue != null && session.feeDue !== undefined ? Number(session.feeDue) : null
   );
   const [isProcessingPay, setIsProcessingPay] = useState(false);
+  // Settle Dues now asks first: tapping it only switches this same modal to the confirm view.
+  // Nothing is paid until "Confirm & Pay".
+  const [confirming, setConfirming] = useState(false);
+  const payingRef = useRef(false);   // hard guard against a double tap before React re-renders
   const [loadError, setLoadError] = useState(null);
   const [receipts, setReceipts] = useState([]);   // this student's receipts, newest first
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) { setConfirming(false); return; }
     let alive = true;
     setLoadError(null);
     // The student's own receipts load alongside the balance — nothing to tap to see them
@@ -57,6 +61,14 @@ export default function FeeDuesModal({ isOpen, onClose, onFeePaid, session }) {
     return () => { alive = false; };
   }, [isOpen]);
 
+  // Escape (while asking) goes back to the dues view; it never pays. Does nothing in the plain dues view, as before.
+  useEffect(() => {
+    if (!isOpen || !confirming) return;
+    const onKey = (e) => { if (e.key === 'Escape' && !payingRef.current) setConfirming(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isOpen, confirming]);
+
   // GET /api/dashboard-data returns profile under `.profile` in some builds —
   // normalize: the server response `profile` object nests fields directly.
   // (fee_due_balance arrives flat; nothing else needed here.)
@@ -66,6 +78,8 @@ export default function FeeDuesModal({ isOpen, onClose, onFeePaid, session }) {
   const token = getAccessToken();
 
   const handlePayDues = () => {
+    if (payingRef.current) return;   // one request per confirm, however fast the double tap
+    payingRef.current = true;
     setIsProcessingPay(true);
     fetch('/api/fees/pay', {
       method: 'POST',
@@ -79,6 +93,7 @@ export default function FeeDuesModal({ isOpen, onClose, onFeePaid, session }) {
       .then((data) => {
         if (data?.success) {
           setFeeDue(0);
+          setConfirming(false);
           if (data.receipt) {
             setReceipts((list) => [data.receipt, ...list.filter((x) => x.receipt_id !== data.receipt.receipt_id)]);
           }
@@ -101,16 +116,21 @@ export default function FeeDuesModal({ isOpen, onClose, onFeePaid, session }) {
       .catch(() => {
         if (onFeePaid) onFeePaid('Network error — dues remain pending.', 'error');
       })
-      .finally(() => setIsProcessingPay(false));
+      .finally(() => { payingRef.current = false; setIsProcessingPay(false); });
   };
 
   const pendingAmount = feeDue != null ? feeDue : null;
+  // the confirm view only exists while there is something to pay (if the dues vanish underneath, the normal settled view shows)
+  const asking = confirming && pendingAmount != null && pendingAmount > 0;
   const latest = receipts[0] || null;
   // the latest receipt is the big card when nothing is due; everything else goes in the small list below
   const pastReceipts = pendingAmount === 0 && latest ? receipts.slice(1) : receipts;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/40 backdrop-blur-xs animate-in fade-in duration-200 overflow-y-auto">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/40 backdrop-blur-xs animate-in fade-in duration-200 overflow-y-auto"
+      onClick={(e) => { if (asking && e.target === e.currentTarget && !isProcessingPay) setConfirming(false); }}
+    >
       <div className="bg-white rounded-3xl max-w-lg w-full border border-slate-200/80 shadow-2xl overflow-hidden my-auto">
 
         {/* Modal Header */}
@@ -169,7 +189,12 @@ export default function FeeDuesModal({ isOpen, onClose, onFeePaid, session }) {
           )}
 
           {/* Single honest breakdown row — mirrors the real account balance */}
-          {pendingAmount != null && pendingAmount > 0 ? (
+          {asking ? (
+            <div data-testid="fee-confirm" role="alertdialog" aria-live="polite" className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-center space-y-1.5">
+              <div className="text-lg font-extrabold text-slate-900 font-mono">Pay {fmtMoney(pendingAmount)}?</div>
+              <div className="text-[11px] font-semibold text-slate-600">Demo payment, no real money is charged.</div>
+            </div>
+          ) : pendingAmount != null && pendingAmount > 0 ? (
             <div className="bg-white border border-slate-200 rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
               <div className="space-y-1">
                 <div className="flex items-center space-x-2">
@@ -185,11 +210,11 @@ export default function FeeDuesModal({ isOpen, onClose, onFeePaid, session }) {
                   ₹{pendingAmount.toLocaleString('en-IN')}
                 </span>
                 <button
-                  onClick={handlePayDues}
-                  disabled={isProcessingPay}
-                  className="px-4 min-h-[44px] rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition-all cursor-pointer shadow-sm shrink-0 disabled:opacity-60"
+                  type="button"
+                  onClick={() => setConfirming(true)}
+                  className="px-4 min-h-[44px] rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition-all cursor-pointer shadow-sm shrink-0"
                 >
-                  {isProcessingPay ? 'Processing…' : 'Settle Dues'}
+                  Settle Dues
                 </button>
               </div>
             </div>
@@ -224,7 +249,7 @@ export default function FeeDuesModal({ isOpen, onClose, onFeePaid, session }) {
           )}
 
           {/* Past receipts — shown as soon as there are any; a long history scrolls inside the box */}
-          {pastReceipts.length > 0 && (
+          {!asking && pastReceipts.length > 0 && (
             <div data-testid="fee-past-receipts" className="border border-slate-200 rounded-xl overflow-hidden">
               <div className="px-3.5 py-2 bg-slate-50 border-b border-slate-200 flex items-center gap-1.5 text-[11px] font-bold text-slate-600">
                 <Receipt className="w-3.5 h-3.5" /> {pendingAmount === 0 && latest ? 'Past receipts' : 'Your receipts'}
@@ -245,6 +270,28 @@ export default function FeeDuesModal({ isOpen, onClose, onFeePaid, session }) {
           )}
 
           {/* Action Buttons */}
+          {asking ? (
+            <div className="flex flex-col sm:flex-row sm:justify-end gap-2.5 pt-3 border-t border-slate-200">
+              <button
+                type="button"
+                data-testid="fee-cancel"
+                onClick={() => setConfirming(false)}
+                disabled={isProcessingPay}
+                className="px-5 min-h-[44px] rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs transition-colors cursor-pointer disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                data-testid="fee-confirm-pay"
+                onClick={handlePayDues}
+                disabled={isProcessingPay}
+                className="px-5 min-h-[48px] rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm transition-all cursor-pointer shadow-sm disabled:opacity-60"
+              >
+                {isProcessingPay ? 'Processing…' : 'Confirm & Pay'}
+              </button>
+            </div>
+          ) : (
           <div className="flex items-center justify-end pt-3 border-t border-slate-200">
             <button
               type="button"
@@ -254,6 +301,7 @@ export default function FeeDuesModal({ isOpen, onClose, onFeePaid, session }) {
               Close
             </button>
           </div>
+          )}
         </div>
       </div>
     </div>
