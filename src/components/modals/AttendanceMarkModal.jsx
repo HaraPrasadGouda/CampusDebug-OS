@@ -152,7 +152,7 @@ export default function AttendanceMarkModal({ isOpen, onClose, slot, onMarked })
                 {slot.kind === 'lab' ? 'LAB' : 'LECTURE'}
               </span>
             </div>
-            <p className="text-xs text-slate-500 font-medium mt-1 truncate">
+            <p className="text-xs text-slate-500 font-medium mt-1 break-words sm:truncate">
               {slot.subjectCode} · {slot.subject} — {slot.sectionLabel || slot.departmentLabel || slot.department} · {slot.periodLabel || `P${slot.period}`}
               {slot.time ? ` · ${slot.time}` : ''}
               {slot.room ? ` · ${slot.room}` : ''}
@@ -174,14 +174,14 @@ export default function AttendanceMarkModal({ isOpen, onClose, slot, onMarked })
           <span className="text-[11px] font-black text-rose-700 bg-rose-50 border border-rose-200 rounded-full px-2 py-0.5">
             {students ? `Absent ${(students || []).length - presentCount}` : ''}
           </span>
-          <div className="flex-1" />
-          <div className="relative">
+          <div className="hidden sm:block flex-1" />
+          <div className="relative flex-1 min-w-[12.5rem] sm:flex-none">
             <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search roll / name…"
-              className="pl-8 pr-3 py-1.5 text-[11px] font-semibold rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-teal-300 w-40 sm:w-48"
+              className="pl-8 pr-3 py-1.5 text-[11px] font-semibold rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-teal-300 w-full sm:w-48"
             />
           </div>
           <button onClick={markAll} disabled={!students} className="text-[11px] font-black text-white bg-emerald-600 border border-emerald-600 rounded-lg px-3 py-1.5 hover:bg-emerald-700 transition-colors cursor-pointer disabled:opacity-40 shadow-sm">
@@ -240,17 +240,17 @@ export default function AttendanceMarkModal({ isOpen, onClose, slot, onMarked })
         </div>
 
         {/* Footer */}
-        <div className="px-5 py-3 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-2 shrink-0">
+        <div className="px-4 sm:px-5 py-3 bg-slate-50 border-t border-slate-100 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between shrink-0">
           <span className={`flex items-center gap-1.5 text-[10px] font-bold ${online ? 'text-slate-500' : 'text-amber-700'}`}>
             {online ? <Wifi className="w-3 h-3 text-emerald-600" /> : <WifiOff className="w-3 h-3" />}
             {online ? 'Gate hints live (online-only feature)' : 'Offline — gate suggestion chips hidden'}
           </span>
-          <div className="flex items-center gap-2">
-            <button onClick={onClose} className="text-xs font-bold text-slate-600 hover:text-slate-900 transition-colors cursor-pointer px-2">Cancel</button>
+          <div className="flex items-stretch gap-2 sm:items-center">
+            <button onClick={onClose} className="text-xs font-bold text-slate-600 hover:text-slate-900 transition-colors cursor-pointer shrink-0 px-4 min-h-[44px] sm:min-h-0 sm:px-2">Cancel</button>
             <button
               onClick={save}
               disabled={busy || !students}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white text-xs font-bold cursor-pointer transition-all shadow-sm shrink-0"
+              className="flex flex-1 sm:flex-none items-center justify-center gap-1.5 px-4 py-2 min-h-[44px] sm:min-h-0 rounded-xl bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white text-xs font-bold text-center leading-tight cursor-pointer transition-all shadow-sm min-w-0"
             >
               <Check className={`w-4 h-4 ${busy ? 'animate-pulse' : ''}`} />
               {busy ? 'Saving…' : `Save — present ${presentCount}/${(students || []).length}`}

@@ -659,14 +659,14 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
         <div className="contents xl:flex xl:flex-col xl:gap-4 xl:col-span-6">
       {/* APPROVAL QUEUE — the always-works path */}
       <section id="td-approvals" className="order-2 xl:grow xl:flex xl:flex-col scroll-mt-[124px] bg-white border-2 border-amber-200 rounded-2xl shadow-sm overflow-hidden">
-        <div className="flex items-center justify-between gap-3 px-4 sm:px-5 py-3 bg-gradient-to-r from-amber-50 to-white border-b border-amber-100">
-          <h3 className="text-[15px] font-bold text-slate-900 flex items-center gap-2.5 min-w-0">
+        <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-2 px-4 sm:px-5 py-3 bg-gradient-to-r from-amber-50 to-white border-b border-amber-100">
+          <h3 className="text-[15px] font-bold text-slate-900 flex items-center gap-2 whitespace-nowrap">
             <span className="w-9 h-9 rounded-xl bg-amber-100/70 text-amber-700 border border-amber-200 flex items-center justify-center shrink-0">
               <Clock className="w-4 h-4" />
             </span>
             Approval Queue
           </h3>
-          <span className={`shrink-0 text-[11px] font-mono font-bold px-2.5 py-1 rounded-full border ${pendingLeaves.length > 0 ? 'text-white bg-amber-500 border-amber-500' : 'text-slate-600 bg-slate-50 border-slate-200'}`}>{pendingLeaves.length} waiting</span>
+          <span className={`shrink-0 text-[11px] font-mono font-bold px-2 py-1 rounded-full border ${pendingLeaves.length > 0 ? 'text-white bg-amber-500 border-amber-500' : 'text-slate-600 bg-slate-50 border-slate-200'}`}>{pendingLeaves.length} waiting</span>
         </div>
         <div className="p-4 sm:p-5 xl:flex-1 xl:flex xl:flex-col">
 
@@ -691,7 +691,7 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
                       <strong>Reason:</strong> {leave.reason}
                     </p>
                     <p className="text-[11px] text-slate-500 mt-0.5">
-                      Requested {timeHM(leave.created_at)} • one-way leave — approved exit, back next working day
+                      Requested {timeHM(leave.created_at)}
                     </p>
                     {onLeave && leave.routed_to && leave.routed_to === myState.delegatedTo && (
                       <p className="inline-flex items-center gap-1 mt-1.5 text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-full px-2 py-0.5">
@@ -700,12 +700,13 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
                     )}
                   </div>
                 </div>
-                <input
+<textarea
+                  rows={3}
                   value={noteDraft}
                   onChange={(e) => setNoteDraft(e.target.value)}
                   placeholder="Optional note to the student (e.g. come back after the appointment)"
                   maxLength={200}
-                  className="w-full min-h-[44px] rounded-xl border border-amber-200 bg-white p-2.5 text-xs outline-none focus:border-amber-400 transition-colors"
+                  className="block w-full min-h-[44px] sm:h-[44px] rounded-xl border border-amber-200 bg-white p-2.5 text-xs outline-none focus:border-amber-400 transition-colors resize-none"
                 />
                 <div className="flex gap-2">
                   <button
@@ -814,35 +815,35 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
           mentees. The warden has no access to this data (moved out of the
           warden register deliberately). Shows LEAVE exits + COMMUTE in/outs. */}
       <section id="td-gatelog" className="order-6 xl:grow xl:flex xl:flex-col scroll-mt-[124px] bg-white border border-blue-200 rounded-2xl shadow-sm overflow-hidden">
-        <div className="flex items-start justify-between gap-3 px-4 sm:px-5 py-3 bg-gradient-to-r from-blue-50 to-white border-b border-blue-100">
-          <div className="flex items-start gap-2.5 min-w-0">
-            <span className="w-9 h-9 rounded-xl bg-blue-100/70 text-blue-700 border border-blue-200 flex items-center justify-center shrink-0">
-              <UserCheck className="w-4 h-4" />
-            </span>
-            <div className="min-w-0">
-            <h3 className="text-[15px] font-bold text-slate-900 leading-9">
-              My Day-Scholars&apos; Gate Log
-            </h3>
-            <p className="text-[11px] text-slate-500 -mt-1 leading-snug">
-              Visible ONLY to you — your own mentees&apos; campus in/out and mentor-approved leave exits, straight from the gate scanner.
-            </p>
-            {dsScans && (
-              <span className="inline-block mt-1.5 text-[11px] font-mono font-bold text-blue-800 bg-blue-50 border border-blue-200 px-2.5 py-1 rounded-full">
-                {dsScans.menteeCount} day scholars
+        <div className="px-4 sm:px-5 py-3 bg-gradient-to-r from-blue-50 to-white border-b border-blue-100">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <span className="w-9 h-9 rounded-xl bg-blue-100/70 text-blue-700 border border-blue-200 flex items-center justify-center shrink-0">
+                <UserCheck className="w-4 h-4" />
               </span>
-            )}
+              <h3 className="text-[15px] font-bold text-slate-900 leading-snug min-w-0">
+                My Day-Scholars&apos; Gate Log
+              </h3>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={loadScans}
+                className="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl border border-blue-200 bg-white hover:bg-blue-50 text-slate-500 hover:text-slate-800 transition-colors cursor-pointer"
+                title="Refresh gate log"
+              >
+                <RefreshCw className="w-4 h-4" />
+              </button>
             </div>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              type="button"
-              onClick={loadScans}
-              className="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl border border-blue-200 bg-white hover:bg-blue-50 text-slate-500 hover:text-slate-800 transition-colors cursor-pointer"
-              title="Refresh gate log"
-            >
-              <RefreshCw className="w-4 h-4" />
-            </button>
-          </div>
+          <p className="text-[11px] text-slate-500 mt-1 leading-snug">
+            Visible ONLY to you — your own mentees&apos; campus in/out and mentor-approved leave exits, straight from the gate scanner.
+          </p>
+          {dsScans && (
+            <span className="inline-block mt-1.5 text-[11px] font-mono font-bold text-blue-800 bg-blue-50 border border-blue-200 px-2.5 py-1 rounded-full">
+              {dsScans.menteeCount} day scholars
+            </span>
+          )}
         </div>
         <div className="p-4 sm:p-5 space-y-3 xl:flex-1 xl:flex xl:flex-col">
         {!dsScans || (dsScans.scans || []).length === 0 ? (
@@ -1089,8 +1090,8 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
                           : 'bg-slate-50 border-slate-100 opacity-60 cursor-not-allowed'}`}
                       >
                         <span className="min-w-0">
-                          <span className="block text-xs font-bold text-slate-900 truncate">
-                            {m.full_name} <span className="text-[11px] font-normal text-slate-500 font-mono">({m.roll_number})</span>
+                          <span className="block text-xs font-bold text-slate-900 break-words">
+                            {m.full_name} <span className="text-[11px] font-normal text-slate-500 font-mono whitespace-nowrap">({m.roll_number})</span>
                           </span>
                           <span className="block text-[11px] text-slate-500 font-medium mt-0.5 truncate">
                             {m.coverFor ? `Covering for ${m.coverFor}` : (m.department || '—')}
