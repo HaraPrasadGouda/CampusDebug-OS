@@ -74,6 +74,8 @@ http.createServer((req,res)=>{
     if(u.pathname==='/__dump') return send(200,tables[u.searchParams.get('t')]||[]);
     const m=/^\/rest\/v1\/([a-z_]+)/.exec(u.pathname);
     if(!m) return send(404,{msg:'mock: unknown '+u.pathname});
+    // MISSING_TABLES=a,b : those tables answer like PostgREST does for a table that was never created
+    if((process.env.MISSING_TABLES||'').split(',').includes(m[1])) return send(404,{code:'PGRST205',details:null,hint:null,message:`Could not find the table 'public.${m[1]}' in the schema cache`});
     const tbl=tables[m[1]]||(tables[m[1]]=[]);
     const params=[...u.searchParams.entries()];
     const single=(req.headers.accept||'').includes('vnd.pgrst.object');
@@ -97,6 +99,7 @@ http.createServer((req,res)=>{
       return send(200,rows,{'content-range':`0-${Math.max(rows.length-1,0)}/${all.length}`}); }
     let parsed=[]; try{parsed=JSON.parse(body||'[]');}catch{}
     const arr=Array.isArray(parsed)?parsed:[parsed];
+    if(req.method==='POST' && m[1]==='fee_payments' && arr.some(r=>tbl.some(x=>x.receipt_id===r.receipt_id))) return send(409,{code:'23505',details:null,hint:null,message:'duplicate key value violates unique constraint "fee_payments_receipt_id_key"'});
     if(req.method==='POST'){ const made=arr.map(r=>({id:(m[1]==='leave_requests'?`00000000-0000-4000-9000-${String(seq++).padStart(12,'0')}`:'row-'+(seq++)),...r})); made.forEach(r=>tbl.push(r)); return out(made,201); }
     if(req.method==='PATCH'){ const rows=tbl.filter(r=>match(r,params)); rows.forEach(r=>Object.assign(r,arr[0])); return out(rows); }
     if(req.method==='DELETE') return send(200,[]);
