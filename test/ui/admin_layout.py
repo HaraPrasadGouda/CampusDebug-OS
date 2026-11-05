@@ -25,7 +25,10 @@ with sync_playwright() as p:
     pg = ctx.new_page(); pg.set_default_timeout(10000); pg.on('pageerror', lambda e: errs.append(str(e)))
     pg.on('console', lambda m: errs.append(m.text[:160]) if m.type == 'error' else None)
     pg.goto(cfg['base'] + '/', wait_until='networkidle'); time.sleep(3)
-    pg.locator('#admin-cover-alerts').wait_for(); scale(pg); time.sleep(.3)
+    # the app opens on Home (covered by test/ui/admin_home.py); the cover banner + notice form live on the Notices tool page
+    if mob: pg.locator('[data-admin-group="Notices"]').locator('visible=true').first.click()
+    else: pg.locator('[data-admin-tab="dispatcher"]').locator('visible=true').first.click()
+    time.sleep(1); pg.locator('#admin-cover-alerts').wait_for(); scale(pg); time.sleep(.3)
     # 1) cover banner (phone): icon and text sit in one row; the action button is a full-width 44px target
     out['banner'] = pg.evaluate("""()=>{const b=document.querySelector('#admin-cover-alerts > div');const ic=b.querySelector('span');const tx=b.querySelector('p');const bt=b.querySelector('button');const r=(e)=>e.getBoundingClientRect();return {iconTop:r(ic).top,textTop:r(tx).top,iconRight:r(ic).right,textLeft:r(tx).left,btnH:bt?r(bt).height:null,btnL:bt?r(bt).left:null,btnR:bt?r(bt).right:null,iw:innerWidth}}""")
     out['side_home'] = side_scroll(pg); out['small_home'] = small_targets(pg); shot(pg, 'home')
@@ -40,12 +43,12 @@ with sync_playwright() as p:
     def tab(group, tid):
         if mob:
             pg.locator(f'[data-admin-group="{group}"]').locator('visible=true').first.click(); time.sleep(.5)
-            if tid not in ('dispatcher','timetable','setup','docs','csv'):
+            if tid not in ('dispatcher','timetable','setup','docs'):
                 pg.locator(f'[data-admin-tab="{tid}"]').locator('visible=true').last.click()
         else:
             pg.locator(f'[data-admin-tab="{tid}"]').locator('visible=true').first.click()
         time.sleep(1.8); scale(pg)
-    tab('Support', 'fees'); time.sleep(.5)
+    tab('More', 'fees'); time.sleep(.5)
     out['fees'] = pg.evaluate("""()=>{const root=document.querySelector('[data-testid=fee-payments]');const ps=[...root.querySelectorAll('.font-mono.font-extrabold')].slice(0,2);const kp=ps.map(p=>{const lh=parseFloat(getComputedStyle(p).lineHeight)||parseFloat(getComputedStyle(p).fontSize)*1.25;return Math.round(p.getBoundingClientRect().height/lh)});const rf=root.querySelector('button[aria-label="Refresh fee payments"]').getBoundingClientRect();const sr=root.querySelector('label').getBoundingClientRect();return {kpiLines:kp,refreshW:rf.width,refreshH:rf.height,refreshRight:rf.right,searchRight:sr.right,refreshLeft:rf.left,searchTop:sr.top,refreshTop:rf.top,iw:innerWidth,amounts:ps.map(p=>p.innerText)}}""")
     out['fee_search'] = pg.evaluate("""()=>{const e=document.querySelector('[data-testid=fee-payments] input');const cs=getComputedStyle(e);const c=document.createElement('canvas').getContext('2d');c.font=cs.fontWeight+' '+cs.fontSize+' '+cs.fontFamily;return [c.measureText(e.placeholder).width, e.clientWidth-parseFloat(cs.paddingLeft)-parseFloat(cs.paddingRight)]}""")
     out['small_fees'] = small_targets(pg); out['side_fees'] = side_scroll(pg); shot(pg, 'fees')
@@ -54,11 +57,11 @@ with sync_playwright() as p:
     out['tt'] = pg.evaluate("""()=>{const l=document.querySelector('[data-testid=tt-section-list]');if(!l)return null;const cs=getComputedStyle(l);const names=[...l.querySelectorAll('p.font-bold')].map(p=>[p.innerText,p.scrollWidth<=p.clientWidth+1]);return {overflowY:cs.overflowY,maxH:parseFloat(cs.maxHeight),names}}""")
     out['small_tt'] = small_targets(pg); out['side_tt'] = side_scroll(pg); shot(pg, 'timetable')
     # 6) Section title above each tool wraps instead of ending in "..."
-    tab('Campus & Hostel', 'mess'); time.sleep(1)
+    tab('Campus', 'mess'); time.sleep(1)
     out['title'] = pg.evaluate("""()=>{const h=[...document.querySelectorAll('h3')].find(x=>/Mess Kitchen Forecast/.test(x.innerText));const cs=getComputedStyle(h);return {clip:h.scrollWidth>h.clientWidth+1,ellipsis:cs.textOverflow}}""")
     out['small_mess'] = small_targets(pg); out['side_mess'] = side_scroll(pg)
-    tab('Support', 'docs'); out['small_docs'] = small_targets(pg); out['side_docs'] = side_scroll(pg)
-    tab('Campus & Hostel', 'setup'); out['small_setup'] = small_targets(pg); out['side_setup'] = side_scroll(pg); shot(pg, 'setup')
+    tab('More', 'docs'); out['small_docs'] = small_targets(pg); out['side_docs'] = side_scroll(pg)
+    tab('Campus', 'setup'); out['small_setup'] = small_targets(pg); out['side_setup'] = side_scroll(pg); shot(pg, 'setup')
     out['errors'] = [e for e in errs if 'favicon' not in e][:6]
     ctx.close()
 print(json.dumps(out))

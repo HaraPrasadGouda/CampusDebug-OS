@@ -25,7 +25,9 @@ import {
   Calendar,
   RefreshCw,
   Building2,
-  Receipt
+  Receipt,
+  Home as HomeIcon,
+  MoreHorizontal
 } from 'lucide-react';
 import FeePaymentsPanel from '../FeePaymentsPanel';
 import { saveLocal, bulkSaveLocal, getAllLocal, queueOfflineAction, getOutboxCount } from '../../utils/db';
@@ -54,9 +56,10 @@ const mapServerNotice = (n) => ({
 import { initSyncEngine, flushOfflineQueue } from '../../utils/syncEngine';
 import AdminCoversCard from '../teacher/AdminCoversCard';
 import AdminCoverAlerts from '../teacher/AdminCoverAlerts';
+import AdminHome from '../admin/AdminHome';
 
 export default function AdminDashboard({ onNotification, searchQuery: externalSearchQuery = '' }) {
-  const [activeTab, setActiveTab] = useState('dispatcher'); // 'dispatcher' | 'csv' | 'metrics'
+  const [activeTab, setActiveTab] = useState('home'); // 'home' | 'dispatcher' | 'csv' | 'metrics' | …
   const [queueDepth, setQueueDepth] = useState(0);
   const [isSyncing, setIsSyncing] = useState(false);
 
@@ -429,7 +432,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
   useEffect(() => {
     if (activeTab === 'timetable') { loadTimetableInfo(); loadAttLocks(); loadCampusConfig(); loadAtRisk(); }
     if (activeTab === 'setup') { loadCampusConfig(); loadStaffDirectory(); }
-    if (activeTab === 'dispatcher') { loadCampusConfig(); } // courses + live sections/years for the campus audience dropdowns
+    if (activeTab === 'dispatcher' || activeTab === 'home') { loadCampusConfig(); } // courses + live sections/years for the campus audience dropdowns
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
 
@@ -511,6 +514,10 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
             blocks: Array.isArray(data.blocks) ? data.blocks : [],
             clusterCount: Array.isArray(data.masterClusters) ? data.masterClusters.length : null,
             recentTickets: recent.length,
+            escalated: recent.filter(t => String(t.status || '').toUpperCase() === 'ESCALATED_TO_DEAN').map(t => ({
+              id: t.id, title: t.title || null, category: t.category || null, location: t.location || null,
+              breachedHours: typeof t.slaHoursLeft === 'number' && t.slaHoursLeft < 0 ? -t.slaHoursLeft : null
+            })),
             recentResolved: recent.filter(t => ['RESOLVED', 'CLOSED'].includes(String(t.status || '').toUpperCase())).length
           });
         }
@@ -576,7 +583,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
   const [docRequests, setDocRequests] = useState(null);
   const [docBusyId, setDocBusyId] = useState(null);
   useEffect(() => {
-    if (activeTab !== 'docs') return;
+    if (activeTab !== 'docs' && activeTab !== 'home') return;
     let alive = true;
     const load = () => {
       fetch('/api/document-requests')
@@ -935,6 +942,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
   // setActiveTab handler), grouped into sections, and the 4 KPI figures shown
   // compact instead of 4 big cards. No data or behaviour change.
   const adminTabs = {
+    home: { label: 'Home', Icon: HomeIcon, on: 'bg-indigo-600 text-white', off: 'bg-indigo-100 text-indigo-600', sel: 'bg-indigo-50 border-indigo-400 text-indigo-900', bar: 'bg-indigo-500' },
     dispatcher: { label: 'Send Notice', Icon: Send, on: 'bg-emerald-600 text-white', off: 'bg-emerald-100 text-emerald-600', sel: 'bg-emerald-50 border-emerald-400 text-emerald-900', bar: 'bg-emerald-500' },
     docs: { label: 'Document Desk', Icon: FileText, on: 'bg-violet-600 text-white', off: 'bg-violet-100 text-violet-600', sel: 'bg-violet-50 border-violet-400 text-violet-900', bar: 'bg-violet-500' },
     timetable: { label: 'Timetable Engine', Icon: Calendar, on: 'bg-teal-600 text-white', off: 'bg-teal-100 text-teal-600', sel: 'bg-teal-50 border-teal-400 text-teal-900', bar: 'bg-teal-500' },
@@ -973,10 +981,382 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
     return () => io.disconnect();
   }, []);
 
+  // The Send Notice desk: the same form + history, shown as the tool page and
+  // (compact, single column) on the laptop Home beside "Needs you now".
+  const renderDispatcher = (compact = false) => (
+        <div className={compact ? 'grid grid-cols-1 gap-4' : 'grid grid-cols-1 md:grid-cols-3 gap-4'}>
+          
+          {/* Dispatcher Form */}
+          <div className={`${compact ? '' : 'md:col-span-2 '}bg-white border border-slate-200 rounded-xl p-4 sm:p-5 space-y-4 shadow-sm`}>
+            <div className="border-b border-slate-100 pb-3">
+              <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <Send className="w-5 h-5 text-emerald-600" />
+                <span>Send a Notice</span>
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Target notifications strictly to affected students without broadcasting irrelevant alerts campus-wide.
+              </p>
+            </div>
+
+            <form onSubmit={handleDispatchNotice} className="space-y-3.5 text-xs">
+              {/* Notice kind — hostel ops vs campus/academic: two separate
+                  flows in one desk. Hostel = block fan-out; Campus = course/
+                  section/year audience resolved from the live roster. */}
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setNoticeForm({ ...noticeForm, noticeKind: 'hostel' })}
+                  className={`px-3 py-2 rounded-lg border font-bold text-xs transition-all cursor-pointer ${noticeForm.noticeKind === 'hostel' ? 'bg-emerald-600 border-emerald-600 text-white shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:border-emerald-300'}`}
+                >
+                  🏠 Hostel Notice
+                  <span className="block text-[9px] font-medium opacity-80">block fan-out + SMS fallback</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setNoticeForm({ ...noticeForm, noticeKind: 'campus' })}
+                  className={`px-3 py-2 rounded-lg border font-bold text-xs transition-all cursor-pointer ${noticeForm.noticeKind === 'campus' ? 'bg-sky-600 border-sky-600 text-white shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:border-sky-300'}`}
+                >
+                  🎓 Campus / Academic
+                  <span className="block text-[9px] font-medium opacity-80">course · section · year audience</span>
+                </button>
+              </div>
+
+              {/* Segment Filter — real targeting resolved from the live roster */}
+              <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-2.5">
+                <span className="text-[11px] font-mono text-emerald-700 font-bold uppercase tracking-wider flex items-center gap-1">
+                  <Filter className="w-3.5 h-3.5" />
+                  <span>Delivery Target (resolved from the live roster):</span>
+                </span>
+
+                {noticeForm.noticeKind === 'hostel' ? (
+                <div className="grid grid-cols-1 gap-2">
+                  <div>
+                    <label className="block text-slate-600 mb-1 text-[11px]">Hostel Block</label>
+                    <select
+                      value={noticeForm.hostelBlock}
+                      onChange={(e) => setNoticeForm({ ...noticeForm, hostelBlock: e.target.value })}
+                      className="w-full bg-white border border-slate-200 rounded-md px-2 py-1.5 text-slate-800 focus:outline-none focus:border-emerald-600"
+                    >
+                      <option value="All Hostels">All Hostels — Campus Wide Broadcast</option>
+                      {(campusStats.blocks.length > 0
+                        ? campusStats.blocks
+                        : ['A', 'B', 'C', 'D', 'Girls Hostel 1'] // offline fallback only; live roster wins when online
+                      ).map((b) => (
+                        <option key={b} value={b}>Hostel Block {b}</option>
+                      ))}
+                    </select>
+                    <p className="text-[10px] text-slate-500 mt-1.5 leading-relaxed">
+                      {noticeForm.hostelBlock === 'All Hostels'
+                        ? 'Campus wide: every active app device gets a push; keypad-phone students get an automatic SMS.'
+                        : 'Targeted: hostellers of this block get the notice — activated ones by push, others by SMS. Day scholars in the directory are told in the notice title, not SMSed. Floor nuance: put it in the title.'}
+                    </p>
+                  </div>
+                </div>
+                ) : (
+                <div className="space-y-2.5">
+                  <div>
+                    <label className="block text-slate-600 mb-1 text-[11px]">Audience</label>
+                    <select
+                      value={noticeForm.campusMode}
+                      onChange={(e) => setNoticeForm({ ...noticeForm, campusMode: e.target.value })}
+                      className="w-full bg-white border border-slate-200 rounded-md px-2 py-1.5 text-slate-800 focus:outline-none focus:border-sky-600"
+                    >
+                      <option value="ALL">Whole Campus — every student</option>
+                      <option value="COURSE">Course-wise (e.g. all BTech students)</option>
+                      <option value="COURSE_SECTION">Course + Section (e.g. BTech, Section A)</option>
+                      <option value="COURSE_YEAR">Course + Year (e.g. BTech 2022 batch — semester exam)</option>
+                    </select>
+                  </div>
+
+                  {noticeForm.campusMode !== 'ALL' && (
+                    <div>
+                      <label className="block text-slate-600 mb-1 text-[11px]">Course</label>
+                      <select
+                        value={noticeForm.campusCourse}
+                        onChange={(e) => setNoticeForm({ ...noticeForm, campusCourse: e.target.value })}
+                        className="w-full bg-white border border-slate-200 rounded-md px-2 py-1.5 text-slate-800 focus:outline-none focus:border-sky-600"
+                      >
+                        <option value="">— pick a course —</option>
+                        {[...new Set((cc?.branches || []).map(b => b.course).filter(Boolean))].map((c) => (
+                          <option key={c} value={c}>{c}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {noticeForm.campusMode === 'COURSE_SECTION' && (
+                    <div>
+                      <label className="block text-slate-600 mb-1 text-[11px]">Section</label>
+                      <select
+                        value={noticeForm.campusSection}
+                        onChange={(e) => setNoticeForm({ ...noticeForm, campusSection: e.target.value })}
+                        className="w-full bg-white border border-slate-200 rounded-md px-2 py-1.5 text-slate-800 focus:outline-none focus:border-sky-600"
+                      >
+                        <option value="">— pick a section —</option>
+                        {ccDirectory.sections.map((s) => (
+                          <option key={s} value={s}>Section {s}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {noticeForm.campusMode === 'COURSE_YEAR' && (
+                    <div>
+                      <label className="block text-slate-600 mb-1 text-[11px]">Admission Year (from roll number)</label>
+                      <select
+                        value={noticeForm.campusYear}
+                        onChange={(e) => setNoticeForm({ ...noticeForm, campusYear: e.target.value })}
+                        className="w-full bg-white border border-slate-200 rounded-md px-2 py-1.5 text-slate-800 focus:outline-none focus:border-sky-600"
+                      >
+                        <option value="">— pick a year —</option>
+                        {ccDirectory.years.map((y) => (
+                          <option key={y} value={y}>{y} batch</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  <p className="text-[10px] text-slate-500 leading-relaxed">
+                    {noticeForm.campusMode === 'ALL'
+                      ? 'Campus wide: every active app device gets a push; keypad-phone students get an automatic SMS.'
+                      : 'Targeted academic audience: matching students get the notice — activated ones by push, others by SMS. Resolved live from the roster, so transfer/section changes are always reflected.'}
+                  </p>
+                </div>
+                )}
+              </div>
+
+              {/* Today's Notice — optional date pin. The notice still goes out
+                  on the bus (push/SMS) right now, but the student dashboard
+                  surfaces it as a dated hero card ONLY on this date — the
+                  antidote to notices drowning in chat history. */}
+              <div>
+                <label className="block text-slate-700 font-medium mb-1">
+                  📌 Show as &quot;Today&apos;s Notice&quot; on
+                  <span className="ml-2 text-[10px] font-mono text-slate-400">(optional — dated hero card on the student dashboard, that day only)</span>
+                </label>
+                <input
+                  type="date"
+                  value={noticeForm.showOn}
+                  onChange={(e) => setNoticeForm({ ...noticeForm, showOn: e.target.value })}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 focus:outline-none focus:border-emerald-600"
+                />
+              </div>
+
+              {/* Title & Content */}
+              <div>
+                <label className="block text-slate-700 font-medium mb-1">Notice Headline</label>
+                <input
+                  type="text"
+                  required
+                  value={noticeForm.title}
+                  onChange={(e) => setNoticeForm({ ...noticeForm, title: e.target.value })}
+                  placeholder="e.g., Water off 2–5 PM, Block B"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 focus:outline-none focus:border-emerald-600"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-700 font-medium mb-1">Notice Body / Instructions</label>
+                <textarea
+                  required
+                  rows={3}
+                  value={noticeForm.content}
+                  onChange={(e) => setNoticeForm({ ...noticeForm, content: e.target.value })}
+                  placeholder="Please store drinking water by 2 PM. Main supply will resume by 5:30 PM..."
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 focus:outline-none focus:border-emerald-600"
+                ></textarea>
+              </div>
+
+              {/* Action Tag & Urgency */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-700 font-medium mb-1">Interactive Action Tag</label>
+                  <select
+                    value={noticeForm.actionTag}
+                    onChange={(e) => setNoticeForm({ ...noticeForm, actionTag: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 focus:outline-none focus:border-emerald-600 cursor-pointer"
+                  >
+                    <option value="Require 1-Tap Acknowledge">Require 1-Tap Read Receipt</option>
+                    <option value="Vote / Preference Poll">Attach 1-Tap Vote</option>
+                    <option value="Emergency Warning">Emergency Evacuation Tag</option>
+                    <option value="Informational">General Informational</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-slate-700 font-medium mb-1">Priority Level</label>
+                  <select
+                    value={noticeForm.urgency}
+                    onChange={(e) => setNoticeForm({ ...noticeForm, urgency: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 focus:outline-none focus:border-emerald-600 cursor-pointer"
+                  >
+                    <option value="High">High Priority (Pinned)</option>
+                    <option value="Normal">Normal Priority</option>
+                    <option value="Emergency">Emergency Alert</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* SMS Fallback for keypad-phone students (no PWA device) */}
+              <div>
+                <label className="block text-slate-700 font-medium mb-1">
+                  SMS Fallback Targets
+                  <span className="ml-2 text-[10px] font-mono text-slate-400">(optional — students on keypad phones get it by SMS)</span>
+                </label>
+                <input
+                  type="text"
+                  value={noticeForm.smsPhones}
+                  onChange={(e) => setNoticeForm({ ...noticeForm, smsPhones: e.target.value })}
+                  placeholder="10-digit numbers, comma-separated"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 focus:outline-none focus:border-emerald-600"
+                />
+              </div>
+
+              {/* Dispatch Action */}
+              <div className="flex items-center justify-end pt-2 border-t border-slate-100">
+                <button
+                  type="submit"
+                  disabled={isDispatching}
+                  className="px-5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-medium text-xs flex items-center space-x-1.5 transition-all cursor-pointer shadow-sm"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  <span>{isDispatching ? 'Dispatching...' : 'Dispatch Targeted Notice'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+
+          {/* Live Delivery Report — real counts from the notice bus */}
+          <div className="bg-white border border-slate-200 rounded-xl p-4 sm:p-5 space-y-4 shadow-sm">
+            <h3 className="text-xs font-mono uppercase tracking-wider text-slate-500 font-semibold border-b border-slate-100 pb-2">
+              Live Delivery Report (real recipients)
+            </h3>
+
+            <div className="space-y-3.5">
+              {dispatchedNotices.length === 0 && (
+                <p className="text-[11px] text-slate-500 py-4 text-center">
+                  No notices sent yet.
+                </p>
+              )}
+              {dispatchedNotices.map((n) => {
+                const reachedKnown = n.totalTargeted != null && n.totalTargeted > 0;
+                const deliveryPct = reachedKnown ? Math.min(100, Math.round((n.deliveredCount / n.totalTargeted) * 100)) : 0;
+
+                return (
+                  <div key={n.id} className="bg-slate-50/50 border border-slate-200 rounded-lg p-3 space-y-2 text-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono text-emerald-700 font-bold">{n.id}</span>
+                      <span className="text-[10px] font-mono text-slate-500">{n.publishedAt}</span>
+                    </div>
+
+                    <h4 className="font-bold text-slate-900 leading-tight">{n.title}</h4>
+                    <p className="text-[11px] text-slate-500 truncate">{n.target}</p>
+
+                    <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                      {n.pushStudents != null && (
+                        <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-sky-50 text-sky-700 border border-sky-200">
+                          🔔 {n.pushStudents} app push
+                        </span>
+                      )}
+                      {n.smsCount > 0 && (
+                        <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-violet-50 text-violet-700 border border-violet-200">
+                          💬 {n.smsCount} SMS{n.smsModes.length ? ` (${n.smsModes.join(', ')})` : ''}
+                        </span>
+                      )}
+                      {n.noContact > 0 && (
+                        <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
+                          ⚠ {n.noContact} no contact on file
+                        </span>
+                      )}
+                      {n.dayscholars > 0 && (
+                        <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-lime-50 text-lime-800 border border-lime-200">
+                          🚶 {n.dayscholars} day scholar{(n.dayscholars > 1) ? 's' : ''} excluded
+                        </span>
+                      )}
+                      {!reachedKnown && n.pushStudents == null && (
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 border border-slate-200">
+                          campus-wide broadcast
+                        </span>
+                      )}
+                    </div>
+
+                    {reachedKnown && (
+                      <div className="space-y-1 pt-1">
+                        <div className="flex justify-between text-[10px] font-mono text-slate-600">
+                          <span>Reached (push + SMS in flight):</span>
+                          <span className="text-sky-700 font-bold">{n.deliveredCount}/{n.totalTargeted}</span>
+                        </div>
+                        <div className="w-full bg-slate-200 rounded-full h-1.5 overflow-hidden">
+                          <div className="bg-sky-600 h-full rounded-full" style={{ width: `${deliveryPct}%` }}></div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+  );
+
+  // Phone bottom bar: Home / Notices / Academics / Campus / More. Every tool of
+  // the old five groups is still one tap away (More carries Support + Data & System;
+  // the laptop sidebar keeps the original five groups).
+  const barGroups = [
+    { title: 'Home', ids: ['home'], Icon: HomeIcon },
+    { title: 'Notices', ids: ['dispatcher'] },
+    { title: 'Academics', ids: ['timetable'] },
+    { title: 'Campus', ids: ['setup', 'mess'] },
+    { title: 'More', ids: ['docs', 'fees', 'security', 'csv', 'metrics'], Icon: MoreHorizontal },
+  ];
+  const barGroup = barGroups.find(g => g.ids.includes(activeTab)) || barGroups[0];
+  const isHome = activeTab === 'home';
+
+  // The laptop shows Send Notice beside "Needs you now"; the form is only mounted where it is visible.
+  const [isLg, setIsLg] = useState(() => typeof window !== 'undefined' && window.matchMedia ? window.matchMedia('(min-width: 1024px)').matches : false);
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return undefined;
+    const mq = window.matchMedia('(min-width: 1024px)');
+    const on = (e) => setIsLg(e.matches);
+    setIsLg(mq.matches);
+    mq.addEventListener ? mq.addEventListener('change', on) : mq.addListener(on);
+    return () => { mq.removeEventListener ? mq.removeEventListener('change', on) : mq.removeListener(on); };
+  }, []);
+  // The sidebar's "Home" item brings the admin back to the Home screen.
+  useEffect(() => {
+    const go = () => setActiveTab('home');
+    window.addEventListener('admin-go-home', go);
+    return () => window.removeEventListener('admin-go-home', go);
+  }, []);
+
+  const kpiStrip = (
+      <section className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+        <div className="px-3.5 lg:px-4 pt-2.5 lg:pt-3 pb-2 flex items-center justify-between gap-2">
+          <h2 className="font-display font-extrabold text-base lg:text-lg text-slate-900 tracking-tight">Admin Console</h2>
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Overview</span>
+        </div>
+        <div className="grid grid-cols-4 border-t border-slate-100 divide-x divide-slate-100">
+          {adminKpis.map((k) => (
+            <div key={k.label} className="px-2 lg:px-4 py-2 lg:py-2.5 min-w-0 flex flex-col-reverse lg:flex-col justify-end gap-0.5">
+              <p className="text-[9px] lg:text-[11px] font-bold text-slate-500 flex items-start lg:items-center gap-1.5 min-w-0 leading-tight">
+                <span className={`hidden lg:inline-block w-1.5 h-1.5 rounded-full shrink-0 ${k.dot}`}></span>
+                <span className="lg:truncate">{k.label}<span className="lg:hidden block font-semibold text-slate-400">{k.note}</span></span>
+              </p>
+              <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 min-w-0">
+                <span className={`lg:hidden w-1.5 h-1.5 rounded-full shrink-0 self-center ${k.dot}`}></span>
+                <span className={`font-mono font-extrabold text-slate-900 break-words min-w-0 ${k.small ? 'text-[10px] lg:text-sm' : 'text-base lg:text-xl'}`}>{k.value}</span>
+                <span className={`hidden lg:inline text-[10px] font-bold px-1.5 py-0.5 rounded ${k.pill} whitespace-nowrap`}>{k.note}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+  );
+
   return (
     <div className="admin-dash space-y-5 animate-in fade-in duration-200">
       {/* Cover board escalation: an absent teacher's class nobody took */}
-      <AdminCoverAlerts onNotification={onNotification} />
+      {!isHome && <AdminCoverAlerts onNotification={onNotification} />}
       
       {/* Laptop: the tools live as a grouped sub-menu under "Home" in the app sidebar */}
       {toolNavSlot && createPortal(
@@ -1009,36 +1389,16 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
       )}
 
 
-      {/* Slim KPI strip — the same 4 figures as the old big cards */}
-      <section className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
-        <div className="px-3.5 lg:px-4 pt-2.5 lg:pt-3 pb-2 flex items-center justify-between gap-2">
-          <h2 className="font-display font-extrabold text-base lg:text-lg text-slate-900 tracking-tight">Admin Console</h2>
-          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Overview</span>
-        </div>
-        <div className="grid grid-cols-4 border-t border-slate-100 divide-x divide-slate-100">
-          {adminKpis.map((k) => (
-            <div key={k.label} className="px-2 lg:px-4 py-2 lg:py-2.5 min-w-0 flex flex-col-reverse lg:flex-col justify-end gap-0.5">
-              <p className="text-[9px] lg:text-[11px] font-bold text-slate-500 flex items-start lg:items-center gap-1.5 min-w-0 leading-tight">
-                <span className={`hidden lg:inline-block w-1.5 h-1.5 rounded-full shrink-0 ${k.dot}`}></span>
-                <span className="lg:truncate">{k.label}<span className="lg:hidden block font-semibold text-slate-400">{k.note}</span></span>
-              </p>
-              <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 min-w-0">
-                <span className={`lg:hidden w-1.5 h-1.5 rounded-full shrink-0 self-center ${k.dot}`}></span>
-                <span className={`font-mono font-extrabold text-slate-900 break-words min-w-0 ${k.small ? 'text-[10px] lg:text-sm' : 'text-base lg:text-xl'}`}>{k.value}</span>
-                <span className={`hidden lg:inline text-[10px] font-bold px-1.5 py-0.5 rounded ${k.pill} whitespace-nowrap`}>{k.note}</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
+      {!isHome && kpiStrip}
 
       {/* Phone: the 5 groups as a bottom tab bar (portal to <body> so it stays fixed) */}
       {createPortal(
         <nav className={`${toolNavSlot && slotShown ? 'lg:hidden' : ''} fixed bottom-0 inset-x-0 z-30 bg-white/95 backdrop-blur border-t border-slate-200 shadow-[0_-4px_16px_rgba(15,23,42,0.06)] pb-[env(safe-area-inset-bottom)]`}>
           <div className="flex max-w-lg mx-auto">
-            {adminGroups.map((g) => {
+            {barGroups.map((g) => {
               const on = g.ids.includes(activeTab);
               const t = adminTabs[g.ids[0]];
+              const BarIcon = g.Icon || t.Icon;
               return (
                 <button
                   key={g.title}
@@ -1048,7 +1408,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
                   className={`min-h-[60px] flex-[1_1_auto] flex flex-col items-center justify-center gap-1 px-0.5 cursor-pointer ${on ? 'text-slate-900' : 'text-slate-500'}`}
                 >
                   <span className={`w-9 h-7 rounded-full flex items-center justify-center ${on ? t.on : 'text-slate-500'}`}>
-                    <t.Icon className="w-4 h-4" />
+                    <BarIcon className="w-4 h-4" />
                   </span>
                   <span className="text-[9.5px] font-bold leading-tight text-center">{g.title}</span>
                 </button>
@@ -1060,9 +1420,9 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
       )}
 
       {/* Phone: tools of the selected group as a segmented switch */}
-      {activeGroup.ids.length > 1 && (
+      {barGroup.ids.length > 1 && (
         <div className={`${toolNavSlot && slotShown ? 'lg:hidden' : ''} grid grid-cols-2 gap-1 bg-white border border-slate-200 rounded-2xl shadow-sm p-1`}>
-          {activeGroup.ids.map((id, i) => {
+          {barGroup.ids.map((id, i) => {
             const t = adminTabs[id];
             const on = activeTab === id;
             return (
@@ -1071,7 +1431,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
                 type="button"
                 data-admin-tab={id}
                 onClick={() => setActiveTab(id)}
-                className={`${i === activeGroup.ids.length - 1 && activeGroup.ids.length % 2 === 1 ? 'col-span-2 ' : ''}min-h-[44px] flex items-center justify-center gap-1.5 rounded-xl border px-2 py-1 text-center transition-colors cursor-pointer ${on ? t.sel : 'border-transparent text-slate-600 hover:bg-slate-50'}`}
+                className={`${i === barGroup.ids.length - 1 && barGroup.ids.length % 2 === 1 ? 'col-span-2 ' : ''}min-h-[44px] flex items-center justify-center gap-1.5 rounded-xl border px-2 py-1 text-center transition-colors cursor-pointer ${on ? t.sel : 'border-transparent text-slate-600 hover:bg-slate-50'}`}
               >
                 <t.Icon className="w-3.5 h-3.5 shrink-0" />
                 <span className="text-[11px] font-bold leading-tight">{t.label}</span>
@@ -1082,12 +1442,33 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
       )}
 
       {/* Selected tool — clear section header so the panel below is the focus */}
-      <div className="flex items-center gap-2 px-1 min-w-0">
+      {!isHome && <div className="flex items-center gap-2 px-1 min-w-0">
         <span className={`w-1 h-5 rounded-full shrink-0 ${(adminTabs[activeTab] || adminTabs.dispatcher).bar}`}></span>
         <span className="text-[10px] sm:text-[11px] font-bold uppercase tracking-wider text-slate-400 shrink-0">{activeGroup.title}</span>
         <span className="text-slate-300 shrink-0">/</span>
         <h3 className="font-display font-extrabold text-sm sm:text-base text-slate-900 leading-tight break-words min-w-0">{(adminTabs[activeTab] || adminTabs.dispatcher).label}</h3>
-      </div>
+      </div>}
+
+      {/* --- HOME: "Needs you now" (cover alerts, certificate requests, escalated complaints) --- */}
+      {isHome && (
+        <AdminHome
+          onNotification={onNotification}
+          onGo={setActiveTab}
+          docRequests={docRequests}
+          docBusyId={docBusyId}
+          setDocStatus={setDocStatus}
+          escalated={campusStats.escalated || []}
+          messForecast={messForecast}
+          isLg={isLg}
+          stats={{
+            students: adminKpis[0].value,
+            blocks: campusStats.blockCount,
+            sla: adminKpis[2].value,
+            teachers: adminKpis[3].value
+          }}
+          noticePanel={isLg ? renderDispatcher(true) : null}
+        />
+      )}
 
       {/* --- FEE PAYMENTS (read-only list of the students' demo Settle Dues receipts) --- */}
       {activeTab === 'fees' && (
@@ -2124,321 +2505,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
       )}
 
       {/* --- TAB 1: TARGETED NOTICE DISPATCHER --- */}
-      {activeTab === 'dispatcher' && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          
-          {/* Dispatcher Form */}
-          <div className="md:col-span-2 bg-white border border-slate-200 rounded-xl p-4 sm:p-5 space-y-4 shadow-sm">
-            <div className="border-b border-slate-100 pb-3">
-              <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                <Send className="w-5 h-5 text-emerald-600" />
-                <span>Send a Notice</span>
-              </h2>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Target notifications strictly to affected students without broadcasting irrelevant alerts campus-wide.
-              </p>
-            </div>
-
-            <form onSubmit={handleDispatchNotice} className="space-y-3.5 text-xs">
-              {/* Notice kind — hostel ops vs campus/academic: two separate
-                  flows in one desk. Hostel = block fan-out; Campus = course/
-                  section/year audience resolved from the live roster. */}
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setNoticeForm({ ...noticeForm, noticeKind: 'hostel' })}
-                  className={`px-3 py-2 rounded-lg border font-bold text-xs transition-all cursor-pointer ${noticeForm.noticeKind === 'hostel' ? 'bg-emerald-600 border-emerald-600 text-white shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:border-emerald-300'}`}
-                >
-                  🏠 Hostel Notice
-                  <span className="block text-[9px] font-medium opacity-80">block fan-out + SMS fallback</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setNoticeForm({ ...noticeForm, noticeKind: 'campus' })}
-                  className={`px-3 py-2 rounded-lg border font-bold text-xs transition-all cursor-pointer ${noticeForm.noticeKind === 'campus' ? 'bg-sky-600 border-sky-600 text-white shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:border-sky-300'}`}
-                >
-                  🎓 Campus / Academic
-                  <span className="block text-[9px] font-medium opacity-80">course · section · year audience</span>
-                </button>
-              </div>
-
-              {/* Segment Filter — real targeting resolved from the live roster */}
-              <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-2.5">
-                <span className="text-[11px] font-mono text-emerald-700 font-bold uppercase tracking-wider flex items-center gap-1">
-                  <Filter className="w-3.5 h-3.5" />
-                  <span>Delivery Target (resolved from the live roster):</span>
-                </span>
-
-                {noticeForm.noticeKind === 'hostel' ? (
-                <div className="grid grid-cols-1 gap-2">
-                  <div>
-                    <label className="block text-slate-600 mb-1 text-[11px]">Hostel Block</label>
-                    <select
-                      value={noticeForm.hostelBlock}
-                      onChange={(e) => setNoticeForm({ ...noticeForm, hostelBlock: e.target.value })}
-                      className="w-full bg-white border border-slate-200 rounded-md px-2 py-1.5 text-slate-800 focus:outline-none focus:border-emerald-600"
-                    >
-                      <option value="All Hostels">All Hostels — Campus Wide Broadcast</option>
-                      {(campusStats.blocks.length > 0
-                        ? campusStats.blocks
-                        : ['A', 'B', 'C', 'D', 'Girls Hostel 1'] // offline fallback only; live roster wins when online
-                      ).map((b) => (
-                        <option key={b} value={b}>Hostel Block {b}</option>
-                      ))}
-                    </select>
-                    <p className="text-[10px] text-slate-500 mt-1.5 leading-relaxed">
-                      {noticeForm.hostelBlock === 'All Hostels'
-                        ? 'Campus wide: every active app device gets a push; keypad-phone students get an automatic SMS.'
-                        : 'Targeted: hostellers of this block get the notice — activated ones by push, others by SMS. Day scholars in the directory are told in the notice title, not SMSed. Floor nuance: put it in the title.'}
-                    </p>
-                  </div>
-                </div>
-                ) : (
-                <div className="space-y-2.5">
-                  <div>
-                    <label className="block text-slate-600 mb-1 text-[11px]">Audience</label>
-                    <select
-                      value={noticeForm.campusMode}
-                      onChange={(e) => setNoticeForm({ ...noticeForm, campusMode: e.target.value })}
-                      className="w-full bg-white border border-slate-200 rounded-md px-2 py-1.5 text-slate-800 focus:outline-none focus:border-sky-600"
-                    >
-                      <option value="ALL">Whole Campus — every student</option>
-                      <option value="COURSE">Course-wise (e.g. all BTech students)</option>
-                      <option value="COURSE_SECTION">Course + Section (e.g. BTech, Section A)</option>
-                      <option value="COURSE_YEAR">Course + Year (e.g. BTech 2022 batch — semester exam)</option>
-                    </select>
-                  </div>
-
-                  {noticeForm.campusMode !== 'ALL' && (
-                    <div>
-                      <label className="block text-slate-600 mb-1 text-[11px]">Course</label>
-                      <select
-                        value={noticeForm.campusCourse}
-                        onChange={(e) => setNoticeForm({ ...noticeForm, campusCourse: e.target.value })}
-                        className="w-full bg-white border border-slate-200 rounded-md px-2 py-1.5 text-slate-800 focus:outline-none focus:border-sky-600"
-                      >
-                        <option value="">— pick a course —</option>
-                        {[...new Set((cc?.branches || []).map(b => b.course).filter(Boolean))].map((c) => (
-                          <option key={c} value={c}>{c}</option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-
-                  {noticeForm.campusMode === 'COURSE_SECTION' && (
-                    <div>
-                      <label className="block text-slate-600 mb-1 text-[11px]">Section</label>
-                      <select
-                        value={noticeForm.campusSection}
-                        onChange={(e) => setNoticeForm({ ...noticeForm, campusSection: e.target.value })}
-                        className="w-full bg-white border border-slate-200 rounded-md px-2 py-1.5 text-slate-800 focus:outline-none focus:border-sky-600"
-                      >
-                        <option value="">— pick a section —</option>
-                        {ccDirectory.sections.map((s) => (
-                          <option key={s} value={s}>Section {s}</option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-
-                  {noticeForm.campusMode === 'COURSE_YEAR' && (
-                    <div>
-                      <label className="block text-slate-600 mb-1 text-[11px]">Admission Year (from roll number)</label>
-                      <select
-                        value={noticeForm.campusYear}
-                        onChange={(e) => setNoticeForm({ ...noticeForm, campusYear: e.target.value })}
-                        className="w-full bg-white border border-slate-200 rounded-md px-2 py-1.5 text-slate-800 focus:outline-none focus:border-sky-600"
-                      >
-                        <option value="">— pick a year —</option>
-                        {ccDirectory.years.map((y) => (
-                          <option key={y} value={y}>{y} batch</option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-
-                  <p className="text-[10px] text-slate-500 leading-relaxed">
-                    {noticeForm.campusMode === 'ALL'
-                      ? 'Campus wide: every active app device gets a push; keypad-phone students get an automatic SMS.'
-                      : 'Targeted academic audience: matching students get the notice — activated ones by push, others by SMS. Resolved live from the roster, so transfer/section changes are always reflected.'}
-                  </p>
-                </div>
-                )}
-              </div>
-
-              {/* Today's Notice — optional date pin. The notice still goes out
-                  on the bus (push/SMS) right now, but the student dashboard
-                  surfaces it as a dated hero card ONLY on this date — the
-                  antidote to notices drowning in chat history. */}
-              <div>
-                <label className="block text-slate-700 font-medium mb-1">
-                  📌 Show as &quot;Today&apos;s Notice&quot; on
-                  <span className="ml-2 text-[10px] font-mono text-slate-400">(optional — dated hero card on the student dashboard, that day only)</span>
-                </label>
-                <input
-                  type="date"
-                  value={noticeForm.showOn}
-                  onChange={(e) => setNoticeForm({ ...noticeForm, showOn: e.target.value })}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 focus:outline-none focus:border-emerald-600"
-                />
-              </div>
-
-              {/* Title & Content */}
-              <div>
-                <label className="block text-slate-700 font-medium mb-1">Notice Headline</label>
-                <input
-                  type="text"
-                  required
-                  value={noticeForm.title}
-                  onChange={(e) => setNoticeForm({ ...noticeForm, title: e.target.value })}
-                  placeholder="e.g., Water off 2–5 PM, Block B"
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 focus:outline-none focus:border-emerald-600"
-                />
-              </div>
-
-              <div>
-                <label className="block text-slate-700 font-medium mb-1">Notice Body / Instructions</label>
-                <textarea
-                  required
-                  rows={3}
-                  value={noticeForm.content}
-                  onChange={(e) => setNoticeForm({ ...noticeForm, content: e.target.value })}
-                  placeholder="Please store drinking water by 2 PM. Main supply will resume by 5:30 PM..."
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 focus:outline-none focus:border-emerald-600"
-                ></textarea>
-              </div>
-
-              {/* Action Tag & Urgency */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-slate-700 font-medium mb-1">Interactive Action Tag</label>
-                  <select
-                    value={noticeForm.actionTag}
-                    onChange={(e) => setNoticeForm({ ...noticeForm, actionTag: e.target.value })}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 focus:outline-none focus:border-emerald-600 cursor-pointer"
-                  >
-                    <option value="Require 1-Tap Acknowledge">Require 1-Tap Read Receipt</option>
-                    <option value="Vote / Preference Poll">Attach 1-Tap Vote</option>
-                    <option value="Emergency Warning">Emergency Evacuation Tag</option>
-                    <option value="Informational">General Informational</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-slate-700 font-medium mb-1">Priority Level</label>
-                  <select
-                    value={noticeForm.urgency}
-                    onChange={(e) => setNoticeForm({ ...noticeForm, urgency: e.target.value })}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 focus:outline-none focus:border-emerald-600 cursor-pointer"
-                  >
-                    <option value="High">High Priority (Pinned)</option>
-                    <option value="Normal">Normal Priority</option>
-                    <option value="Emergency">Emergency Alert</option>
-                  </select>
-                </div>
-              </div>
-
-              {/* SMS Fallback for keypad-phone students (no PWA device) */}
-              <div>
-                <label className="block text-slate-700 font-medium mb-1">
-                  SMS Fallback Targets
-                  <span className="ml-2 text-[10px] font-mono text-slate-400">(optional — students on keypad phones get it by SMS)</span>
-                </label>
-                <input
-                  type="text"
-                  value={noticeForm.smsPhones}
-                  onChange={(e) => setNoticeForm({ ...noticeForm, smsPhones: e.target.value })}
-                  placeholder="10-digit numbers, comma-separated"
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 focus:outline-none focus:border-emerald-600"
-                />
-              </div>
-
-              {/* Dispatch Action */}
-              <div className="flex items-center justify-end pt-2 border-t border-slate-100">
-                <button
-                  type="submit"
-                  disabled={isDispatching}
-                  className="px-5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-medium text-xs flex items-center space-x-1.5 transition-all cursor-pointer shadow-sm"
-                >
-                  <Send className="w-3.5 h-3.5" />
-                  <span>{isDispatching ? 'Dispatching...' : 'Dispatch Targeted Notice'}</span>
-                </button>
-              </div>
-            </form>
-          </div>
-
-          {/* Live Delivery Report — real counts from the notice bus */}
-          <div className="bg-white border border-slate-200 rounded-xl p-4 sm:p-5 space-y-4 shadow-sm">
-            <h3 className="text-xs font-mono uppercase tracking-wider text-slate-500 font-semibold border-b border-slate-100 pb-2">
-              Live Delivery Report (real recipients)
-            </h3>
-
-            <div className="space-y-3.5">
-              {dispatchedNotices.length === 0 && (
-                <p className="text-[11px] text-slate-500 py-4 text-center">
-                  No notices sent yet.
-                </p>
-              )}
-              {dispatchedNotices.map((n) => {
-                const reachedKnown = n.totalTargeted != null && n.totalTargeted > 0;
-                const deliveryPct = reachedKnown ? Math.min(100, Math.round((n.deliveredCount / n.totalTargeted) * 100)) : 0;
-
-                return (
-                  <div key={n.id} className="bg-slate-50/50 border border-slate-200 rounded-lg p-3 space-y-2 text-xs">
-                    <div className="flex items-center justify-between">
-                      <span className="font-mono text-emerald-700 font-bold">{n.id}</span>
-                      <span className="text-[10px] font-mono text-slate-500">{n.publishedAt}</span>
-                    </div>
-
-                    <h4 className="font-bold text-slate-900 leading-tight">{n.title}</h4>
-                    <p className="text-[11px] text-slate-500 truncate">{n.target}</p>
-
-                    <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-                      {n.pushStudents != null && (
-                        <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-sky-50 text-sky-700 border border-sky-200">
-                          🔔 {n.pushStudents} app push
-                        </span>
-                      )}
-                      {n.smsCount > 0 && (
-                        <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-violet-50 text-violet-700 border border-violet-200">
-                          💬 {n.smsCount} SMS{n.smsModes.length ? ` (${n.smsModes.join(', ')})` : ''}
-                        </span>
-                      )}
-                      {n.noContact > 0 && (
-                        <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
-                          ⚠ {n.noContact} no contact on file
-                        </span>
-                      )}
-                      {n.dayscholars > 0 && (
-                        <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-lime-50 text-lime-800 border border-lime-200">
-                          🚶 {n.dayscholars} day scholar{(n.dayscholars > 1) ? 's' : ''} excluded
-                        </span>
-                      )}
-                      {!reachedKnown && n.pushStudents == null && (
-                        <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 border border-slate-200">
-                          campus-wide broadcast
-                        </span>
-                      )}
-                    </div>
-
-                    {reachedKnown && (
-                      <div className="space-y-1 pt-1">
-                        <div className="flex justify-between text-[10px] font-mono text-slate-600">
-                          <span>Reached (push + SMS in flight):</span>
-                          <span className="text-sky-700 font-bold">{n.deliveredCount}/{n.totalTargeted}</span>
-                        </div>
-                        <div className="w-full bg-slate-200 rounded-full h-1.5 overflow-hidden">
-                          <div className="bg-sky-600 h-full rounded-full" style={{ width: `${deliveryPct}%` }}></div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      )}
+      {activeTab === 'dispatcher' && renderDispatcher(false)}
 
       {/* --- TAB 2: ZERO-DISRUPTION LEGACY CSV IMPORTER OVERLAY --- */}
       {activeTab === 'csv' && (
