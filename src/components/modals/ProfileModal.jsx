@@ -85,6 +85,7 @@ export default function ProfileModal({ isOpen, onClose, session, currentRole }) 
         {/* Content Details (role-specific) */}
         <div className="p-6 space-y-4">
           <div className="space-y-3">
+            <CoverTodayLine currentRole={currentRole} />
             {details.map((detail, idx) => (
               <div key={idx} className="flex items-center gap-3 p-3 rounded-xl bg-slate-50 border border-slate-100">
                 <detail.icon className={`w-5 h-5 ${detail.color} shrink-0`} />
@@ -112,3 +113,7 @@ export default function ProfileModal({ isOpen, onClose, session, currentRole }) 
     </div>
   );
 }
+
+// Teacher "Today covering / Covered by" line (substitute cover). Kept at the
+// end of the file so it never touches the import block above.
+import CoverTodayLine from '../teacher/CoverTodayLine';

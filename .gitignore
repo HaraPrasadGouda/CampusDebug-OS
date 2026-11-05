@@ -41,3 +41,6 @@ data/notice_acks.json
 # Room cleaning runtime data
 data/cleaning_store.json
 data/cleaning_meta.json
+# teacher dashboard v2 local stores
+data/lesson_plans.json
+data/teacher_leave_log.json

@@ -296,6 +296,8 @@ async function smsTechnician(ticketId, tech, kind, message) {
 // work notes and the time of the student's last "Not fixed".
 // ----------------------------------------------------
 import fs from 'fs';
+import * as coverBoardLib from './coverBoard.js';   // cover board rules (pure logic, tested in test/)
+const coverFmtMin = coverBoardLib.fmtMin;
 const LEDGER_PATH = path.join(__dirname, 'data', 'assignments.json');
 const ticketLedgerDB = {}; // { ticketId: { sms: [...], notes, notFixedAt, inProgress } }
 
@@ -408,8 +410,9 @@ async function pushToRolls(rollNumbers, { title, body }, { personal = false } = 
         console.warn('[push] VAPID keys missing — background push unavailable');
         return 0;
     }
-    // personal: only the named students' devices (no 'global' broadcast key)
-    const rolls = new Set(personal ? rollNumbers : [...rollNumbers, 'global']);
+    // Targeted push: ONLY the rolls asked for. Broadcasts go through
+    // pushEverything(), which passes every key (incl. 'global') explicitly.
+    const rolls = new Set(rollNumbers);
     const payload = JSON.stringify({ title, body, url: '/' });
     // Flatten: Map<endpoint, { sub, rolls: Set } > across every queried roll
     // so pruning/still-alive bookkeeping can be written back to each roll.
@@ -4308,7 +4311,7 @@ function loadTeacherAbsence() {
             if (raw && raw.date === localDayKey()) return raw;
         }
     } catch { /* corrupt file -> fresh day state */ }
-    return { date: localDayKey(), absent: {}, delegated: {} };
+    return { date: localDayKey(), absent: {}, delegated: {}, coverCards: {}, declined: {} };
 }
 function saveTeacherAbsence() {
     try {
@@ -4328,6 +4331,8 @@ function absenceToday() {
         teacherAbsenceDB.date = localDayKey();
         teacherAbsenceDB.absent = {};
         teacherAbsenceDB.delegated = {};
+        teacherAbsenceDB.coverCards = {};
+        teacherAbsenceDB.declined = {};
         saveTeacherAbsence();
     }
     return teacherAbsenceDB;
@@ -4393,7 +4398,7 @@ async function profileByRoll(roll) {
 // and adds the number. Used by mentor approve/reject AND mentor-created leaves.
 function leaveApprovedSmsText(updated) {
     const num = leaveNumber(updated.id);
-    const by = String(updated.decided_by_name || 'your mentor').slice(0, 30);
+    const by = String(updated.decided_by_name || 'your mentor').slice(0, 56);
     const note = updated.mentor_note ? ` Note: ${String(updated.mentor_note).slice(0, 60)}` : '';
     return `CampusDebug OS: Leave ${num} APPROVED by ${by} till 4:30 PM today. Tell the guard number ${num} at the gate. Carry your ID card.${note}`;
 }
@@ -4481,7 +4486,9 @@ app.post('/api/leave-requests/mentor-create', authenticateUser, requireRole('TEA
             status: 'APPROVED',
             created_at: now,
             decided_by: myRoll || role,
-            decided_by_name: req.user?.name || null,
+            decided_by_name: isSubstitute
+                ? `${req.user?.name || myRoll} (covering ${profName((await profileByRoll(stuMentor).catch(() => null))?.full_name || stuMentor)})`
+                : (req.user?.name || null),
             decided_at: now,
             mentor_note: null
         }).select('*').single();
@@ -4550,6 +4557,7 @@ app.post('/api/leave-requests', authenticateUser, requireRole('STUDENT'), async 
         // dashboard QUEUE is the always-works path — never auto-approve).
         const mentorRoll = substitute || myProfile.mentor_roll;
         if (mentorRoll) {
+            if (substitute) console.log(`🔔 [LEAVE PUSH] new request from ${myProfile.roll_number} -> substitute ${substitute} (mentor ${myProfile.mentor_roll} on leave)${hasPushSubscription(substitute) ? '' : ' — no device registered; Covering card count updates'}`);
             (async () => {
                 try {
                     if (hasPushSubscription(mentorRoll)) {
@@ -4561,7 +4569,12 @@ app.post('/api/leave-requests', authenticateUser, requireRole('STUDENT'), async 
                 } catch { /* non-blocking */ }
             })();
         }
-        return res.json({ success: true, leave: created });
+        let reviewer = null;
+        if (substitute) {
+            const sp = await profileByRoll(substitute).catch(() => null);
+            reviewer = { roll: substitute, name: sp?.full_name || substitute, covering: true };
+        }
+        return res.json({ success: true, leave: created, reviewer });
     } catch (e) {
         return res.status(500).json({ success: false, error: e.message });
     }
@@ -4580,7 +4593,15 @@ app.get('/api/leave-requests/mine', authenticateUser, async (req, res) => {
         if (error) return res.status(500).json({ success: false, error: error.message });
         const startToday = localStartOfDayISO();
         const outToday = (leaves || []).some(l => l.status === 'OUT' && l.scanned_at && new Date(l.scanned_at) >= new Date(startToday));
-        return res.json({ success: true, leaves: leaves || [], outToday, hasLiveRequest: (leaves || []).some(l => l.status === 'PENDING' || (l.status === 'APPROVED' && !l.scanned_at)) });
+        // Mentor on leave today → who reviews instead (shown before applying).
+        let mentorCover = null;
+        const myMentor = String(req.user?.profile?.mentor_roll || '').trim();
+        if (myMentor && absenceToday().absent[myMentor]) {
+            const sub = substituteFor(myMentor);
+            const sp = sub ? await profileByRoll(sub).catch(() => null) : null;
+            mentorCover = { onLeave: true, reviewerName: sp?.full_name || null };
+        }
+        return res.json({ success: true, leaves: leaves || [], outToday, hasLiveRequest: (leaves || []).some(l => l.status === 'PENDING' || (l.status === 'APPROVED' && !l.scanned_at)), mentorCover });
     } catch (e) {
         return res.status(500).json({ success: false, error: e.message });
     }
@@ -4607,13 +4628,17 @@ app.get('/api/leave-requests/queue', authenticateUser, requireRole('TEACHER'), a
         // Only my leaves drive mentee state; derive from the same rows.
         if (error) return res.status(500).json({ success: false, error: error.message });
         const absence = absenceToday();
-        const myState = {
-            onLeave: !!absence.absent[myRoll],
-            delegatedTo: absence.delegated[myRoll] || null
-        };
+        const myState = await coverStateFor(myRoll);
         // Covering today: absent mentors who handed their mentees to me.
         // Day scholars only (leave is a day-scholar flow) with today's state.
         const covering = [];
+        // Leaves routed to me as a substitute are NOT part of my own queue:
+        // they travel inside their mentor's "covering" group below, so my
+        // home stays exactly as it is on a normal day.
+        const coveredSet = new Set(mentorsCoveredBy(myRoll));
+        const isCoverLeave = (l) => String(l.routed_to || '') === myRoll && String(l.mentor_roll || '') !== myRoll && coveredSet.has(String(l.mentor_roll || ''));
+        // My own queue = my own mentees only (covered work never mixes in).
+        const ownLeaves = (leaves || []).filter(l => String(l.mentor_roll || '') === myRoll);
         for (const mentorRoll of mentorsCoveredBy(myRoll)) {
             const mentorProf = await profileByRoll(mentorRoll);
             const { data: cm } = await supabase.from('profiles')
@@ -4633,9 +4658,14 @@ app.get('/api/leave-requests/queue', authenticateUser, requireRole('TEACHER'), a
                     if (!latest[k] || (l.created_at || '') > (latest[k].created_at || '')) latest[k] = l;
                 });
             }
+            const groupLeaves = (leaves || []).filter(l => isCoverLeave(l) && String(l.mentor_roll || '') === mentorRoll);
             covering.push({
                 mentorRoll,
+                active: true,
                 mentorName: mentorProf?.full_name || mentorRoll,
+                mentorDept: mentorProf?.department || null,
+                leaves: groupLeaves,
+                pendingCount: groupLeaves.filter(l => l.status === 'PENDING').length,
                 mentees: ds.map(mm => {
                     const l = latest[String(mm.roll_number || '')];
                     return {
@@ -4649,7 +4679,7 @@ app.get('/api/leave-requests/queue', authenticateUser, requireRole('TEACHER'), a
         // Mentee today-state map: latest leave per mentee roll.
         const todayStart = new Date(localStartOfDayISO()).getTime();
         const stateByRoll = {};
-        (leaves || []).forEach(l => {
+        ownLeaves.forEach(l => {
             const k = String(l.student_roll || '');
             if (!stateByRoll[k] || (l.scanned_at || l.created_at || '') > (stateByRoll[k].scanned_at || stateByRoll[k].created_at || '')) stateByRoll[k] = l;
         });
@@ -4657,12 +4687,12 @@ app.get('/api/leave-requests/queue', authenticateUser, requireRole('TEACHER'), a
             success: true,
             role,
             onLeaveState: myState,
-            leaves: leaves || [],
+            leaves: ownLeaves,
             mentees: (mentees || []).map(mm => ({
                 ...mm,
                 todayStatus: teacherStateFromLeave(stateByRoll[String(mm.roll_number || '')])
             })),
-            pendingCount: (leaves || []).filter(l => l.status === 'PENDING').length,
+            pendingCount: ownLeaves.filter(l => l.status === 'PENDING').length,
             covering
         });
     } catch (e) {
@@ -4680,10 +4710,15 @@ app.get('/api/teacher/day-scholar-scans', authenticateUser, requireRole('TEACHER
         const myRoll = String(req.user?.rollNumber || req.user?.profile?.roll_number || '').trim();
         // 1. Resolve my day-scholar mentees (TEACHER) — or all day scholars (ADMIN).
         let menteeRows;
+        // ?mentor=<roll>: today's substitute reads the covered mentor's log.
+        const coverMentor = String(req.query.mentor || '').trim();
+        if (coverMentor && !(role === 'TEACHER' && mentorsCoveredBy(myRoll).includes(coverMentor))) {
+            return res.status(403).json({ success: false, error: 'You can read this gate log only while covering that mentor today.' });
+        }
         if (role === 'TEACHER') {
             ({ data: menteeRows } = await supabase.from('profiles')
                 .select('roll_number, full_name, resident_type, mentor_roll')
-                .eq('role', 'STUDENT').eq('mentor_roll', myRoll).limit(500));
+                .eq('role', 'STUDENT').eq('mentor_roll', coverMentor || myRoll).limit(500));
         } else {
             ({ data: menteeRows } = await supabase.from('profiles')
                 .select('roll_number, full_name, resident_type, mentor_roll')
@@ -4747,12 +4782,24 @@ app.post('/api/leave-requests/:id/decide', authenticateUser, requireRole('TEACHE
         if (leave.status !== 'PENDING') return res.status(409).json({ success: false, error: `Already ${leave.status.toLowerCase()} — nothing to decide` });
         const can = role === 'TEACHER' && !!myRoll && (String(leave.mentor_roll || '') === myRoll || String(leave.routed_to || '') === myRoll);
         if (!can) return res.status(403).json({ success: false, error: 'This student is not your mentee (and not routed to you)' });
+        // An absent mentor is READ-ONLY for leaves forwarded to a substitute.
+        if (String(leave.mentor_roll || '') === myRoll && leave.routed_to && String(leave.routed_to) !== myRoll && absenceToday().absent[myRoll]) {
+            const sp = await profileByRoll(leave.routed_to).catch(() => null);
+            return res.status(403).json({ success: false, forwarded: true, error: `You are on leave today — ${profName(sp?.full_name || leave.routed_to)} is reviewing your students' leaves.` });
+        }
         // NO AUTO-APPROVAL — every decision is an explicit human tap here.
         const now = new Date().toISOString();
+        // A substitute's decision is stamped "Dr. X (covering Dr. Y)" — the
+        // student sees exactly who decided and why it wasn't their mentor.
+        let byName = req.user?.name || null;
+        if (String(leave.mentor_roll || '') !== myRoll && String(leave.routed_to || '') === myRoll) {
+            const mp = await profileByRoll(leave.mentor_roll).catch(() => null);
+            byName = `${req.user?.name || myRoll} (covering ${profName(mp?.full_name || leave.mentor_roll)})`;
+        }
         const { data: updated, error: uErr } = await supabase.from('leave_requests').update({
             status: action,
             decided_by: myRoll || role,
-            decided_by_name: req.user?.name || null,
+            decided_by_name: byName,
             decided_at: now,
             mentor_note: String(req.body?.note || '').trim() || null
         }).eq('id', leave.id).select('*').single();
@@ -5221,76 +5268,463 @@ app.post('/api/leave-scan', authenticateUser, requireRole('GUARD', 'WARDEN', 'AD
     }
 });
 
-// Teacher "On Leave Today" 1-tap: hands their mentees to a substitute — the
-// lowest-numbered colleague who is present today. The substitute gets the
-// PENDING leaves, every new request, and can create leaves for those day
-// scholars. Never the admin, never the warden. If literally no colleague is
-// present, nothing moves: the leaves stay in the mentor's own queue.
-// Coming back pulls the pending leaves home.
+// Teacher "On Leave Today" — two separate things happen (HARA's design):
+//   1. LEAVE APPROVALS: the absent teacher PICKS one present colleague, a
+//      "mentor-substitute", who receives their students' day-scholar leave
+//      requests (routed_to) — pending ones and every new one — to approve /
+//      reject / create. The substitute may press "Can't cover" (work goes
+//      back to the absent teacher until they pick again).
+//   2. CLASSES are NOT assigned to anyone. Every class of theirs that has not
+//      started yet becomes a COVER CARD on the COVER BOARD (coverBoard.js):
+//      only free teachers of that section see it, the first "Le lunga" wins,
+//      the taker teaches their OWN subject. Untaken cards escalate to the
+//      admin 30 min before the period and cancel the class at its start.
+// "I'm here now" (any time that day) takes the pending leaves back and
+// withdraws every still-open card of a period that has not started; a card
+// someone already took stays with them. Going on leave is allowed only during
+// college hours, 7:00 AM – 4:30 PM (server local time). Everything resets at
+// midnight.
+// State (data/teacher_absence.json): absent{roll}, delegated{roll: sub},
+// declined{roll: sub}, coverCards{id: card}.
+const COVER_OPEN_MIN = 7 * 60;            // college start 7:00 AM
+const COVER_CUTOFF_MIN_FALLBACK = 990;    // P6 end 16:30 (read live from TT_GRID)
+function minLabel(m) { return coverFmtMin(m); }
+function coverCutoffMin() {
+    try { return Math.max(...TT_GRID.filter(g => /^P\d$/.test(g.label)).map(g => g.endMin)); }
+    catch { return COVER_CUTOFF_MIN_FALLBACK; }
+}
+function coverWindowLabel() { return `${minLabel(COVER_OPEN_MIN)}–${minLabel(coverCutoffMin())}`; }
+function nowMinLocal(now = new Date()) { return now.getHours() * 60 + now.getMinutes(); }
+function coverWindowOpen(now = new Date()) {
+    const m = nowMinLocal(now);
+    return m >= COVER_OPEN_MIN && m < coverCutoffMin();
+}
+function coverWindowError() {
+    return `On Leave Today can be set only between ${coverWindowLabel()} on the same day (college hours).`;
+}
+// "Dr. Priya Mishra" stays as is; a bare name gets "Prof ".
+function profName(name) {
+    const n = String(name || '').trim();
+    if (!n) return 'a colleague';
+    return /^(dr|prof|professor|mr|mrs|ms)\b\.?/i.test(n) ? n : `Prof ${n}`;
+}
+// Today's timetable day key ('MON'..'SAT'; Sunday has no classes).
+function ttTodayKey(d = new Date()) {
+    return ['SUN', 'MON', 'TUE', 'WED', 'THUR', 'FRI', 'SAT'][d.getDay()];
+}
+// A teacher's slots today — matched like /api/timetable/mine: by the FAC id on
+// the staff roll, else by display name.
+function teacherSlotsToday(roll, name) {
+    const rid = String(roll || '').trim().toUpperCase();
+    const nm = String(name || '').trim().toLowerCase();
+    const day = ttTodayKey();
+    const slots = (timetableDB && Array.isArray(timetableDB.slots)) ? timetableDB.slots : [];
+    return slots.filter(s => s.day === day && s.kind !== 'free' && s.kind !== 'study' && (
+        (rid.startsWith('FAC') && s.teacherId === rid) ||
+        (!rid.startsWith('FAC') && nm && s.teacherName && s.teacherName.toLowerCase() === nm)))
+        .sort((x, y) => x.period - y.period);
+}
+function slotStartMin(s) {
+    if (Number.isFinite(s.startMin)) return s.startMin;
+    const g = TT_GRID.find(x => x.label === `P${s.period}`); return g ? g.startMin : 0;
+}
+function slotEndMin(s) {
+    if (Number.isFinite(s.endMin)) return s.endMin;
+    return TT_END_MIN[s.period + Math.max(1, parseInt(s.span, 10) || 1) - 1] || 0;
+}
+function shortSection(s) {
+    const dept = String(s.department || '').trim();
+    return s.section ? `${dept}-${s.section}` : (s.departmentLabel || dept);
+}
+function attendanceRecToday(s) {
+    return attendanceDB.find(a => a.date === localDayKey() && a.sectionKey === s.sectionKey && a.period === s.period) || null;
+}
+function coverClassRow(s) {
+    const rec = attendanceRecToday(s);
+    const nm = nowMinLocal();
+    return {
+        day: s.day, period: s.period, periodLabel: s.periodLabel, time: s.time,
+        subjectCode: s.subjectCode, subject: s.subject, room: s.room,
+        department: s.department, departmentLabel: s.departmentLabel, kind: s.kind,
+        sectionKey: s.sectionKey || null, short: shortSection(s),
+        sectionLabel: (s.course && s.section) ? `${s.departmentLabel || s.department} — Sec ${s.section}` : null,
+        state: nm < slotStartMin(s) ? 'upcoming' : nm < slotEndMin(s) ? 'in_progress' : 'over',
+        marked: rec ? { present: (rec.present || []).length, takenByName: rec.takenByName || null } : null
+    };
+}
+function absenceMaps(a = absenceToday()) {
+    a.coverCards = a.coverCards || {};
+    a.declined = a.declined || {};
+    return a;
+}
+function ttSlots() { return (timetableDB && Array.isArray(timetableDB.slots)) ? timetableDB.slots : []; }
+function teacherIdentity(req) {
+    return {
+        roll: String(req.user?.rollNumber || req.user?.profile?.roll_number || '').trim(),
+        name: req.user?.name || req.user?.profile?.full_name || ''
+    };
+}
+async function pendingCountFor(mentorRoll) {
+    const { data } = await supabase.from('leave_requests').select('id').eq('status', 'PENDING').eq('mentor_roll', mentorRoll).limit(500);
+    return (data || []).length;
+}
+// Move one absent mentor's PENDING leaves to a new substitute (or home: null).
+async function routePendingTo(mentorRoll, toRoll) {
+    await supabase.from('leave_requests')
+        .update({ routed_to: toRoll })
+        .eq('status', 'PENDING')
+        .eq('mentor_roll', mentorRoll);
+}
+// Targeted push to ONE teacher's devices + a log line (the dashboard card /
+// in-app notice is the always-works path when no device is registered).
+async function pushTeacher(roll, title, body, tag) {
+    console.log(`🔔 [COVER PUSH${tag ? ' ' + tag : ''}] -> ${roll} | ${JSON.stringify({ title, body, url: '/' })}`);
+    let sent = 0;
+    try { sent = await pushToRolls([roll], { title, body }); } catch (e) { console.warn('cover push failed (non-blocking):', e.message); }
+    console.log(`🔔 [COVER PUSH${tag ? ' ' + tag : ''}] ${roll}: ${sent} device(s) reached${sent ? '' : ' — none registered; the dashboard shows it'}`);
+    return { to: roll, title, body, devices: sent };
+}
+
+// Students of one cover-board section (sectionKey = course|department|section,
+// the same key the timetable and the profiles table use).
+async function studentRollsOfSection(sectionKey) {
+    const [course, department, section] = String(sectionKey || '').split('|');
+    if (!supabase || !course || !section) return [];
+    const rolls = [];
+    for (let from = 0; ; from += 1000) {
+        let q = supabase.from('profiles').select('roll_number').eq('role', 'STUDENT').eq('course', course).eq('section', section);
+        if (department) q = q.eq('department', department);
+        const { data, error } = await q.range(from, from + 999);
+        if (error) break;
+        for (const r of (data || [])) if (r.roll_number) rolls.push(String(r.roll_number));
+        if (!data || data.length < 1000) break;
+    }
+    return rolls;
+}
+// Tell the section's students who is taking (or no longer taking) a period.
+async function pushStudentsOfSection(card, title, body, tag) {
+    try {
+        const rolls = await studentRollsOfSection(card.sectionKey);
+        console.log(`🔔 [COVER PUSH ${tag}] -> ${rolls.length} student(s) of ${card.short} | ${JSON.stringify({ title, body })}`);
+        if (!rolls.length) return 0;
+        const sent = await pushToRolls(rolls, { title, body });
+        console.log(`🔔 [COVER PUSH ${tag}] ${sent} device(s) reached`);
+        return sent;
+    } catch (e) { console.warn('cover student push failed (non-blocking):', e.message); return 0; }
+}
+// Route an absent teacher's leave approvals to `subRoll` (or take them back
+// with null). Classes are NOT handed over here — they go on the cover board.
+async function setCover(absentRoll, subRoll) {
+    const a = absenceMaps();
+    const prof = await profileByRoll(absentRoll);
+    const prev = a.delegated[absentRoll] || null;
+    a.delegated[absentRoll] = subRoll || null;
+    if (subRoll) delete a.declined[absentRoll];
+    await routePendingTo(absentRoll, subRoll || null);
+    return { prev, prof };
+}
+async function coverSummary(absentRoll) {
+    return { pending: await pendingCountFor(absentRoll) };
+}
+async function coverStateFor(myRoll) {
+    const a = absenceMaps();
+    coverTickNow();
+    const delegatedTo = a.delegated[myRoll] || null;
+    const sub = delegatedTo ? await profileByRoll(delegatedTo) : null;
+    const declinedBy = a.declined[myRoll] ? await profileByRoll(a.declined[myRoll]) : null;
+    const covering = [];
+    for (const m of mentorsCoveredBy(myRoll)) {
+        const p = await profileByRoll(m);
+        covering.push({ roll: m, name: p?.full_name || m, department: p?.department || null });
+    }
+    const now = new Date();
+    return {
+        onLeave: !!a.absent[myRoll],
+        delegatedTo,
+        delegatedToName: sub?.full_name || null,
+        delegatedToDept: sub?.department || null,
+        declinedBy: a.absent[myRoll] && declinedBy ? { roll: declinedBy.roll_number, name: declinedBy.full_name } : null,
+        // The cover cards of MY classes today (open / taken / cancelled).
+        myCards: Object.values(a.coverCards || {})
+            .filter(c => c.date === localDayKey() && c.absentRoll === myRoll && c.status !== 'withdrawn')
+            .sort((x, y) => x.startMin - y.startMin).map(c => coverBoardLib.publicCard(c, now)),
+        windowOpen: coverWindowOpen(),
+        windowLabel: coverWindowLabel(),
+        covering
+    };
+}
+// Present colleagues for the substitute picker (leave approvals only).
+async function coverCandidates(myRoll, myName, myDept) {
+    const a = absenceMaps();
+    const dept = String(myDept || '').trim().toLowerCase();
+    const nm = nowMinLocal();
+    const mine = teacherSlotsToday(myRoll, myName);
+    const remaining = mine.filter(s => slotStartMin(s) > nm);
+    const { data: colleagues } = await supabase.from('profiles')
+        .select('roll_number, full_name, department')
+        .eq('role', 'TEACHER')
+        .neq('roll_number', myRoll)
+        .order('roll_number').limit(500);
+    const declinedBy = a.declined[myRoll] || null;
+    const rows = (colleagues || [])
+        .filter(c => c.roll_number && !a.absent[String(c.roll_number).trim()] && String(c.roll_number).trim() !== declinedBy)
+        .map(c => {
+            const roll = String(c.roll_number).trim();
+            const covering = Object.keys(a.absent || {}).filter(m => a.absent[m] && a.delegated[m] === roll && m !== myRoll).length;
+            return {
+                roll, name: c.full_name || roll, department: c.department || null,
+                sameDept: !!dept && String(c.department || '').trim().toLowerCase() === dept,
+                alreadyCovering: covering
+            };
+        });
+    rows.sort((x, y) => (x.sameDept === y.sameDept ? 0 : x.sameDept ? -1 : 1)
+        || x.alreadyCovering - y.alreadyCovering
+        || String(x.roll).localeCompare(String(y.roll)));
+    return {
+        myClasses: mine.map(coverClassRow),
+        // These classes go on the cover board when I confirm (not to the substitute).
+        handOver: remaining.map(coverClassRow),
+        pendingLeaves: await pendingCountFor(myRoll),
+        candidates: rows
+    };
+}
+function coverPushText(absentName, pending) {
+    return `Today you're covering ${profName(absentName)}'s leave approvals — ${pending} pending ${pending === 1 ? 'request' : 'requests'}.`;
+}
+
+
+// ---- Cover board glue (rules live in coverBoard.js) ----------------------
+// Teachers other than `exceptRoll` who are eligible for at least one of `cards`.
+async function eligibleTeachersFor(cardsList, exceptRoll) {
+    const { data: teachers } = await supabase.from('profiles').select('roll_number, full_name').eq('role', 'TEACHER').limit(500);
+    const a = absenceMaps(), now = new Date(), out = [];
+    for (const t of teachers || []) {
+        const who = { roll: String(t.roll_number || '').trim(), name: t.full_name };
+        if (!who.roll || who.roll === exceptRoll) continue;
+        const n = cardsList.filter(c => coverBoardLib.eligibility(a, ttSlots(), c, who, now).ok).length;
+        if (n) out.push({ ...who, n });
+    }
+    return out;
+}
+// Teacher marked absent: make the cards, re-open anything they had taken,
+// tell the teachers who can take them.
+async function openCoverCards(absentRoll, absentName, notified) {
+    const a = absenceMaps(), now = new Date();
+    const freed = coverBoardLib.reopenTakenBy(a, absentRoll, now);      // I took a class earlier, now I'm out too
+    const made = coverBoardLib.createCards(a, ttSlots(), { roll: absentRoll, name: absentName }, now);
+    const fresh = [...made, ...freed];
+    if (fresh.length) {
+        for (const t of await eligibleTeachersFor(fresh, absentRoll)) {
+            notified.push(await pushTeacher(t.roll, 'Cover board', `${t.n} ${t.n === 1 ? 'class needs' : 'classes need'} cover today — open the cover board to take ${t.n === 1 ? 'it' : 'one'}.`, 'cover-card'));
+        }
+    }
+    await coverTickAndAlert();
+    saveTeacherAbsence();
+    return made;
+}
+// Admin + dean rolls (alerts go to both; reuses the existing roles).
+async function adminRolls() {
+    const { data } = await supabase.from('profiles').select('roll_number').in('role', ['ADMIN', 'DEAN']).limit(50);
+    return (data || []).map(r => String(r.roll_number || '').trim()).filter(Boolean);
+}
+let _coverTickBusy = false;
+// Run the escalation ladder now; each admin alert is sent exactly once
+// (flags are saved with the day's state, so a restart does not repeat them).
+async function coverTickAndAlert(now = new Date()) {
+    if (_coverTickBusy) return [];
+    _coverTickBusy = true;
+    try {
+        const a = absenceToday();
+        const events = coverBoardLib.tick(a, now);
+        if (!events.length) return [];
+        saveTeacherAbsence();                      // flags first: never double-send
+        if (!supabase) return events;
+        const rolls = await adminRolls();
+        for (const ev of events) {
+            const title = ev.type === 't0' ? 'Class cancelled — no cover' : 'No cover yet';
+            console.log(`🔔 [COVER ALERT ${ev.type}] ${ev.text}`);
+            if (rolls.length) { try { await pushToRolls(rolls, { title, body: ev.text }); } catch (e) { console.warn('cover alert push failed:', e.message); } }
+        }
+        return events;
+    } catch (e) { console.warn('cover tick failed:', e.message); return []; }
+    finally { _coverTickBusy = false; }
+}
+// Sync clock tick for reads (flags only; the push goes out on the timer).
+function coverTickNow() { try { coverBoardLib.tick(absenceToday(), new Date()); } catch { /* read path */ } }
+setInterval(() => { coverTickAndAlert().catch(() => {}); }, 30 * 1000).unref?.();
+
+// Teacher: my cover board (cards I can take / that others took / that I took).
+app.get('/api/teacher/cover-board', authenticateUser, requireRole('TEACHER'), async (req, res) => {
+    await coverTickAndAlert();
+    const who = teacherIdentity(req);
+    const a = absenceToday();
+    return res.json({ success: true, ...coverBoardLib.boardFor(a, ttSlots(), who, new Date()), onLeave: !!a.absent[who.roll] });
+});
+// "Le lunga" — first tap wins. Everything between the check and the write is
+// synchronous, so two simultaneous taps can never both succeed.
+app.post('/api/teacher/cover-board/:id/take', authenticateUser, requireRole('TEACHER'), async (req, res) => {
+    const who = teacherIdentity(req);
+    const a = absenceToday();
+    const r = coverBoardLib.takeCard(a, ttSlots(), String(req.params.id), who, String(req.body?.subjectCode || '').trim() || null, new Date());
+    if (!r.ok) return res.status(r.http).json({ success: false, error: r.error, taken: !!r.taken, takenBy: r.takenBy || null });
+    saveTeacherAbsence();
+    const c = r.card;
+    pushTeacher(c.absentRoll, 'Your class is covered', `${profName(who.name)} will take ${c.periodLabel} ${c.short} (${c.takenBy.subject}).`, 'cover-taken').catch(() => {});
+    pushStudentsOfSection(c, 'Class update', `Today's ${c.periodLabel}${c.time ? ' (' + c.time + ')' : ''} ${c.takenBy.subject} class will be taken by ${profName(who.name)}.`, 'students-cover-taken').catch(() => {});
+    return res.json({ success: true, card: coverBoardLib.publicCard(c, new Date()), message: `You're taking ${c.periodLabel} ${c.short} — teach ${c.takenBy.subject} and mark attendance as usual.` });
+});
+app.post('/api/teacher/cover-board/:id/release', authenticateUser, requireRole('TEACHER'), async (req, res) => {
+    const who = teacherIdentity(req);
+    const a = absenceToday();
+    const r = coverBoardLib.releaseCard(a, String(req.params.id), who, new Date());
+    if (!r.ok) return res.status(r.http).json({ success: false, error: r.error });
+    saveTeacherAbsence();
+    const c = r.card;
+    pushStudentsOfSection(c, 'Class update', `Today's ${c.periodLabel}${c.time ? ' (' + c.time + ')' : ''} ${c.subject} class: ${profName(who.name)} is no longer taking it. A new teacher will be confirmed.`, 'students-cover-released').catch(() => {});
+    try {
+        for (const t of await eligibleTeachersFor([c], c.absentRoll)) {
+            if (t.roll !== who.roll) await pushTeacher(t.roll, 'Cover board', `${c.periodLabel} ${c.short} is open again — can you take it?`, 'cover-reopened');
+        }
+    } catch { /* non-blocking */ }
+    await coverTickAndAlert();
+    return res.json({ success: true, message: `Released — ${c.periodLabel} ${c.short} is open for other teachers again.` });
+});
+// Admin / dean: every cover card of today + the banner list.
+app.get('/api/admin/cover-board', authenticateUser, requireRole('ADMIN', 'DEAN'), async (req, res) => {
+    await coverTickAndAlert();
+    return res.json({ success: true, date: localDayKey(), ...coverBoardLib.adminView(absenceToday(), new Date()) });
+});
+app.post('/api/admin/cover-board/:id/cancel', authenticateUser, requireRole('ADMIN', 'DEAN'), async (req, res) => {
+    const a = absenceToday();
+    const r = coverBoardLib.adminCancel(a, String(req.params.id), new Date());
+    if (!r.ok) return res.status(r.http).json({ success: false, error: r.error });
+    saveTeacherAbsence();
+    return res.json({ success: true, message: `${r.card.periodLabel} ${r.card.short} marked cancelled — students see "Class cancelled".` });
+});
+
+// Picker data: my remaining periods today + present colleagues tagged
+// free / busy + what will be handed over.
+app.get('/api/leave-requests/teacher-absent/candidates', authenticateUser, requireRole('TEACHER'), async (req, res) => {
+    try {
+        if (!supabase) return res.status(503).json({ success: false, error: 'Database offline' });
+        const myRoll = String(req.user?.rollNumber || req.user?.profile?.roll_number || '').trim();
+        if (!myRoll) return res.status(400).json({ success: false, error: 'Roll unknown' });
+        const data = await coverCandidates(myRoll, req.user?.name, req.user?.profile?.department);
+        return res.json({ success: true, windowOpen: coverWindowOpen(), windowLabel: coverWindowLabel(), ...data });
+    } catch (e) {
+        return res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// onLeave:true + substituteRoll → go on leave / change substitute.
+// onLeave:false → "I'm here now" (any time that day).
 app.post('/api/leave-requests/teacher-absent', authenticateUser, requireRole('TEACHER'), async (req, res) => {
     try {
         if (!supabase) return res.status(503).json({ success: false, error: 'Database offline' });
-        const absence = absenceToday();
+        const a = absenceMaps();
         const myRoll = String(req.user?.rollNumber || req.user?.profile?.roll_number || '').trim();
+        const myName = req.user?.name || myRoll;
         const wantsAbsence = !!req.body?.onLeave;
         if (!myRoll) return res.status(400).json({ success: false, error: 'Roll unknown' });
 
-        let delegatedTo = null;
         let message;
+        const notified = [];
         if (wantsAbsence) {
-            // Pick the lowest-numbered colleague who is present today.
-            const { data: colleagues } = await supabase.from('profiles')
-                .select('roll_number, full_name')
-                .eq('role', 'TEACHER')
-                .neq('roll_number', myRoll)
-                .order('roll_number').limit(100);
-            const present = (colleagues || []).find(c => !absence.absent[String(c.roll_number || '').trim()]);
-            delegatedTo = present ? String(present.roll_number).trim() : null;
-            absence.absent[myRoll] = true;
-            absence.delegated[myRoll] = delegatedTo;
-            if (delegatedTo) {
-                // Re-route today's still-PENDING mentee leaves to the substitute.
-                await supabase.from('leave_requests')
-                    .update({ routed_to: delegatedTo })
-                    .eq('status', 'PENDING')
-                    .eq('mentor_roll', myRoll);
-                // I was covering for someone else: that cover moves on too.
-                for (const m of Object.keys(absence.delegated)) {
-                    if (m !== myRoll && absence.absent[m] && absence.delegated[m] === myRoll) {
-                        absence.delegated[m] = delegatedTo;
-                        await supabase.from('leave_requests')
-                            .update({ routed_to: delegatedTo })
-                            .eq('status', 'PENDING')
-                            .eq('mentor_roll', m);
-                    }
+            if (!coverWindowOpen()) {
+                return res.status(403).json({ success: false, windowClosed: true, windowLabel: coverWindowLabel(), error: coverWindowError() });
+            }
+            const asked = String(req.body?.substituteRoll || '').trim();
+            let sub = null;
+            if (asked) {
+                // Validate the chosen colleague: a TEACHER, present today, not me.
+                if (asked.toUpperCase() === myRoll.toUpperCase()) {
+                    return res.status(400).json({ success: false, error: 'Pick a colleague — you cannot cover for yourself.' });
                 }
-                message = `Marked On Leave — ${present.full_name || delegatedTo} (${delegatedTo}) handles your mentees' leaves today.`;
+                const p = await profileByRoll(asked);
+                if (!p || String(p.role || '').toUpperCase() !== 'TEACHER') {
+                    return res.status(400).json({ success: false, error: 'That person is not a teacher on the staff list.' });
+                }
+                const roll = String(p.roll_number).trim();
+                if (a.absent[roll]) {
+                    return res.status(409).json({ success: false, error: `${profName(p.full_name)} is on leave today too — pick a teacher who is present.` });
+                }
+                sub = { roll, name: p.full_name };
             } else {
-                // Nobody present: anything I was covering goes back to its
-                // own mentor's queue (never the admin).
-                for (const m of Object.keys(absence.delegated)) {
-                    if (m !== myRoll && absence.delegated[m] === myRoll) {
-                        absence.delegated[m] = null;
-                        await supabase.from('leave_requests')
-                            .update({ routed_to: null })
-                            .eq('status', 'PENDING')
-                            .eq('mentor_roll', m);
-                    }
+                // Older clients send no choice: the best present colleague
+                // (same department, free in my remaining periods), never the admin.
+                const { candidates } = await coverCandidates(myRoll, myName, req.user?.profile?.department);
+                if (candidates[0]) sub = { roll: candidates[0].roll, name: candidates[0].name };
+            }
+            a.absent[myRoll] = true;
+            // CLASSES: each remaining period becomes a cover card (a request, not an assignment).
+            const cardsMade = await openCoverCards(myRoll, myName, notified);
+            if (sub) {
+                const { prev } = await setCover(myRoll, sub.roll);
+                if (prev && prev !== sub.roll) {
+                    notified.push(await pushTeacher(prev, 'Cover changed', `You're no longer covering ${profName(myName)} today.`, 'released'));
                 }
-                message = 'Marked On Leave — but no other teacher is present today, so leave requests stay in your own queue.';
+                if (prev !== sub.roll) {
+                    const sm = await coverSummary(myRoll);
+                    notified.push(await pushTeacher(sub.roll, 'Covering today', coverPushText(myName, sm.pending), 'assigned'));
+                }
+                // I was covering colleagues: their remaining work moves on to
+                // my substitute too, and every affected teacher is told.
+                for (const m of Object.keys(a.delegated)) {
+                    if (m === myRoll || !a.absent[m] || a.delegated[m] !== myRoll) continue;
+                    const { prof: mp } = await setCover(m, sub.roll);
+                    const sm = await coverSummary(m);
+                    notified.push(await pushTeacher(sub.roll, 'Covering today', coverPushText(mp?.full_name || m, sm.pending), 'assigned'));
+                    notified.push(await pushTeacher(m, 'Your cover changed', `${profName(myName)} is on leave too — ${profName(sub.name)} now covers your work today.`, 'moved'));
+                }
+                message = `Marked On Leave — ${profName(sub.name)} will approve your students' leave requests today. Your classes are on the cover board.`;
+            } else {
+                // Nobody present: everything stays (or goes back) with its owner.
+                const { prev } = await setCover(myRoll, null);
+                if (prev) notified.push(await pushTeacher(prev, 'Cover changed', `You're no longer covering ${profName(myName)} today.`, 'released'));
+                for (const m of Object.keys(a.delegated)) {
+                    if (m === myRoll || a.delegated[m] !== myRoll) continue;
+                    await setCover(m, null);
+                    notified.push(await pushTeacher(m, 'Your cover changed', `${profName(myName)} went on leave and no other teacher is present — your work is back with you.`, 'moved'));
+                }
+                message = 'Marked On Leave — but no other teacher is present today, so your leave requests stay with you. Your classes are on the cover board.';
             }
         } else {
-            delete absence.absent[myRoll];
-            delete absence.delegated[myRoll];
-            // Back on my seat: pull my still-PENDING leaves home.
-            await supabase.from('leave_requests')
-                .update({ routed_to: null })
-                .eq('status', 'PENDING')
-                .eq('mentor_roll', myRoll);
-            message = 'Welcome back — your mentees\' leave requests come to you again.';
+            // "I'm here now": remaining work comes back; a period in progress
+            // stays with the substitute so they can finish its attendance.
+            const prev = a.delegated[myRoll] || null;
+            await setCover(myRoll, null);
+            delete a.absent[myRoll];
+            delete a.delegated[myRoll];
+            delete a.declined[myRoll];
+            coverBoardLib.withdrawFor(a, myRoll, new Date());     // open cards of periods not started go back to me
+            if (prev) notified.push(await pushTeacher(prev, 'Cover ended', `${profName(myName)} is here — their work is back with them.`, 'returned'));
+            message = 'Welcome back — your pending leave requests and your remaining classes are yours again (cards nobody took are withdrawn).';
         }
         saveTeacherAbsence();
-        return res.json({ success: true, onLeave: !!absence.absent[myRoll], delegatedTo: absence.delegated[myRoll] || null, message });
+        logTeacherLeave(myRoll, wantsAbsence, myName, wantsAbsence ? (a.delegated[myRoll] ? (await profileByRoll(a.delegated[myRoll]))?.full_name : null) : null);
+        const state = await coverStateFor(myRoll);
+        return res.json({ success: true, ...state, message, notified });
+    } catch (e) {
+        return res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// Substitute: "Can't cover" — the work goes back to the absent teacher, who
+// is told to pick someone else.
+app.post('/api/leave-requests/teacher-absent/decline', authenticateUser, requireRole('TEACHER'), async (req, res) => {
+    try {
+        if (!supabase) return res.status(503).json({ success: false, error: 'Database offline' });
+        const a = absenceMaps();
+        const myRoll = String(req.user?.rollNumber || req.user?.profile?.roll_number || '').trim();
+        const mentorRoll = String(req.body?.mentorRoll || '').trim();
+        if (!mentorRoll || !a.absent[mentorRoll] || a.delegated[mentorRoll] !== myRoll) {
+            return res.status(409).json({ success: false, error: 'You are not covering that teacher right now.' });
+        }
+        const { prof } = await setCover(mentorRoll, null);
+        a.declined[mentorRoll] = myRoll;
+        saveTeacherAbsence();
+        const notified = [await pushTeacher(mentorRoll, "Your substitute can't cover", `${profName(req.user?.name || myRoll)} can't cover today — pick another teacher.`, 'declined')];
+        return res.json({ success: true, message: `Okay — ${profName(prof?.full_name || mentorRoll)}'s work is back with them.`, notified });
     } catch (e) {
         return res.status(500).json({ success: false, error: e.message });
     }
@@ -5300,12 +5734,169 @@ app.get('/api/leave-requests/teacher-absent', authenticateUser, async (req, res)
     const myRoll = String(req.user?.rollNumber || req.user?.profile?.roll_number || '').trim();
     const role = String(req.user?.role || req.user?.profile?.role || '').toUpperCase();
     absenceToday();
+    let state = { onLeave: !!teacherAbsenceDB.absent[myRoll], delegatedTo: teacherAbsenceDB.delegated[myRoll] || null, covering: [] };
+    try { if (supabase && role === 'TEACHER') state = await coverStateFor(myRoll); } catch { /* keep the plain state */ }
     return res.json({
         success: true,
-        onLeave: !!teacherAbsenceDB.absent[myRoll],
-        delegatedTo: teacherAbsenceDB.delegated[myRoll] || null,
+        ...state,
         absentTeachers: role === 'ADMIN' || role === 'TEACHER' ? Object.keys(teacherAbsenceDB.absent || {}) : undefined
     });
+});
+
+
+// ============================================================
+// TEACHER FEATURES (v1): class analytics, lesson plan, my leaves.
+//   analytics   — REAL: computed from data/attendance.json + the student roll.
+//   lesson plan — local file store (data/lesson_plans.json), per teacher.
+//   my leaves   — REAL from today on: every "On Leave Today" is logged to
+//                 data/teacher_leave_log.json (older leaves were never stored).
+// ============================================================
+const LESSON_FILE = path.join(__dirname, 'data', 'lesson_plans.json');
+const LEAVE_LOG_FILE = path.join(__dirname, 'data', 'teacher_leave_log.json');
+function readJson(file, fallback) { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return fallback; } }
+function writeJson(file, obj) {
+    try { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, JSON.stringify(obj, null, 2)); }
+    catch (e) { console.warn(path.basename(file) + ' save skipped:', e.message); }
+}
+function logTeacherLeave(roll, on, name, subName) {
+    const log = readJson(LEAVE_LOG_FILE, {});
+    const day = localDayKey();
+    const list = log[roll] = log[roll] || [];
+    let row = list.find(r => r.date === day);
+    if (on) {
+        if (!row) { row = { date: day, from: new Date().toISOString(), to: null }; list.push(row); }
+        row.to = null; row.substitute = subName || row.substitute || null;
+    } else if (row && !row.to) { row.to = new Date().toISOString(); }
+    writeJson(LEAVE_LOG_FILE, log);
+}
+// Odd semester Jul–Dec, even semester Jan–Jun (assumption — change in one place).
+function semesterOf(d = new Date()) {
+    const y = d.getFullYear();
+    return d.getMonth() >= 6 ? { label: `Odd sem ${y}-${String(y + 1).slice(2)}`, from: `${y}-07-01`, to: `${y}-12-31` }
+        : { label: `Even sem ${y - 1}-${String(y).slice(2)}`, from: `${y}-01-01`, to: `${y}-06-30` };
+}
+app.get('/api/teacher/my-leaves', authenticateUser, requireRole('TEACHER'), (req, res) => {
+    const { roll } = teacherIdentity(req);
+    absenceToday();
+    const rows = (readJson(LEAVE_LOG_FILE, {})[roll] || []).slice().sort((a, b) => b.date.localeCompare(a.date));
+    const sem = semesterOf(), year = String(new Date().getFullYear());
+    const inSem = rows.filter(r => r.date >= sem.from && r.date <= sem.to);
+    return res.json({
+        success: true, semester: sem, onLeaveToday: !!teacherAbsenceDB.absent[roll],
+        semesterDays: inSem.length, yearDays: rows.filter(r => r.date.startsWith(year)).length,
+        trackedSince: rows.length ? rows[rows.length - 1].date : null,
+        leaves: rows.slice(0, 60)
+    });
+});
+
+app.get('/api/teacher/lesson-plan', authenticateUser, requireRole('TEACHER'), (req, res) => {
+    const { roll } = teacherIdentity(req);
+    const store = readJson(LESSON_FILE, {})[roll] || {};
+    return res.json({ success: true, plans: store });
+});
+// body: { sectionKey, subjectCode, action: 'add'|'toggle'|'remove'|'rename', title?, id? }
+app.post('/api/teacher/lesson-plan', authenticateUser, requireRole('TEACHER'), (req, res) => {
+    const { roll, name } = teacherIdentity(req);
+    const b = req.body || {};
+    const sectionKey = String(b.sectionKey || '').trim(), subjectCode = String(b.subjectCode || '').trim();
+    const mine = teacherSlotsAll(roll, name).some(s => s.sectionKey === sectionKey && s.subjectCode === subjectCode);
+    if (!mine) return res.status(403).json({ success: false, error: 'That subject/section is not on your timetable.' });
+    const all = readJson(LESSON_FILE, {});
+    const key = `${sectionKey}|${subjectCode}`;
+    const list = ((all[roll] = all[roll] || {})[key] = all[roll][key] || []);
+    const action = String(b.action || '');
+    if (action === 'add') {
+        const title = String(b.title || '').trim().slice(0, 120);
+        if (!title) return res.status(400).json({ success: false, error: 'Topic name required' });
+        if (list.length >= 200) return res.status(400).json({ success: false, error: 'Too many topics (200 max)' });
+        list.push({ id: crypto.randomBytes(4).toString('hex'), title, done: false, doneAt: null });
+    } else {
+        const t = list.find(x => x.id === String(b.id || ''));
+        if (!t) return res.status(404).json({ success: false, error: 'Topic not found' });
+        if (action === 'toggle') { t.done = !t.done; t.doneAt = t.done ? new Date().toISOString() : null; }
+        else if (action === 'remove') list.splice(list.indexOf(t), 1);
+        else if (action === 'rename') t.title = String(b.title || '').trim().slice(0, 120) || t.title;
+        else return res.status(400).json({ success: false, error: 'Unknown action' });
+    }
+    writeJson(LESSON_FILE, all);
+    return res.json({ success: true, plans: all[roll] });
+});
+// Every distinct subject+section of a teacher in the published timetable (all days).
+function teacherSlotsAll(roll, name) {
+    const rid = String(roll || '').trim().toUpperCase(), nm = String(name || '').trim().toLowerCase();
+    return ttSlots().filter(s => s.kind !== 'free' && s.kind !== 'study' && (
+        (rid.startsWith('FAC') && s.teacherId === rid) || (!rid.startsWith('FAC') && nm && s.teacherName && s.teacherName.toLowerCase() === nm)));
+}
+app.get('/api/teacher/my-classes', authenticateUser, requireRole('TEACHER'), (req, res) => {
+    const { roll, name } = teacherIdentity(req);
+    const seen = new Map();
+    for (const s of teacherSlotsAll(roll, name)) {
+        const k = `${s.sectionKey}|${s.subjectCode}`;
+        if (!seen.has(k)) seen.set(k, { sectionKey: s.sectionKey, short: shortSection(s), subjectCode: s.subjectCode, subject: s.subject, kind: s.kind });
+    }
+    return res.json({ success: true, classes: [...seen.values()] });
+});
+
+// Subject-wise attendance of the students of each of MY sections (real records).
+app.get('/api/teacher/analytics', authenticateUser, requireRole('TEACHER'), async (req, res) => {
+    try {
+        if (!supabase) return res.status(503).json({ success: false, error: 'Database offline' });
+        const { roll, name } = teacherIdentity(req);
+        const sections = new Map();
+        for (const s of teacherSlotsAll(roll, name)) {
+            const e = sections.get(s.sectionKey) || { sectionKey: s.sectionKey, short: shortSection(s), subjects: new Map() };
+            e.subjects.set(s.subjectCode, s.subject); sections.set(s.sectionKey, e);
+        }
+        const out = [];
+        for (const e of sections.values()) {
+            const [course, department, section] = e.sectionKey.split('|');
+            const { data: studs } = await supabase.from('profiles').select('roll_number, full_name')
+                .eq('role', 'STUDENT').eq('course', course).eq('department', department).eq('section', section)
+                .order('roll_number').limit(500);
+            const students = (studs || []).map(x => ({ roll: String(x.roll_number), name: x.full_name || x.roll_number }));
+            const subjects = [];
+            for (const [code, subject] of e.subjects) {
+                // Every marked session of THIS subject in this section (any teacher who took it, covers included).
+                const recs = attendanceDB.filter(a => a.sectionKey === e.sectionKey && a.subjectCode === code && Array.isArray(a.present));
+                const per = students.map(st => {
+                    const p = recs.filter(r => r.present.includes(st.roll)).length;
+                    return { ...st, attended: p, pct: recs.length ? Math.round((p / recs.length) * 1000) / 10 : null };
+                });
+                const withPct = per.filter(x => x.pct != null);
+                subjects.push({
+                    subjectCode: code, subject, sessions: recs.length,
+                    avgPct: withPct.length ? Math.round(withPct.reduce((t, x) => t + x.pct, 0) / withPct.length * 10) / 10 : null,
+                    below75: withPct.filter(x => x.pct < 75).sort((x, y) => x.pct - y.pct)
+                });
+            }
+            out.push({ sectionKey: e.sectionKey, short: e.short, students: students.length, subjects });
+        }
+        return res.json({ success: true, threshold: 75, sections: out });
+    } catch (err) { return res.status(500).json({ success: false, error: err.message }); }
+});
+
+// Admin / dean: today's absences and who covers them (read-only).
+app.get('/api/admin/teacher-covers', authenticateUser, requireRole('ADMIN', 'DEAN'), async (req, res) => {
+    try {
+        if (!supabase) return res.status(503).json({ success: false, error: 'Database offline' });
+        const a = absenceMaps();
+        const rows = [];
+        for (const m of Object.keys(a.absent || {}).filter(k => a.absent[k])) {
+            const p = await profileByRoll(m);
+            const s = a.delegated[m] ? await profileByRoll(a.delegated[m]) : null;
+            const mine = Object.values(a.coverCards || {}).filter(c => c.absentRoll === m && c.status !== 'withdrawn');
+            rows.push({
+                roll: m, name: p?.full_name || m, department: p?.department || null,
+                coveredBy: s ? { roll: s.roll_number, name: s.full_name } : null,
+                declinedBy: a.declined[m] || null,
+                cards: { total: mine.length, taken: mine.filter(c => c.status === 'taken').length, open: mine.filter(c => c.status === 'open').length },
+                pending: await pendingCountFor(m)
+            });
+        }
+        return res.json({ success: true, date: localDayKey(), rows });
+    } catch (e) {
+        return res.status(500).json({ success: false, error: e.message });
+    }
 });
 
 // ============================================================
@@ -6216,9 +6807,18 @@ app.get('/api/timetable', authenticateUser, (req, res) => {
         grid: timetableDB.grid,
         sections: timetableDB.sections || [],
         summary: timetableDB.summary,
-        slots: timetableDB.slots
+        slots: timetableDB.slots,
+        // Today's cover-board overrides for students ('Taken by Dr Z (cover)' / 'Class cancelled').
+        todayCovers: todayCoversPublic()
     });
 });
+
+function todayCoversPublic(sectionKey = null) {
+    coverTickNow();
+    const a = absenceToday(), now = new Date();
+    const keys = sectionKey ? [sectionKey] : [...new Set(Object.values(a.coverCards || {}).map(c => c.sectionKey))];
+    return keys.flatMap(k => coverBoardLib.studentOverrides(a, k, now).map(o => ({ ...o, sectionKey: k, day: ttTodayKey() })));
+}
 
 // A teacher's own engagement sheet (GF portal) — resolved from the FAC id
 // on the staff profile's roll_number, falling back to the display name.
@@ -6233,6 +6833,8 @@ app.get('/api/timetable/mine', authenticateUser, requireRole('TEACHER', 'ADMIN',
         subjectCode: s.subjectCode, subject: s.subject, room: s.room,
         department: s.department, departmentLabel: s.departmentLabel, kind: s.kind,
         sectionKey: s.sectionKey || null,
+        span: Math.max(1, parseInt(s.span, 10) || 1), startMin: s.startMin, endMin: s.endMin,
+        section: s.section || null, short: shortSection(s),
         sectionLabel: (s.course && s.section)
             ? `${s.departmentLabel || s.department} — Sec ${s.section}`
             : null
@@ -7109,7 +7711,7 @@ async function rollupSectionAttendance(sectionKey) {
 // /api/admin/attendance-unlock to let the teacher redo it. The Mark card is
 // also TIME-GATED: it only opens 10 minutes before the period starts, so a
 // 11 o'clock class can't be marked at 9 in the morning.
-app.post('/api/attendance/mark', authenticateUser, requireRole('TEACHER', 'ADMIN', 'DEAN'), (req, res) => {
+app.post('/api/attendance/mark', authenticateUser, requireRole('TEACHER', 'ADMIN', 'DEAN'), async (req, res) => {
     const body = req.body || {};
     const sectionKey = String(body.sectionKey || '').trim();
     const deptLabel = String(body.department || '').trim();      // display label, e.g. 'BTech CSE'
@@ -7140,9 +7742,47 @@ app.post('/api/attendance/mark', authenticateUser, requireRole('TEACHER', 'ADMIN
         });
     }
 
+    // WHO may mark: a TEACHER marks only a class the published timetable
+    // gives THEM for that section + period today — or one an absent
+    // colleague handed to them today (substitute cover). ADMIN / DEAN as before.
+    const role = String(req.user?.profile?.role || req.user?.role || '').toUpperCase();
+    let coveredFor = null;
+    if (role === 'TEACHER') {
+        const myRoll = String(req.user?.rollNumber || req.user?.profile?.roll_number || '').trim().toUpperCase();
+        const myName = String(req.user?.name || '').trim().toLowerCase();
+        const slots = (timetableDB && Array.isArray(timetableDB.slots)) ? timetableDB.slots : [];
+        const slot = day === ttTodayKey()
+            ? slots.find(s => s.sectionKey === sectionKey && s.day === day && s.period === period)
+            : null;
+        const mine = !!slot && ((myRoll.startsWith('FAC') && slot.teacherId === myRoll)
+            || (!myRoll.startsWith('FAC') && !!myName && String(slot.teacherName || '').toLowerCase() === myName));
+        if (!mine || coverBoardLib.cardAt(absenceToday(), sectionKey, period, now)) {
+            // COVER BOARD: a class of an absent teacher has a card. Only the
+            // teacher who TOOK it, under THEIR OWN subject, may mark it; a
+            // cancelled / untaken class cannot be marked at all.
+            const card = day === ttTodayKey() ? coverBoardLib.cardAt(absenceToday(), sectionKey, period, now) : null;
+            const st = card ? coverBoardLib.cardState(card, now) : null;
+            if (card && (st === 'cancelled')) {
+                return res.status(403).json({ success: false, classCancelled: true, error: 'This class was cancelled (nobody took the cover), so there is no attendance to mark.' });
+            }
+            const ok = card ? coverBoardLib.takerMayMark(absenceToday(), myRoll, { sectionKey, period, subjectCode }, now) : { ok: false };
+            if (!ok.ok) {
+                return res.status(403).json({
+                    success: false, notYourClass: true, wrongSubject: !!ok.wrongSubject,
+                    error: ok.wrongSubject ? `You are covering this period — mark it under your own subject (${ok.card.takenBy.subject}).`
+                        : card ? (card.status === 'taken' ? `${profName(card.takenBy.name)} is taking this class today, so only they can mark it.`
+                            : `Nobody has taken this cover yet — take it from the cover board first.`)
+                        : slot
+                            ? `This class belongs to ${profName(slot.teacherName)} on today's timetable. You can mark only your own classes (or one you took from the cover board).`
+                            : 'This class is not on your timetable for today, so it cannot be marked from your login.'
+                });
+            }
+            coveredFor = ok.card.absentRoll;
+        }
+    }
+
     // HARD LOCK — a saved (date, sectionKey, period) is frozen. ADMIN may
     // overwrite (and /api/admin/attendance-unlock deletes the lock entirely).
-    const role = String(req.user?.profile?.role || req.user?.role || '').toUpperCase();
     const existing = attendanceDB.find(a => a.date === today && a.sectionKey === sectionKey && a.period === period);
     if (existing && role !== 'ADMIN') {
         return res.status(409).json({
@@ -7152,7 +7792,11 @@ app.post('/api/attendance/mark', authenticateUser, requireRole('TEACHER', 'ADMIN
     }
 
     const takenByLogin = String(req.user?.profile?.rollNumber || req.user?.rollNumber || '').trim();
-    const takenByName = String(req.user?.profile?.name || req.user?.name || '').trim() || takenByLogin;
+    let takenByName = String(req.user?.profile?.name || req.user?.name || '').trim() || takenByLogin;
+    if (coveredFor) {
+        const ownerProf = await profileByRoll(coveredFor).catch(() => null);
+        takenByName = `${takenByName} (covering ${profName(ownerProf?.full_name || coveredFor)})`;
+    }
 
     let rec = existing;
     if (!rec) {
@@ -7177,6 +7821,7 @@ app.post('/api/attendance/mark', authenticateUser, requireRole('TEACHER', 'ADMIN
     rec.takenByLogin = takenByLogin;
     rec.takenByName = takenByName;
     rec.takenAt = new Date().toISOString();
+    if (coveredFor) rec.coveredFor = coveredFor; else delete rec.coveredFor;
     persistAttendance(attendanceDB);
 
     // Live attendance rollup: this mark recomputes every roster student's
@@ -7255,7 +7900,9 @@ app.get('/api/attendance/me', authenticateUser, (req, res) => {
         totalMarkedSessions: mine.length,
         presentCount: marked,
         percentage: mine.length ? Math.round((marked / mine.length) * 1000) / 10 : null,
-        sessions
+        sessions,
+        // Today's cover periods of my section: taken by a colleague / cancelled (no attendance exists for these).
+        todayCovers: myKey ? todayCoversPublic(myKey) : []
     });
 });
 

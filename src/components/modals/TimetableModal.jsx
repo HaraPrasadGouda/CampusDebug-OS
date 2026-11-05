@@ -216,12 +216,19 @@ export default function TimetableModal({ isOpen, onClose, department = '', cours
                 const isPast = isToday && nowMin >= (slot.endMin != null ? slot.endMin : g.endMin);
                 const ks = kindStyle[slot.kind] || kindStyle.study;
                 const KIcon = ks.icon;
+                // Cover board overrides for TODAY (live data only — never from the offline copy):
+                // 'Taken by Dr Z (cover)' or 'Class cancelled'.
+                const cover = isToday && !isCache
+                  ? (data.todayCovers || []).find(c => c.sectionKey === slot.sectionKey && c.period <= slot.period && slot.period < c.period + (c.span || 1))
+                  : null;
+                const cancelled = cover?.status === 'cancelled';
+                const taken = cover?.status === 'taken';
 
                 return (
                   <div
                     key={`${g.label}-${slot.subjectCode}`}
                     className={`flex items-start gap-2.5 px-3 py-2.5 rounded-xl border transition-all ${
-                      isLive ? 'bg-emerald-50/80 border-emerald-300 ring-1 ring-emerald-300' : isPast ? 'opacity-55 bg-white border-slate-100' : 'bg-white border-slate-200/70 hover:border-emerald-200'
+                      cancelled ? 'bg-rose-50/70 border-rose-300' : taken ? 'bg-sky-50/70 border-sky-300' : isLive ? 'bg-emerald-50/80 border-emerald-300 ring-1 ring-emerald-300' : isPast ? 'opacity-55 bg-white border-slate-100' : 'bg-white border-slate-200/70 hover:border-emerald-200'
                     }`}
                   >
                     <div className="w-8 shrink-0 text-center">
@@ -230,14 +237,16 @@ export default function TimetableModal({ isOpen, onClose, department = '', cours
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="text-[13px] font-bold text-slate-900 leading-tight">{slot.subject}</span>
+                        <span className={`text-[13px] font-bold leading-tight ${cancelled ? 'text-slate-400 line-through' : 'text-slate-900'}`}>{taken ? cover.subject : slot.subject}</span>
                         <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-md border ${ks.chip}`}>{ks.label}</span>
+                        {cancelled && <span className="text-[10px] font-black px-1.5 py-0.5 rounded-md border bg-rose-100 text-rose-800 border-rose-300">Class cancelled</span>}
+                        {taken && <span className="text-[10px] font-black px-1.5 py-0.5 rounded-md border bg-sky-100 text-sky-800 border-sky-300">{cover.label}</span>}
                       </div>
                       <div className="mt-1 flex items-center gap-2.5 text-[11px] text-slate-500 font-medium flex-wrap">
                         {(slot.kind === 'lecture' || slot.kind === 'lab') && slot.teacherName && (
                           <span className="flex items-center gap-1">
                             <User className="w-3 h-3 text-slate-400" />
-                            {slot.teacherName}{slot.teacherId ? ` (${slot.teacherId})` : ''}
+                            {taken ? cover.takerName : <>{slot.teacherName}{slot.teacherId ? ` (${slot.teacherId})` : ''}</>}
                           </span>
                         )}
                         {slot.room && (

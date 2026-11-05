@@ -34,7 +34,7 @@ export default function LeaveQRModal({ isOpen, onClose, onToast }) {
       if (j?.success) {
         setError('');
         saveLeaveSnapshot(getStoredProfile()?.rollNumber, j);
-        setState({ phase: 'READY', leaves: j.leaves || [], outToday: j.outToday, hasLiveRequest: j.hasLiveRequest });
+        setState({ phase: 'READY', leaves: j.leaves || [], outToday: j.outToday, hasLiveRequest: j.hasLiveRequest, mentorCover: j.mentorCover || null });
       }
     } catch {
       // offline — keep last snapshot; first open with no network: the saved one
@@ -66,7 +66,7 @@ export default function LeaveQRModal({ isOpen, onClose, onToast }) {
       const j = e?.detail;
       if (!alive || !j?.success) return;
       lastSnapshotAt = Date.now();
-      setState({ phase: 'READY', leaves: j.leaves || [], outToday: j.outToday, hasLiveRequest: j.hasLiveRequest });
+      setState({ phase: 'READY', leaves: j.leaves || [], outToday: j.outToday, hasLiveRequest: j.hasLiveRequest, mentorCover: j.mentorCover || null });
     };
     window.addEventListener('campus_leave_state', onLeaveState);
     return () => { alive = false; clearInterval(poll); window.removeEventListener('campus_leave_state', onLeaveState); };
@@ -111,7 +111,9 @@ export default function LeaveQRModal({ isOpen, onClose, onToast }) {
       const j = await r.json();
       if (j?.success) {
         setReason('');
-        if (onToast) onToast('Leave request sent to your mentor — approval happens in the app, never automatic.', 'success');
+        if (onToast) onToast(j.reviewer?.covering
+          ? `Leave request sent — your mentor is on leave today, so ${j.reviewer.name} will review it.`
+          : 'Leave request sent to your mentor — approval happens in the app, never automatic.', 'success');
         await load(false);
         // Dashboard card flips to PENDING right away (no wait for its next poll).
         window.dispatchEvent(new CustomEvent('campus_leave_updated', { detail: { leave: j.leave } }));
@@ -141,7 +143,9 @@ export default function LeaveQRModal({ isOpen, onClose, onToast }) {
         <div className="text-[13px] leading-snug min-w-0">
           <strong className="font-extrabold block text-xs">{m.text}</strong>
           <span className="text-[11px] leading-snug block mt-0.5">
-            {anyStatus === 'PENDING' && `Requested ${new Date(pending.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} — your mentor decides in the app. You may also visit them; nothing is approved automatically.`}
+            {anyStatus === 'PENDING' && (state.mentorCover?.reviewerName
+              ? `Requested ${new Date(pending.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} — your mentor is on leave today, so ${state.mentorCover.reviewerName} decides in the app. Nothing is approved automatically.`
+              : `Requested ${new Date(pending.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} — your mentor decides in the app. You may also visit them; nothing is approved automatically.`)}
             {anyStatus === 'APPROVED' && `Approved by ${live.decided_by_name || 'your mentor'}${live.mentor_note ? ` — note: ${live.mentor_note}` : ''}. Flash the QR below once at the gate; the exit registers and your parent gets an SMS. One-way leave — back on the next working day.`}
             {anyStatus === 'OUT' && `Left campus at ${new Date(out.scanned_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}, parent informed. The next working day is your return.`}
             {anyStatus === 'REJECTED' && `${decided.decided_by_name || 'Your mentor'} rejected the request${decided.mentor_note ? `: ${decided.mentor_note}` : '.'} Stay in classes today.`}
@@ -195,6 +199,13 @@ export default function LeaveQRModal({ isOpen, onClose, onToast }) {
               {!(pending || live || out) && (
                 <div className="rounded-2xl border border-blue-200 bg-blue-50/50 p-3.5 space-y-2.5">
                   <p className="text-sm font-extrabold text-blue-900">Request leave from your mentor</p>
+                  {state.mentorCover?.onLeave && (
+                    <p className="text-xs font-bold text-indigo-800 bg-indigo-50 border border-indigo-200 rounded-xl px-3 py-2">
+                      {state.mentorCover.reviewerName
+                        ? `Your mentor is on leave today — ${state.mentorCover.reviewerName} will review.`
+                        : 'Your mentor is on leave today — they review your request when they are back.'}
+                    </p>
+                  )}
                   <ul className="text-[11px] text-blue-800 leading-relaxed list-disc pl-4">
                     <li>Apply <strong>at least 1 hour</strong> before you need to leave</li>
                     <li>One pending request at a time — nothing is auto-approved</li>

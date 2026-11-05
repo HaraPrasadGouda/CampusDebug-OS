@@ -7,6 +7,7 @@ import { serverNow } from './serverClock';
  */
 const OPEN_MIN = 9 * 60;        // 09:00
 const CLOSE_MIN = 16 * 60 + 30; // 16:30 gate close
+export const LEAVE_WINDOW_LABEL = '9:00 AM–4:30 PM';
 export const LEAVE_WINDOW_MSG = 'Day-scholar leave can be requested only between 9:00 AM and 4:30 PM (college hours).';
 
 export function isLeaveWindowOpen(nowMs = serverNow()) {
