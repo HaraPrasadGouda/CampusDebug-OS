@@ -1,7 +1,7 @@
 import React from 'react';
 import {
   BellRing, X, ClipboardCheck, Users, ChevronRight, CheckCircle2, Clock, FilePlus, LogIn, BookOpen,
-  Megaphone, CalendarOff, BellOff, Bell, UserCheck, ShieldCheck, Lock, Ban, LifeBuoy
+  Megaphone, CalendarOff, BellOff, Bell, UserCheck, ShieldCheck, Lock, Ban, LifeBuoy, Pencil
 } from 'lucide-react';
 
 // Presentational pieces of the new teacher navigation (Today / Me). No data fetching here:
@@ -69,7 +69,7 @@ export function AllClearCard() {
   );
 }
 
-export function NextClassCard({ row, minsLeft, markState, onMark }) {
+export function NextClassCard({ row, minsLeft, markState, canEdit = false, onMark }) {
   if (!row) return null;
   const live = minsLeft <= 0;
   return (
@@ -90,8 +90,14 @@ export function NextClassCard({ row, minsLeft, markState, onMark }) {
         <p className="mt-3 w-full min-h-[44px] rounded-2xl bg-slate-100 border border-slate-200 text-slate-600 text-[13px] font-bold flex items-center justify-center gap-1.5"><Clock className="w-4 h-4" aria-hidden="true" />Marking opens {row.openAt}</p>
       )}
       {markState === 'done' && (
-        <p className="mt-3 w-full min-h-[44px] rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-[13px] font-extrabold flex items-center justify-center gap-1.5"><CheckCircle2 className="w-4 h-4" aria-hidden="true" />Attendance marked</p>
+        <div className="mt-3 flex flex-col gap-2">
+          <p className="w-full min-h-[44px] rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-[13px] font-extrabold flex items-center justify-center gap-1.5"><CheckCircle2 className="w-4 h-4" aria-hidden="true" />Attendance marked</p>
+          {canEdit && (
+            <button type="button" data-testid="next-class-edit" onClick={onMark} className="w-full min-h-[44px] rounded-2xl bg-white border-2 border-indigo-200 hover:bg-indigo-50 text-indigo-700 text-[13px] font-extrabold flex items-center justify-center gap-1.5 cursor-pointer"><Pencil className="w-4 h-4" aria-hidden="true" />Edit attendance</button>
+          )}
+        </div>
       )}
+
     </div>
   );
 }
@@ -180,7 +186,7 @@ export const GroupDivider = ({ children }) => (
 );
 
 // CLASSES -> Mark attendance: today's classes with the same Mark flow and time gate as 'My day'.
-export function AttendanceList({ rows, loaded, markedRec, markOpen, openLabel, onMark, nowMin }) {
+export function AttendanceList({ rows, loaded, markedRec, canEdit, markOpen, openLabel, onMark, nowMin }) {
   return (
     <section id="td-attendance" data-testid="attendance-list" className="scroll-mt-[124px] rounded-2xl border border-indigo-100 bg-white shadow-sm overflow-hidden">
       <div className="flex items-center justify-between gap-2 px-4 py-3 bg-gradient-to-r from-indigo-50 to-white border-b border-indigo-100">
@@ -211,7 +217,12 @@ export function AttendanceList({ rows, loaded, markedRec, markOpen, openLabel, o
                         ? <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-2.5 py-1.5"><Ban className="w-3 h-3" aria-hidden="true" />Class cancelled</span>
                         : <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5"><LifeBuoy className="w-3 h-3" aria-hidden="true" />On the cover board</span>
                   ) : rec ? (
-                    <span className="inline-flex items-center gap-1 text-[11px] font-black text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-2.5 py-1.5"><CheckCircle2 className="w-3 h-3" aria-hidden="true" />Marked {(rec.present || []).length} · Locked</span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="inline-flex items-center gap-1 text-[11px] font-black text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-2.5 py-1.5"><CheckCircle2 className="w-3 h-3" aria-hidden="true" />Marked {(rec.present || []).length}</span>
+                      {canEdit?.(rec) && (
+                        <button type="button" data-testid="classes-edit" onClick={() => onMark(r.slot)} className="inline-flex items-center justify-center gap-1.5 text-xs font-black text-indigo-700 bg-white border-2 border-indigo-200 hover:bg-indigo-50 rounded-xl px-3.5 min-h-[44px] cursor-pointer"><Pencil className="w-3.5 h-3.5" aria-hidden="true" />Edit attendance</button>
+                      )}
+                    </div>
                   ) : !markOpen(r) ? (
                     <span className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-500 bg-slate-100 border border-slate-200 rounded-lg px-2.5 py-1.5"><Clock className="w-3 h-3" aria-hidden="true" />Opens {openLabel(r)}</span>
                   ) : (

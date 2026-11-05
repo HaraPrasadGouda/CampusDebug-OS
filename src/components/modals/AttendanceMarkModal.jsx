@@ -28,6 +28,7 @@ export default function AttendanceMarkModal({ isOpen, onClose, slot, onMarked })
   const [query, setQuery] = useState('');
   const [busy, setBusy] = useState(false);
   const [rosterErr, setRosterErr] = useState('');
+  const [editing, setEditing] = useState(false);     // true when this class already has a saved record today
 
   useEffect(() => {
     if (!isOpen) return;
@@ -40,7 +41,7 @@ export default function AttendanceMarkModal({ isOpen, onClose, slot, onMarked })
   useEffect(() => {
     if (!isOpen || !slot) return;
     let alive = true;
-    setStudents(null); setMarks({}); setHints({}); setQuery(''); setRosterErr('');
+    setEditing(false); setStudents(null); setMarks({}); setHints({}); setQuery(''); setRosterErr('');
 
     (async () => {
       try {
@@ -71,6 +72,7 @@ export default function AttendanceMarkModal({ isOpen, onClose, slot, onMarked })
           const pre = {};
           mine.present.forEach(roll => { pre[roll] = true; });
           setMarks(pre);
+          setEditing(true);
         }
       } catch { /* first mark of the day — nothing to prefill */ }
 
@@ -118,7 +120,8 @@ export default function AttendanceMarkModal({ isOpen, onClose, slot, onMarked })
           day: slot.day,
           period: slot.period,
           kind: slot.kind || 'lecture',
-          present: Object.keys(marks).filter(k => marks[k])
+          present: Object.keys(marks).filter(k => marks[k]),
+          ...(editing ? { date: todayKey() } : {})
         })
       });
       const j = await r.json();
@@ -147,7 +150,7 @@ export default function AttendanceMarkModal({ isOpen, onClose, slot, onMarked })
               <div className="w-9 h-9 rounded-xl bg-teal-50 border border-teal-200 text-teal-700 flex items-center justify-center shrink-0">
                 <UserCheck className="w-5 h-5" />
               </div>
-              <h3 className="font-bold text-slate-900 tracking-tight text-lg leading-tight truncate">Mark Attendance</h3>
+              <h3 className="font-bold text-slate-900 tracking-tight text-lg leading-tight truncate">{editing ? 'Edit Attendance' : 'Mark Attendance'}</h3>
               <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-md border shrink-0 ${slot.kind === 'lab' ? 'bg-violet-100 text-violet-800 border-violet-200' : 'bg-teal-100 text-teal-800 border-teal-200'}`}>
                 {slot.kind === 'lab' ? 'LAB' : 'LECTURE'}
               </span>
@@ -253,7 +256,7 @@ export default function AttendanceMarkModal({ isOpen, onClose, slot, onMarked })
               className="flex flex-1 sm:flex-none items-center justify-center gap-1.5 px-4 py-2 min-h-[44px] sm:min-h-0 rounded-xl bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white text-xs font-bold text-center leading-tight cursor-pointer transition-all shadow-sm min-w-0"
             >
               <Check className={`w-4 h-4 ${busy ? 'animate-pulse' : ''}`} />
-              {busy ? 'Saving…' : `Save — present ${presentCount}/${(students || []).length}`}
+              {busy ? 'Saving…' : `${editing ? 'Save changes' : 'Save'} — present ${presentCount}/${(students || []).length}`}
             </button>
           </div>
         </div>

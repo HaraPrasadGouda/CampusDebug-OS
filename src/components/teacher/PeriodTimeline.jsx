@@ -1,11 +1,11 @@
 import React from 'react';
-import { CalendarDays, MapPin, Clock, UserCheck, CheckCircle2, Lock, Ban, LifeBuoy } from 'lucide-react';
+import { CalendarDays, MapPin, Clock, UserCheck, CheckCircle2, Lock, Ban, LifeBuoy, Pencil } from 'lucide-react';
 
 // "My day" — today's classes period by period as a timeline: time rail on the
 // left (done = green, live = amber, upcoming = indigo), one card per class.
 // Classes I took from the cover board sit in the same rail, tagged COVER.
 // When I'm on leave each of my classes says what happened to it on the board.
-export default function PeriodTimeline({ rows, loaded, onMark, markOpen, openLabel, markedRec, nowMin }) {
+export default function PeriodTimeline({ rows, loaded, onMark, markOpen, openLabel, markedRec, canEdit, nowMin }) {
   const lookState = (r) => (nowMin >= r.endMin ? 'done' : nowMin >= r.startMin ? 'live' : 'next');
   const dot = { done: 'bg-emerald-500', live: 'bg-amber-400 ring-4 ring-amber-100', next: 'bg-indigo-500' };
   return (
@@ -60,9 +60,16 @@ export default function PeriodTimeline({ rows, loaded, onMark, markOpen, openLab
                         <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5"><LifeBuoy className="w-3 h-3" />On the cover board — no taker yet</span>
                       )
                     ) : rec ? (
-                      <span className="inline-flex items-center gap-1 text-[11px] font-black text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-2.5 py-1.5" title={`LOCKED — ${rec.takenByName || 'A teacher'} saved this class with ${(rec.present || []).length} present. Only an admin can unlock it.`}>
-                        <CheckCircle2 className="w-3 h-3" />Marked {(rec.present || []).length} · Locked
-                      </span>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="inline-flex items-center gap-1 text-[11px] font-black text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-2.5 py-1.5" title={canEdit?.(rec) ? 'Attendance saved. You can edit it today during college hours.' : 'Attendance can be edited only on the same day during college hours.'}>
+                          <CheckCircle2 className="w-3 h-3" />Marked {(rec.present || []).length}
+                        </span>
+                        {canEdit?.(rec) && (
+                          <button type="button" data-testid="att-edit" onClick={() => onMark(r.slot)} className="inline-flex items-center justify-center gap-1.5 text-xs font-black text-indigo-700 bg-white border-2 border-indigo-200 hover:bg-indigo-50 rounded-xl px-3.5 min-h-[44px] transition-colors cursor-pointer" title={`Edit attendance for ${r.subject} · ${r.periodLabel}`}>
+                            <Pencil className="w-3.5 h-3.5" aria-hidden="true" />Edit attendance
+                          </button>
+                        )}
+                      </div>
                     ) : !markOpen(r) ? (
                       <span className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-500 bg-slate-100 border border-slate-200 rounded-lg px-2.5 py-1.5" title={`Marking opens at ${openLabel(r)} — 10 minutes before the class starts. No early marking.`}>
                         <Clock className="w-3 h-3" />Opens {openLabel(r)}
