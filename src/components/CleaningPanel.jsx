@@ -114,7 +114,7 @@ export function CleaningPanelView({ data, onSave = async () => ({ ok: true }), c
                           <p className="text-[13px] font-extrabold text-slate-900 flex items-center justify-between gap-2">Room {r.room}
                             {r.notFixedCount > 0 && <span className="text-[10.5px] font-mono text-rose-700">Not fixed {r.notFixedCount}×</span>}
                           </p>
-                          <p className="text-[11.5px] text-slate-600 font-semibold break-words">Answered Nahi by {r.answeredByName || 'a roommate'}</p>
+                          <p className="text-[11.5px] text-slate-600 font-semibold break-words">Answered No by {r.answeredByName || 'a roommate'}</p>
                         </li>
                       ))}
                     </ul>
@@ -133,7 +133,7 @@ export function CleaningPanelView({ data, onSave = async () => ({ ok: true }), c
                           <span className={`w-2.5 h-2.5 rounded-full mt-1 shrink-0 ${s.dot}`} />
                           <span className="min-w-0 text-[12px] leading-snug">
                             <b className="font-extrabold text-slate-900">{r.room}</b> <span className="text-slate-600 font-semibold">{s.label}</span>
-                            {r.answeredByName && <span className="block text-[11px] text-slate-500 break-words">{r.answeredByName}: {r.answer === 'yes' ? 'Haan' : 'Nahi'}</span>}
+                            {r.answeredByName && <span className="block text-[11px] text-slate-500 break-words">{r.answeredByName}: {r.answer === 'yes' ? 'Yes' : 'No'}</span>}
                           </span>
                         </li>
                       );

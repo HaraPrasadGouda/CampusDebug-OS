@@ -8458,7 +8458,7 @@ app.post('/api/notices/ack', authenticateUser, (req, res) => {
 
 // ----------------------------------------------------
 // 9. ROOM CLEANING CHECKS (rules: cleaning.js · storage: cleaning-store.js)
-// Hostellers in a room answer "Aaj room saaf hua?" on cleaning day, 1-9 PM.
+// Hostellers in a room answer "Was your room cleaned today?" on cleaning day, 1-9 PM.
 // The first answer locks the room. At close, each not-cleaned room gets one
 // Cleanliness complaint; next morning 07:30 one SMS per block to its cleaners.
 // Times are Asia/Kolkata. Everything here is idempotent (the tick runs every minute).

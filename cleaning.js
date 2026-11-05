@@ -6,9 +6,9 @@
 //  • Each hostel block has cleaners; the warden sets the cleaning days and the
 //    cleaning time window (default: Sunday, 8 AM - 1 PM).
 //  • On a cleaning day, from the window's end for 8 hours (default 1 PM - 9 PM)
-//    every hosteller in the room is asked "Aaj room saaf hua?".
+//    every hosteller in the room is asked "Was your room cleaned today?".
 //  • The FIRST roommate to answer locks the room; the answerer may change
-//    Haan <-> Nahi until the window closes, the others see who answered.
+//    Yes <-> No until the window closes, the others see who answered.
 //  • Away students (approved leave / out on a gate pass) are not asked. A room
 //    where everyone is away is "vacant"; nobody answering is "no reply".
 //  • At close: one complaint ticket per not-cleaned room (once per room per day).
@@ -156,7 +156,7 @@ export function withLock(key, fn) {
 //   roomOf(block, room) → { rolls: [roll], away: Set, names: {roll: name}, ids: {roll: id} } | null
 // Returns { ok, status, body }.
 export async function answerRoom(deps, { block, room, roll, answer, now, settings }) {
-  if (answer !== 'yes' && answer !== 'no') return fail(400, 'Answer Haan or Nahi.');
+  if (answer !== 'yes' && answer !== 'no') return fail(400, 'Answer Yes or No.');
   const w = answerWindow(settings, now);
   if (w.state !== 'open') {
     return fail(403, w.state === 'before' ? 'The answer opens at 1 PM on cleaning day.' : 'The answer window is closed for today.');

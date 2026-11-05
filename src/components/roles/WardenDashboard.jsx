@@ -1215,7 +1215,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
               <span>Room Cleaning</span>
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              Students answer &quot;Aaj room saaf hua?&quot; from 1 PM to 9 PM on cleaning day. A dirty room becomes one complaint for the block&apos;s cleaners.
+              Students answer &quot;Was your room cleaned today?&quot; from 1 PM to 9 PM on cleaning day. A dirty room becomes one complaint for the block&apos;s cleaners.
             </p>
           </div>
           <CleaningPanel role="WARDEN" onAlertCount={setCleaningAlerts} />

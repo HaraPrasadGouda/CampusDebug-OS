@@ -1,11 +1,11 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Sparkles, Check, Lock, X } from 'lucide-react';
 
-// Student home card: "Aaj room saaf hua?" (cleaning day, 1 PM - 9 PM only).
+// Student home card: "Was your room cleaned today?" (cleaning day, 1 PM - 9 PM only).
 // The server decides if the card shows at all; nothing is rendered otherwise.
 // The first roommate to answer answers for the whole room; the others see who did.
 
-const ANSWER_LABEL = { yes: 'Haan', no: 'Nahi' };
+const ANSWER_LABEL = { yes: 'Yes', no: 'No' };
 
 // Pure view (used by the dashboard and by the screenshot harness).
 export function CleaningCheckView({ data, busy = false, error = '', onAnswer = () => {} }) {
@@ -42,9 +42,9 @@ export function CleaningCheckView({ data, busy = false, error = '', onAnswer = (
         </div>
         <div className="min-w-0 flex-1">
           <p className="text-[10px] font-black tracking-wider uppercase text-cyan-700">Cleaning day{place ? ` · ${place}` : ''}</p>
-          <h3 className="text-[19px] font-extrabold text-slate-900 leading-tight mt-0.5">Aaj room saaf hua?</h3>
+          <h3 className="text-[19px] font-extrabold text-slate-900 leading-tight mt-0.5">Was your room cleaned today?</h3>
           {state === 'open' && (
-            <p className="text-[12px] text-slate-600 font-medium mt-1 leading-snug">Ek jawab poore room ka maana jayega. Jawab {closesLabel || '9 PM'} tak badal sakte ho.</p>
+            <p className="text-[12px] text-slate-600 font-medium mt-1 leading-snug">One answer counts for the whole room. You can change it until {closesLabel || '9 PM'}.</p>
           )}
         </div>
       </div>
@@ -52,13 +52,13 @@ export function CleaningCheckView({ data, busy = false, error = '', onAnswer = (
       {locked && (
         <div className="mt-3 rounded-xl bg-white/80 border border-slate-200 px-3 py-2.5 flex items-start gap-2 text-[13px] font-bold text-slate-800">
           <Lock className="w-4 h-4 mt-0.5 shrink-0 text-slate-500" />
-          <span className="min-w-0 break-words">{answeredByName} ne jawab de diya: <span className={answer === 'yes' ? 'text-emerald-700' : 'text-rose-700'}>{ANSWER_LABEL[answer] || answer}</span></span>
+          <span className="min-w-0 break-words">{answeredByName} already answered: <span className={answer === 'yes' ? 'text-emerald-700' : 'text-rose-700'}>{ANSWER_LABEL[answer] || answer}</span></span>
         </div>
       )}
       {mine && (
         <p className="mt-3 text-[13px] font-bold text-slate-800">
-          Tumne jawab diya: <span className={answer === 'yes' ? 'text-emerald-700' : 'text-rose-700'}>{ANSWER_LABEL[answer]}</span>
-          <span className="block text-[11.5px] font-medium text-slate-500 mt-0.5">Galat tap hua? Dusra button dabao, {closesLabel || '9 PM'} tak badal sakte ho.</span>
+          You answered: <span className={answer === 'yes' ? 'text-emerald-700' : 'text-rose-700'}>{ANSWER_LABEL[answer]}</span>
+          <span className="block text-[11.5px] font-medium text-slate-500 mt-0.5">Tapped by mistake? Tap the other button. You can change it until {closesLabel || '9 PM'}.</span>
         </p>
       )}
 
@@ -95,8 +95,8 @@ export default function CleaningCheckCard() {
     try {
       const r = await fetch('/api/cleaning/answer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answer: value }) });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) setError(j.error || 'Jawab save nahi hua. Dobara try karo.');
-    } catch { setError('Internet nahi hai. Dobara try karo.'); }
+      if (!r.ok) setError(j.error || 'Could not save your answer. Please try again.');
+    } catch { setError('No internet connection. Please try again.'); }
     await load();
     setBusy(false);
   };
