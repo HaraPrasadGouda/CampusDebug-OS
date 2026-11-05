@@ -6,6 +6,12 @@ export function registerServiceWorker() {
         .then((reg) => {
           console.log('[CampusDebug SW] Registered successfully with scope:', reg.scope);
           
+          // Look for a newer build whenever the app comes back to the foreground
+          // (an installed PWA is rarely cold-started, so it would never re-check on its own).
+          document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') reg.update().catch(() => {});
+          });
+
           reg.onupdatefound = () => {
             const installingWorker = reg.installing;
             if (installingWorker == null) return;
