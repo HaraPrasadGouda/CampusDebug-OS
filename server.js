@@ -5601,6 +5601,15 @@ app.post('/api/admin/cover-board/:id/cancel', authenticateUser, requireRole('ADM
     saveTeacherAbsence();
     return res.json({ success: true, message: `${r.card.periodLabel} ${r.card.short} marked cancelled — students see "Class cancelled".` });
 });
+// Admin / dean: take back "Class cancelled" (until the period ends). The card is open for teachers again.
+app.post('/api/admin/cover-board/:id/undo-cancel', authenticateUser, requireRole('ADMIN', 'DEAN'), async (req, res) => {
+    const a = absenceToday();
+    const r = coverBoardLib.adminUndoCancel(a, String(req.params.id), new Date());
+    if (!r.ok) return res.status(r.http).json({ success: false, error: r.error });
+    saveTeacherAbsence();
+    console.log(`↩️  [COVER] ${r.card.periodLabel} ${r.card.short} cancellation undone by ${req.user?.rollNumber || 'admin'}`);
+    return res.json({ success: true, message: `${r.card.periodLabel} ${r.card.short} is open again — free teachers can take it.` });
+});
 
 // Picker data: my remaining periods today + present colleagues tagged
 // free / busy + what will be handed over.

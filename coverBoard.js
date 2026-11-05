@@ -135,7 +135,8 @@ export function cardState(card, now) {
     if (card.status === 'withdrawn') return 'withdrawn';
     if (card.status === 'cancelled') return 'cancelled';
     if (card.status === 'taken') return nm >= card.endMin ? 'done' : 'taken';
-    // open
+    // open (an admin who undid a cancellation after the start keeps it open until the period ends)
+    if (card.reopened && nm < card.endMin) return 'open';
     return nm >= card.startMin ? 'cancelled' : 'open';
 }
 const label = (c) => `${c.periodLabel} ${c.short}`;
@@ -234,13 +235,38 @@ export function adminCancel(state, id, now) {
 }
 
 /**
+ * Admin takes back "Class cancelled" (cancelled by the admin, or automatically at the period start
+ * with no taker). The card goes back to 'open' so free teachers of the section can take it again.
+ * - Only while the period has not ENDED (409 afterwards); only a cancelled card (409 otherwise).
+ * - Alert flags are never reset, so no escalation fires twice for one period. If the period has already
+ *   started, the t30/t0 flags are closed as 'skipped' (no stale "class cancelled" alert) and the card is
+ *   marked `reopened` so it stays open until the period ends instead of being auto-cancelled again.
+ */
+export function adminUndoCancel(state, id, now) {
+    const c = cards(state)[id];
+    if (!c || c.date !== dateKeyOf(now) || c.status === 'withdrawn') return { ok: false, http: 404, error: 'Card not found.' };
+    const nm = minOf(now);
+    if (cardState(c, now) !== 'cancelled') return { ok: false, http: 409, error: 'This class is not cancelled.' };
+    if (nm >= c.endMin) return { ok: false, http: 409, error: 'This period is already over, so it can no longer be reopened.' };
+    c.alerts = c.alerts || { t30: null, t0: null };
+    if (nm >= c.startMin) {
+        c.reopened = true;
+        if (!c.alerts.t0) c.alerts.t0 = 'skipped';
+        if (!c.alerts.t30) c.alerts.t30 = 'skipped';
+    }
+    c.status = 'open'; c.takenBy = null;
+    c.cancelUndoneAt = now.toISOString();
+    return { ok: true, card: c };
+}
+
+/**
  * The escalation ladder. Call on a timer and before reads. Returns the NEW
  * admin alerts [{type:'t30'|'t0', card, text}] — each fires exactly once.
  */
 export function tick(state, now) {
     const nm = minOf(now), out = [];
     for (const c of Object.values(cards(state))) {
-        if (c.date !== dateKeyOf(now) || c.status !== 'open') continue;
+        if (c.date !== dateKeyOf(now) || c.status !== 'open' || c.reopened) continue;   // reopened = admin already knows
         c.alerts = c.alerts || { t30: null, t0: null };
         const start = fmtMin(c.startMin);
         if (nm >= c.startMin) {
@@ -265,8 +291,10 @@ export function adminView(state, now) {
     const view = all.map(c => ({
         ...publicCard(c, now),
         alertedAt: c.alerts?.t30 && c.alerts.t30 !== 'skipped' ? c.alerts.t30 : null,
-        finalAlertAt: c.alerts?.t0 || null,
-        cancelledByAdmin: c.status === 'cancelled'
+        finalAlertAt: c.alerts?.t0 && c.alerts.t0 !== 'skipped' ? c.alerts.t0 : null,
+        cancelledByAdmin: c.status === 'cancelled',
+        reopened: !!c.reopened,
+        canUndo: cardState(c, now) === 'cancelled' && nm < c.endMin
     }));
     // banner: open + inside the 30-min window (or past start = cancelled), not yet over
     const banners = view.filter(v => nm < v.endMin && (v.status === 'cancelled' || (v.status === 'open' && v.minutesToStart <= ALERT_LEAD_MIN)))
@@ -275,7 +303,8 @@ export function adminView(state, now) {
             text: v.status === 'cancelled'
                 ? `${v.periodLabel} ${v.short} at ${fmtMin(v.startMin)} — class cancelled, nobody took it`
                 : `${v.periodLabel} ${v.short} at ${fmtMin(v.startMin)} has no cover, nobody has taken it`,
-            canCancel: v.status === 'open'
+            canCancel: v.status === 'open',
+            canUndo: v.canUndo
         }));
     return { cards: view, banners };
 }
