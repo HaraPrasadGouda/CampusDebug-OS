@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import CleaningPanel from '../CleaningPanel';
 import { 
   ShieldCheck, 
   CheckCircle2, 
@@ -62,6 +63,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
   const [allTickets, setAllTickets] = useState([]);
   const [activeTab, setActiveTab] = useState('passes'); // 'tickets' | 'clusters' | 'passes' | 'sla' | 'register'
   const [technicianRoster, setTechnicianRoster] = useState([]);   // active technicians (reassign dropdown)
+  const [cleaningAlerts, setCleaningAlerts] = useState(0);        // red alerts in the Cleaning panel
   const [technicians, setTechnicians] = useState([]);             // Technicians panel (DB rows + workload)
   const [techError, setTechError] = useState(null);               // "Technician list unavailable"
   const [techLoaded, setTechLoaded] = useState(false);
@@ -498,6 +500,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
     { tab: 'passes', id: 'wd-passes', label: 'Pending Passes', count: pendingPasses.length, dot: 'bg-emerald-500', hot: pendingPasses.length > 0, hotCls: 'bg-emerald-600 text-white' },
     { tab: 'tickets', id: 'wd-tickets', label: 'Student Issues', count: allTickets.length, dot: 'bg-amber-500', hot: false },
     { tab: 'technicians', id: 'wd-technicians', label: 'Technicians', count: techError ? '!' : technicians.filter(t => t.active).length, dot: 'bg-sky-500', hot: !!techError, hotCls: 'bg-rose-600 text-white' },
+    { tab: 'cleaning', id: 'wd-cleaning', label: 'Cleaning', count: cleaningAlerts > 0 ? cleaningAlerts : null, dot: 'bg-cyan-500', hot: cleaningAlerts > 0, hotCls: 'bg-rose-600 text-white' },
     { tab: 'clusters', id: 'wd-clusters', label: 'Master Incidents', count: clusters.length, dot: 'bg-purple-500', hot: false },
     { tab: 'sla', id: 'wd-sla', label: 'SLA Heatmap', count: slaAtRiskCount > 0 ? slaAtRiskCount : null, dot: 'bg-rose-500', hot: slaAtRiskCount > 0, hotCls: 'bg-rose-600 text-white' },
     { tab: 'register', id: 'wd-register', label: 'Gate Register', count: registerRows.length, dot: 'bg-slate-700', hot: false }
@@ -1203,7 +1206,22 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
           )}
         </section>
 
-        <section id="wd-register" className={`order-6 xl:col-span-12 xl:row-start-4 scroll-mt-[124px] min-w-0 bg-white border-2 border-slate-300 rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm ${tabCls('register')}`}>
+        <section id="wd-cleaning" className={`order-5 xl:col-span-12 xl:row-start-4 scroll-mt-[124px] min-w-0 bg-white border-2 border-cyan-200 rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm ${tabCls('cleaning')}`}>
+          <div className="border-b border-cyan-100 pb-3">
+            <h2 className="text-[15px] font-bold text-slate-900 flex items-center gap-2.5">
+              <span className="w-9 h-9 rounded-xl bg-cyan-100/70 text-cyan-700 border border-cyan-200 flex items-center justify-center shrink-0">
+                <Sparkles className="w-4 h-4" />
+              </span>
+              <span>Room Cleaning</span>
+            </h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Students answer &quot;Was your room cleaned today?&quot; from 1 PM to 9 PM on cleaning day. A dirty room becomes one complaint for the block&apos;s cleaners.
+            </p>
+          </div>
+          <CleaningPanel role="WARDEN" onAlertCount={setCleaningAlerts} />
+        </section>
+
+        <section id="wd-register" className={`order-6 xl:col-span-12 xl:row-start-5 scroll-mt-[124px] min-w-0 bg-white border-2 border-slate-300 rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm ${tabCls('register')}`}>
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 pb-3">
             <div className="min-w-0">
               <h2 className="text-[15px] font-bold text-slate-900 flex items-center gap-2.5">

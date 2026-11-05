@@ -1,11 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  CheckCircle2, X, Users, Coffee, RefreshCw, Clock, LogOut, Search, GraduationCap, ShieldAlert, Sun, CalendarDays, MapPin, UserCheck
+  CheckCircle2, X, Users, Coffee, RefreshCw, Clock, LogOut, Search, GraduationCap, ShieldAlert, Sun, CalendarDays, MapPin, UserCheck, ChevronRight, ArrowRightLeft
 } from 'lucide-react';
 import { getAccessToken } from '../../utils/authClient';
 import AttendanceMarkModal from '../modals/AttendanceMarkModal';
 import { leaveNumber } from '../../utils/passNumber';
+import CoverPickerModal from '../teacher/CoverPickerModal';
+import CoveringSection from '../teacher/CoveringSection';
+import { isCoverWindowOpen, COVER_WINDOW_LABEL, profName } from '../../utils/teacherCover';
+import { isLeaveWindowOpen, LEAVE_WINDOW_LABEL } from '../../utils/leaveWindow';
+import TeacherHero from '../teacher/TeacherHero';
+import CoverBoardSection, { slotFromCard } from '../teacher/CoverBoardSection';
+import PeriodTimeline from '../teacher/PeriodTimeline';
+import TeacherInsights from '../teacher/TeacherInsights';
+import useCoverBoard from '../teacher/useCoverBoard';
+import { fmtMinLabel } from '../../utils/teacherApi';
 
 // Day-scholar leave mentor console. scoped server-side: a TEACHER's queue
 // only ever contains their own mentees (+ leaves routed to them while they
@@ -62,6 +72,14 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
   // HARD LOCK state: `${sectionKey}|${period}` -> the saved record. A class
   // that appears here shows a "Marked ✓ Locked" chip instead of a Mark button.
   const [ttMarked, setTtMarked] = useState({});
+  // Substitute cover: the "who covers me" picker, and the separate Covering
+  // view (the substitute's own home stays as it is).
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [coverView, setCoverView] = useState(false);
+  const [declineFor, setDeclineFor] = useState(null);
+  const [declining, setDeclining] = useState(false);
+  // Cover board (cards I can take / that I took) — polled every 20 s.
+  const { board, reload: reloadBoard } = useCoverBoard(true);
 
   useEffect(() => {
     if (!menteesOpen && !mlOpen) return undefined;
@@ -125,6 +143,20 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
     } catch { /* offline: the gate log re-syncs on the next poll */ }
   };
 
+  // In-app heads-up the first time this device sees a new cover today (the
+  // server also pushes it to registered devices).
+  useEffect(() => {
+    for (const g of (queue?.covering || []).filter(x => x.active)) {
+      const key = `cover_seen_${todayKey()}_${g.mentorRoll}`;
+      try {
+        if (localStorage.getItem(key)) continue;
+        localStorage.setItem(key, '1');
+      } catch { /* private mode: show every time */ }
+      onNotification?.(`Today you're covering ${profName(g.mentorName)}'s leave approvals — ${g.pendingCount} pending ${g.pendingCount === 1 ? 'request' : 'requests'}.`, 'info');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [(queue?.covering || []).filter(x => x.active).map(g => g.mentorRoll).join(',')]);
+
   useEffect(() => {
     load(true);
     loadTimetable(true);
@@ -187,34 +219,59 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
     setMlBusy(false);
   };
 
-  const toggleAbsent = async (onLeave) => {
+  // Substitute: "Can't cover" — hands the colleague's work back to them.
+  const declineCover = async (mentorRoll) => {
+    setDeclining(true);
+    try {
+      const tok = getAccessToken();
+      const r = await fetch('/api/leave-requests/teacher-absent/decline', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(tok ? { Authorization: `Bearer ${tok}` } : {}) },
+        body: JSON.stringify({ mentorRoll })
+      });
+      const j = await r.json();
+      onNotification?.(j?.success ? j.message : (j?.error || 'Could not hand the work back.'), j?.success ? 'success' : 'error');
+      if (j?.success) { setDeclineFor(null); setCoverView(false); load(false); }
+    } catch {
+      onNotification?.('Offline — could not hand the work back.', 'error');
+    }
+    setDeclining(false);
+  };
+
+  // onLeave=true carries the colleague picked in the cover picker
+  // (substituteRoll null = "no one is present, mark me anyway").
+  const toggleAbsent = async (onLeave, substituteRoll = null) => {
     setToggling(true);
     try {
       const tok = getAccessToken();
       const r = await fetch('/api/leave-requests/teacher-absent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(tok ? { Authorization: `Bearer ${tok}` } : {}) },
-        body: JSON.stringify({ onLeave })
+        body: JSON.stringify(onLeave && substituteRoll ? { onLeave, substituteRoll } : { onLeave })
       });
       const j = await r.json();
       if (j?.success) {
         if (onNotification) onNotification(
           j.message || (j.onLeave
             ? (j.delegatedTo
-              ? `Marked On Leave — ${j.delegatedTo} handles your mentees' leaves today.`
+              ? `Marked On Leave — ${profName(j.delegatedToName || j.delegatedTo)} approves your students' leaves today; your classes are on the cover board.`
               : 'Marked On Leave — no other teacher is present, so requests stay in your queue.')
             : 'Welcome back — your mentees\' pending requests are yours again.'),
           'success'
         );
+        setPickerOpen(false);
         load(false);
+        reloadBoard();
       } else if (onNotification) {
-        onNotification(j?.error || 'Toggle failed.', 'error');
+        onNotification(j?.error || 'Could not update your leave status.', 'error');
+        if (j?.windowClosed) { setPickerOpen(false); load(false); }
       }
     } catch {
-      if (onNotification) onNotification('Offline — toggle failed.', 'error');
+      if (onNotification) onNotification('Offline — could not update your leave status.', 'error');
     }
     setToggling(false);
   };
+
 
   const filterText = (searchQuery || localSearch).trim().toLowerCase();
 
@@ -263,7 +320,44 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
   const coverGroups = (queue?.covering || []).map(g => ({
     ...g,
     mentees: (g.mentees || []).filter(m => !filterText || `${m.full_name} ${m.roll_number}`.toLowerCase().includes(filterText))
-  })).filter(g => g.mentees.length > 0);
+  }));
+  // My own leave state + the college-hours window for "On Leave Today".
+  const myState = queue?.onLeaveState || {};
+  const onLeave = !!myState.onLeave;
+  const coverOpen = myState.windowOpen !== false && isCoverWindowOpen();
+  // "Create leave for student" follows the leave window (server: leaveWindowOpen).
+  const createOpen = isLeaveWindowOpen();
+  const windowLabel = myState.windowLabel || COVER_WINDOW_LABEL;
+  const myClassesToday = ttMine ? (ttMine.slots || []).filter(s => s.day === TT_TEACHER_TODAY).length : 0;
+  // ---- Teacher home model: today's rows (my classes + covers I took), hero ticks ----
+  const nowM = new Date().getHours() * 60 + new Date().getMinutes();
+  const myCards = myState.myCards || [];
+  const cardFor = (s) => myCards.find(c => c.sectionKey === s.sectionKey && c.period === s.period) || null;
+  const coverSummaryText = myCards.length
+    ? ` (${myCards.filter(c => c.status === 'taken').length} taken, ${myCards.filter(c => c.status === 'open').length} waiting, ${myCards.filter(c => c.status === 'cancelled').length} cancelled)` : '';
+  const ownToday = (ttMine?.slots || []).filter(s => s.day === TT_TEACHER_TODAY).map(s => {
+    const start = Number.isFinite(s.startMin) ? s.startMin : (periodStartMin(s.time) ?? 0);
+    const end = Number.isFinite(s.endMin) ? s.endMin : start + 60;
+    return { ...s, cover: false, startMin: start, endMin: end, span: s.span || 1, startLabel: fmtMinLabel(start).replace(' AM', '').replace(' PM', ''), sectionText: s.sectionLabel || s.departmentLabel, card: cardFor(s), slot: s };
+  });
+  const coverRows = (board?.mine || []).map(c => ({
+    ...c, cover: true, startLabel: fmtMinLabel(c.startMin).replace(' AM', '').replace(' PM', ''), sectionText: c.sectionLabel || c.short,
+    subject: c.takenBy?.subject, card: null, slot: slotFromCard(c)
+  }));
+  const dayRows = [...ownToday, ...coverRows].sort((a, b) => a.startMin - b.startMin);
+  const heroTicks = dayRows.map(r => ({
+    label: r.periodLabel,
+    state: r.card?.status === 'cancelled' ? 'cancelled' : r.card ? 'gone' : onLeave && !r.cover ? 'gone' : markedRec(r) || nowM >= r.endMin ? 'done' : nowM >= r.startMin ? 'live' : r.cover ? 'cover' : 'upcoming'
+  }));
+  const nextRow = dayRows.find(r => nowM < r.endMin && !r.card);
+  const heroNext = nextRow ? { label: `${nextRow.periodLabel} ${nextRow.short || nextRow.sectionText}`, when: nowM >= nextRow.startMin ? 'in progress' : `${nextRow.time}` } : null;
+  const openCoverN = (board?.open || []).length;
+  const heroStats = [
+    { label: 'Classes today', value: dayRows.length },
+    { label: 'Cover open', value: openCoverN, hot: openCoverN > 0 },
+    { label: 'Pending leaves', value: pendingLeaves.length, hot: pendingLeaves.length > 0 }
+  ];
+  const dateLabel = new Date().toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' });
 
   // Who may get a mentor-created leave (rule unchanged): day scholars with
   // no live request today. Others show why, greyed, in the picker.
@@ -327,11 +421,12 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
   const ttTodayCount = ttMine ? (ttMine.slots || []).filter(s => s.day === TT_TEACHER_TODAY).length : null;
   const sectionChips = [
     { id: 'td-approvals', label: 'Approval Queue', count: pendingLeaves.length, dot: 'bg-amber-500', hot: pendingLeaves.length > 0 },
-    ...(coverGroups.length > 0 ? [{ id: 'td-covering', label: 'Covering', count: coverGroups.reduce((n, g) => n + g.mentees.length, 0), dot: 'bg-indigo-500', hot: true }] : []),
     ...(decidedToday.length > 0 ? [{ id: 'td-decisions', label: "Today's Decisions", count: decidedToday.length, dot: 'bg-violet-500' }] : []),
-    { id: 'td-timetable', label: 'Timetable', count: ttTodayCount, dot: 'bg-teal-500' },
+    { id: 'td-cover', label: 'Cover board', count: openCoverN, dot: 'bg-indigo-500', hot: openCoverN > 0 },
+    { id: 'td-timetable', label: 'My day', count: ttTodayCount, dot: 'bg-teal-500' },
     { id: 'td-mentees', label: 'My Mentees', count: mentees.length, dot: 'bg-cyan-500' },
     { id: 'td-gatelog', label: 'Gate Log', count: dsScans ? (dsScans.scans || []).length : null, dot: 'bg-blue-500' },
+    { id: 'td-insights', label: 'Tools', count: null, dot: 'bg-violet-500' },
     { id: 'td-status', label: queue?.onLeaveState?.onLeave ? 'On Leave Today' : 'Present today', count: null, dot: queue?.onLeaveState?.onLeave ? 'bg-amber-500' : 'bg-emerald-500', phoneOnly: true }
   ];
   const jumpToSection = (id) => (id === 'td-mentees'
@@ -344,65 +439,140 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
 
   return (
     <div className="p-4 sm:p-6 space-y-4 max-w-4xl xl:max-w-6xl 2xl:max-w-none mx-auto w-full">
+      {coverView ? (
+        <CoveringSection
+          groups={coverGroups}
+          onBack={() => setCoverView(false)}
+          decide={decide}
+          busyId={busyId}
+          noteDraft={noteDraft}
+          setNoteDraft={setNoteDraft}
+          onCreateLeave={openCreateLeave}
+          createOpen={createOpen}
+          createLabel={LEAVE_WINDOW_LABEL}
+          onMark={setMarkSlot}
+          markOpen={markOpen}
+          openLabel={openLabel}
+          renderMenteeRow={renderMenteeRow}
+          windowLabel={windowLabel}
+        />
+      ) : (<>
 
-      {/* 0. Wish Card — identical to the student dashboard's greeting banner:
-          plain text on mobile, carded with the campus backdrop on desktop */}
-      <div className="relative md:overflow-hidden rounded-none sm:rounded-2xl md:rounded-3xl bg-transparent sm:bg-white/90 sm:backdrop-blur-sm border-0 sm:border sm:border-slate-200/50 shadow-none sm:shadow-sm p-0 sm:p-5 md:p-8 flex flex-col md:flex-row md:items-center justify-between md:min-h-[140px] pb-1 sm:pb-0 -mt-1 sm:mt-0">
-        <div className="relative z-10 max-w-lg">
-          <h1 className="text-2xl sm:text-2xl md:text-3xl font-extrabold tracking-tight text-slate-900 flex items-center gap-2">
-            <span>{getGreeting()}, {teacherFirstName}!</span>
-            <span className="text-xl sm:text-3xl animate-bounce">👋</span>
-          </h1>
-          <p className="text-[11px] sm:text-sm text-slate-500 mt-1.5 font-medium leading-relaxed">
-            Your mentor console — approvals, timetable and mentee welfare in one place.
-          </p>
-        </div>
-        <div className="hidden md:block absolute right-0 top-0 bottom-0 w-1/2 overflow-hidden pointer-events-none">
-          <div className="absolute inset-0 bg-gradient-to-r from-white via-white/50 to-transparent z-10"></div>
-          <img
-            src="/campus_banner.jpg"
-            alt="Campus"
-            className="w-full h-full object-cover object-right opacity-80"
-          />
-        </div>
-      </div>
+      {/* 0. Teacher hero — indigo identity, day strip of period ticks (same card language as the student wish card) */}
+      <TeacherHero greeting={getGreeting()} firstName={teacherFirstName} dateLabel={dateLabel} periods={heroTicks} next={heroNext} stats={heroStats} note={onLeave ? `You're on leave today — your classes are on the cover board${coverSummaryText}.` : (ttMine && dayRows.length === 0 ? 'No classes on your timetable today — your teaching desk is clear.' : null)} />
 
-      {/* Present today / On Leave Today — 1-tap delegation (top of the console, full width) */}
-      <section id="td-status" className={`scroll-mt-[124px] rounded-2xl border px-4 py-3 sm:py-3.5 shadow-sm ${queue?.onLeaveState?.onLeave ? 'bg-amber-50/60 border-amber-300' : 'bg-white border-slate-200/50'}`}>
+      {/* Present today / On Leave Today — the absent teacher picks who covers
+          (same day, 7:00 AM–4:30 PM). "I'm here now" works any time. */}
+      <section id="td-status" className={`scroll-mt-[124px] rounded-2xl border px-4 py-3 sm:py-3.5 shadow-sm ${onLeave ? (myState.declinedBy ? 'bg-rose-50/60 border-rose-300' : 'bg-amber-50/60 border-amber-300') : 'bg-white border-slate-200/50'}`}>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-start gap-3">
-            {queue?.onLeaveState?.onLeave
-              ? <Coffee className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
+          <div className="flex items-start gap-3 min-w-0">
+            {onLeave
+              ? <Coffee className={`w-5 h-5 mt-0.5 shrink-0 ${myState.declinedBy ? 'text-rose-600' : 'text-amber-600'}`} />
               : <Sun className="w-5 h-5 text-slate-500 mt-0.5 shrink-0" />}
-            <div>
-              <p className="text-sm font-extrabold text-slate-900">
-                {queue?.onLeaveState?.onLeave
-                  ? (queue.onLeaveState.delegatedTo ? `On Leave Today — covered by ${queue.onLeaveState.delegatedTo}` : 'On Leave Today — no colleague present')
-                  : 'Present today'}
+            <div className="min-w-0">
+              <p className="text-sm font-extrabold text-slate-900 break-words">
+                {!onLeave
+                  ? 'Present today'
+                  : myState.delegatedTo
+                    ? `On Leave Today · Covered by ${profName(myState.delegatedToName || myState.delegatedTo)}`
+                    : myState.declinedBy
+                      ? `${profName(myState.declinedBy.name)} can't cover — pick another teacher`
+                      : 'On Leave Today · no colleague present'}
               </p>
               <p className="text-[11px] text-slate-500 leading-snug mt-0.5">
-                {queue?.onLeaveState?.onLeave
-                  ? (queue.onLeaveState.delegatedTo
-                    ? 'Your substitute approves, rejects and creates leaves for your mentees today. Tap "Back Today" when you return.'
-                    : 'Nobody else is present, so your mentees\' requests stay in your queue. Tap "Back Today" when you return.')
-                  : 'Taking a day off? One tap hands your mentees\' leaves to a present colleague for today — approve, reject and create.'}
+                {!onLeave
+                  ? (coverOpen
+                    ? 'Taking a day off? Pick a present colleague to approve your students\' leaves. Your classes go on the cover board.'
+                    : `On Leave Today can be set ${windowLabel}, same day.`)
+                  : myState.delegatedTo
+                    ? `They approve your mentees' leaves today. Your classes are on the cover board${coverSummaryText}. Came in after all? Tap "I'm here now".`
+                    : myState.declinedBy
+                      ? 'Your leave requests are back with you until you pick someone else. Your classes are on the cover board.'
+                      : 'Nobody else is present, so your leave requests stay with you. Your classes are on the cover board.'}
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            disabled={toggling || !queue}
-            onClick={() => toggleAbsent(!(queue?.onLeaveState?.onLeave))}
-            className={`shrink-0 px-4 py-2.5 min-h-[44px] rounded-xl text-xs font-extrabold transition-colors cursor-pointer disabled:opacity-60 border-2 ${
-              queue?.onLeaveState?.onLeave
-                ? 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600'
-                : 'bg-amber-500 hover:bg-amber-600 text-white border-amber-500'
-            }`}
-          >
-            {toggling ? 'Working…' : queue?.onLeaveState?.onLeave ? 'Back Today' : 'On Leave Today'}
-          </button>
+          <div className="shrink-0 flex flex-col items-stretch sm:items-end gap-1">
+            <div className="flex gap-2">
+              {onLeave && (
+                <button
+                  type="button"
+                  disabled={toggling || !queue || !coverOpen}
+                  onClick={() => setPickerOpen(true)}
+                  className={`flex-1 sm:flex-none px-4 py-2.5 min-h-[44px] rounded-xl text-xs font-extrabold transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed border-2 flex items-center justify-center gap-1.5 ${myState.declinedBy && !myState.delegatedTo ? 'bg-rose-600 hover:bg-rose-700 text-white border-rose-600' : 'bg-white hover:bg-amber-50 text-amber-800 border-amber-300'}`}
+                >
+                  <ArrowRightLeft className="w-3.5 h-3.5" />
+                  {myState.delegatedTo ? 'Change' : 'Pick a teacher'}
+                </button>
+              )}
+              <button
+                type="button"
+                disabled={toggling || !queue || (!onLeave && !coverOpen)}
+                onClick={() => (onLeave ? toggleAbsent(false) : setPickerOpen(true))}
+                aria-describedby={!coverOpen ? 'td-cover-closed' : undefined}
+                className={`flex-1 sm:flex-none px-4 py-2.5 min-h-[44px] rounded-xl text-xs font-extrabold transition-colors cursor-pointer disabled:cursor-not-allowed border-2 ${
+                  onLeave
+                    ? 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600 disabled:opacity-60'
+                    : coverOpen
+                      ? 'bg-amber-500 hover:bg-amber-600 text-white border-amber-500 disabled:opacity-60'
+                      : 'bg-slate-100 text-slate-400 border-slate-200'
+                }`}
+              >
+                {toggling ? 'Working…' : onLeave ? "I'm here now" : 'On Leave Today'}
+              </button>
+            </div>
+            {!coverOpen && (
+              <p id="td-cover-closed" className="text-[11px] font-semibold text-slate-500 flex items-center gap-1 sm:justify-end">
+                <Clock className="w-3 h-3 shrink-0" /> {onLeave ? 'Change available' : 'Available'} {windowLabel}
+              </p>
+            )}
+          </div>
         </div>
       </section>
+
+      {/* Covering for an absent colleague — ONE compact card (shown even with
+          0 pending); everything of theirs opens in the separate Covering view,
+          so this home stays as is. "Can't cover" hands it back. */}
+      {coverGroups.map(g => (
+        <div key={g.mentorRoll} className={`rounded-2xl border-2 shadow-sm overflow-hidden ${g.active ? 'border-indigo-200 bg-gradient-to-r from-indigo-50 to-white' : 'border-slate-200 bg-white'}`}>
+          <button
+            type="button"
+            onClick={() => { setCoverView(true); window.scrollTo?.({ top: 0 }); }}
+            className="w-full text-left px-4 py-3 min-h-[60px] flex items-center gap-3 hover:bg-indigo-50/60 transition-colors cursor-pointer"
+          >
+            <span className={`w-10 h-10 rounded-xl text-white flex items-center justify-center shrink-0 ${g.active ? 'bg-indigo-600' : 'bg-slate-500'}`}>
+              <UserCheck className="w-5 h-5" />
+            </span>
+            <span className="flex-1 min-w-0">
+              <span className="block text-sm font-extrabold text-slate-900 break-words">
+                {g.active ? `Covering ${profName(g.mentorName)}` : `${profName(g.mentorName)} is back`}
+              </span>
+              <span className="block text-[11px] font-semibold text-slate-600 mt-0.5">
+                {g.active
+                  ? <><span className={g.pendingCount > 0 ? 'text-amber-700' : ''}>{g.pendingCount} pending</span> · leave approvals</>
+                  : 'Their leave approvals are back with them'}
+              </span>
+            </span>
+            <ChevronRight className="w-5 h-5 text-indigo-600 shrink-0" />
+          </button>
+          {g.active && (declineFor === g.mentorRoll ? (
+            <div className="border-t border-indigo-100 bg-white px-4 py-3 space-y-2">
+              <p className="text-xs text-slate-700 leading-snug">Hand {profName(g.mentorName)}'s work back? They get a notification to pick another teacher.</p>
+              <div className="flex gap-2">
+                <button type="button" onClick={() => setDeclineFor(null)} className="flex-1 min-h-[44px] rounded-xl border-2 border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs cursor-pointer transition-colors">Keep covering</button>
+                <button type="button" disabled={declining} onClick={() => declineCover(g.mentorRoll)} className="flex-1 min-h-[44px] rounded-xl bg-rose-600 hover:bg-rose-700 disabled:opacity-60 text-white font-bold text-xs cursor-pointer transition-colors">{declining ? 'Working…' : "Yes, I can't cover"}</button>
+              </div>
+            </div>
+          ) : (
+            <div className="border-t border-indigo-100/70 px-4 py-1.5 flex justify-end">
+              <button type="button" onClick={() => setDeclineFor(g.mentorRoll)} className="min-h-[44px] px-3 rounded-xl text-[11px] font-bold text-rose-700 hover:bg-rose-50 cursor-pointer transition-colors">Can't cover</button>
+            </div>
+          ))}
+        </div>
+      ))}
+
+      {/* Cover board — classes of absent colleagues I may take (free + my section) */}
+      <CoverBoardSection board={board} reload={() => { reloadBoard(); loadMarked(); }} onNotification={onNotification} onMark={setMarkSlot} markOpen={markOpen} openLabel={openLabel} markedRec={markedRec} onLeave={onLeave} myCards={myCards} />
 
       {/* Header */}
       <div className="bg-white/90 backdrop-blur-sm border border-slate-200/50 rounded-2xl p-4 sm:p-5 shadow-sm flex flex-row flex-wrap sm:flex-nowrap items-start sm:items-center justify-between gap-3">
@@ -421,14 +591,23 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
               {queue.pendingCount} Pending
             </span>
           )}
-          <button
-            type="button"
-            onClick={openCreateLeave}
-            className="flex-1 sm:flex-none min-h-[44px] px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold shadow-sm transition-colors cursor-pointer flex items-center justify-center gap-1.5 whitespace-nowrap"
-          >
-            <UserCheck className="w-4 h-4" />
-            Create leave for student
-          </button>
+          <div className="flex-1 sm:flex-none flex flex-col items-stretch sm:items-end gap-1">
+            <button
+              type="button"
+              onClick={openCreateLeave}
+              disabled={!createOpen}
+              aria-describedby={!createOpen ? 'td-create-closed' : undefined}
+              className="min-h-[44px] px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold shadow-sm transition-colors cursor-pointer flex items-center justify-center gap-1.5 whitespace-nowrap disabled:bg-slate-100 disabled:text-slate-400 disabled:border disabled:border-slate-200 disabled:shadow-none disabled:cursor-not-allowed"
+            >
+              <UserCheck className="w-4 h-4" />
+              Create leave for student
+            </button>
+            {!createOpen && (
+              <p id="td-create-closed" className="text-[11px] font-semibold text-slate-500 flex items-center gap-1 sm:justify-end">
+                <Clock className="w-3 h-3 shrink-0" /> Available {LEAVE_WINDOW_LABEL}
+              </p>
+            )}
+          </div>
           <button
             type="button"
             onClick={() => load(true)}
@@ -453,7 +632,7 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
               <span className={`w-2 h-2 rounded-full ${s.dot}`} />
               {s.label}
               {s.count != null && (
-                <span className={`min-w-[22px] h-[22px] px-1.5 rounded-full text-[11px] font-mono font-extrabold flex items-center justify-center ${s.hot ? 'bg-amber-500 text-white' : 'bg-slate-100 text-slate-600'}`}>
+                <span className={`min-w-[22px] h-[22px] px-1.5 rounded-full text-[11px] font-mono font-extrabold flex items-center justify-center ${s.hot ? (s.id === 'td-cover' ? 'bg-indigo-600 text-white' : 'bg-amber-500 text-white') : 'bg-slate-100 text-slate-600'}`}>
                   {s.count}
                 </span>
               )}
@@ -514,6 +693,11 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
                     <p className="text-[11px] text-slate-500 mt-0.5">
                       Requested {timeHM(leave.created_at)} • one-way leave — approved exit, back next working day
                     </p>
+                    {onLeave && leave.routed_to && leave.routed_to === myState.delegatedTo && (
+                      <p className="inline-flex items-center gap-1 mt-1.5 text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-full px-2 py-0.5">
+                        <ArrowRightLeft className="w-3 h-3" /> With {profName(myState.delegatedToName || myState.delegatedTo)} today
+                      </p>
+                    )}
                   </div>
                 </div>
                 <input
@@ -547,31 +731,6 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
         )}
         </div>
       </section>
-
-      {/* Covering for an absent mentor — today only: their day scholars, with
-          "Create leave" (keypad-phone students). Their pending requests are
-          already in the Approval Queue above. */}
-      {coverGroups.map(g => (
-        <section key={g.mentorRoll} id="td-covering" className="order-2 scroll-mt-[124px] bg-white border-2 border-indigo-200 rounded-2xl shadow-sm overflow-hidden">
-          <div className="flex items-center justify-between gap-3 px-4 sm:px-5 py-3 bg-gradient-to-r from-indigo-50 to-white border-b border-indigo-100">
-            <h3 className="text-[15px] font-bold text-slate-900 flex items-center gap-2.5 min-w-0">
-              <span className="w-9 h-9 rounded-xl bg-indigo-100/70 text-indigo-700 border border-indigo-200 flex items-center justify-center shrink-0">
-                <UserCheck className="w-4 h-4" />
-              </span>
-              <span className="min-w-0">Covering for {g.mentorName}</span>
-            </h3>
-            <span className="shrink-0 text-[11px] font-mono font-bold text-indigo-800 bg-indigo-50 border border-indigo-200 px-2.5 py-1 rounded-full">{g.mentees.length} students</span>
-          </div>
-          <div className="p-4 sm:p-5 space-y-3">
-            <p className="text-[11px] text-slate-500 leading-snug">
-              {g.mentorName} is on leave today. Their day scholars' requests come to you — approve them in the queue, or create a leave here for a student without a smartphone.
-            </p>
-            <div className="space-y-2">
-              {g.mentees.map(m => renderMenteeRow(m, true))}
-            </div>
-          </div>
-        </section>
-      ))}
 
       {/* Today's decided requests (audit trail) */}
       {decidedToday.length > 0 && (
@@ -648,74 +807,8 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
         </div>
 
         <div className="contents xl:flex xl:flex-col xl:gap-4 xl:col-span-6">
-      {/* My Teaching Timetable (Phase 2) — today's engagement sheet */}
-      <section id="td-timetable" className="order-4 xl:grow scroll-mt-[124px] rounded-2xl border border-teal-200 bg-white shadow-sm overflow-hidden">
-        <div className="flex items-center justify-between gap-2 px-4 py-3 bg-gradient-to-r from-teal-50 to-white border-b border-teal-100">
-          <div className="flex items-center gap-2">
-            <div className="w-9 h-9 rounded-xl bg-teal-100/70 text-teal-700 flex items-center justify-center border border-teal-200 shrink-0">
-              <CalendarDays className="w-4 h-4" />
-            </div>
-            <h3 className="text-[15px] font-bold text-slate-900">My Teaching Timetable</h3>
-          </div>
-          <span className="shrink-0 text-[11px] font-bold text-teal-800 bg-teal-50 border border-teal-200 rounded-full px-2.5 py-1">
-            Today · {ttMine ? `${(ttMine.slots || []).filter(s => s.day === TT_TEACHER_TODAY).length} classes` : '…'}
-          </span>
-        </div>
-        {ttMine && (ttMine.slots || []).filter(s => s.day === TT_TEACHER_TODAY).length > 0 ? (
-          <div className="space-y-1.5 p-3 sm:p-4">
-            {ttMine.slots
-              .filter(s => s.day === TT_TEACHER_TODAY)
-              .sort((a, b) => a.period - b.period)
-              .map((s, i) => (
-                <div key={`${s.day}-${s.period}-${i}`} className="flex flex-wrap sm:flex-nowrap items-center gap-x-2.5 gap-y-1.5 px-3 py-2 rounded-xl bg-slate-50 border border-slate-100">
-                  <span className="text-[10px] font-black text-teal-700 bg-teal-50 border border-teal-200 rounded-md px-1.5 py-0.5 shrink-0">{s.periodLabel}</span>
-                  <div className="flex-1 min-w-0 basis-[calc(100%-3rem)] sm:basis-auto">
-                    <p className="text-xs font-bold text-slate-900 truncate">
-                      {s.subject} <span className={s.kind === 'lab' ? 'text-[9px] font-black text-violet-700' : ''}>{s.kind === 'lab' ? '(LAB)' : ''}</span>
-                    </p>
-                    <p className="text-[10px] text-slate-500 font-medium truncate">{s.sectionLabel || s.departmentLabel}<span className="hidden xl:inline 2xl:hidden"> · {s.time}</span></p>
-                  </div>
-                  <span className="flex items-center gap-1 text-[10px] font-semibold text-slate-500 shrink-0 ml-[42px] sm:ml-0">
-                    <MapPin className="w-3 h-3" />{s.room}
-                  </span>
-                  <span className="text-[10px] font-semibold text-slate-400 shrink-0 hidden sm:block xl:hidden 2xl:block">{s.time}</span>
-                  {s.kind !== 'study' && (markedRec(s) ? (
-                    <span
-                      className="flex items-center gap-1 text-[10px] font-black text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-2 py-1 shrink-0 ml-auto sm:ml-0"
-                      title={`LOCKED — ${markedRec(s).takenByName || 'A teacher'} saved this class with ${(markedRec(s).present || []).length} present. Only an admin can unlock it.`}
-                    >
-                      <CheckCircle2 className="w-3 h-3" />
-                      Marked {(markedRec(s).present || []).length}/50 · Locked
-                    </span>
-                  ) : !markOpen(s) ? (
-                    <span
-                      className="flex items-center gap-1 text-[10px] font-bold text-slate-500 bg-slate-100 border border-slate-200 rounded-lg px-2 py-1 shrink-0 ml-auto sm:ml-0"
-                      title={`Marking opens at ${openLabel(s)} — 10 minutes before the class starts. No early marking.`}
-                    >
-                      <Clock className="w-3 h-3" />
-                      Opens {openLabel(s)}
-                    </span>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => setMarkSlot(s)}
-                      className="flex items-center gap-1 text-[10px] font-black text-white bg-teal-600 hover:bg-teal-700 rounded-lg px-3 min-h-[44px] transition-colors cursor-pointer shrink-0 ml-auto sm:ml-0"
-                      title={`Mark attendance for ${s.subject} · ${s.periodLabel}`}
-                    >
-                      <UserCheck className="w-3 h-3" />
-                      Mark
-                    </button>
-                  ))}
-                </div>
-              ))}
-          </div>
-        ) : (
-          <p className="text-xs text-slate-500 font-medium px-4 py-4">
-            {ttMine ? 'No classes for you today — enjoy a quieter campus day.' : 'Schedule loads when the server timetable engine is reachable.'}
-          </p>
-        )}
-      </section>
-
+      {/* My day — today's classes as a period timeline (+ covers I took) */}
+      <PeriodTimeline rows={dayRows} loaded={!!ttMine} onMark={setMarkSlot} markOpen={markOpen} openLabel={openLabel} markedRec={markedRec} nowMin={nowM} />
 
       {/* Mentor's Day-Scholar Gate Log — server-scoped to THIS mentor's own
           mentees. The warden has no access to this data (moved out of the
@@ -807,6 +900,20 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
         </div>
 
       </div>
+
+      {/* Teaching tools: class analytics · lesson plan · my leaves */}
+      <TeacherInsights />
+
+      </>)}
+
+      {/* "On Leave Today" — pick who covers (also used for "Change") */}
+      <CoverPickerModal
+        isOpen={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        onConfirm={(roll) => toggleAbsent(true, roll)}
+        currentRoll={onLeave ? (myState.delegatedTo || null) : null}
+        busy={toggling}
+      />
 
       {/* My Mentees list — opens only on tap. Phone: bottom sheet; laptop: side panel */}
       {menteesOpen && createPortal(
@@ -1011,6 +1118,7 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
         onMarked={(rec, statement) => {
           if (rec?.sectionKey) setTtMarked(prev => ({ ...prev, [`${rec.sectionKey}|${rec.period}`]: rec }));
           onNotification?.(statement, 'success');
+          if (rec?.coveredFor) load(false); // a covered class: refresh the Covering view's lock chips
         }}
       />
     </div>

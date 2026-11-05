@@ -115,6 +115,12 @@ export function StudentTicketActions({ ticket, busy, onResolve, onNotFixed, comp
           <span className="min-w-0">{ticket.technician.name}{ticket.technician.role ? ` · ${ticket.technician.role}` : ''} has been sent your complaint</span>
         </p>
       )}
+      {ticket.cleanerInformed && stage !== 'CLOSED' && (
+        <p className="text-[11px] text-emerald-800 font-bold flex items-center gap-1.5">
+          <Check className="w-3.5 h-3.5 shrink-0" strokeWidth={3} />
+          <span className="min-w-0">Cleaners told{ticket.cleanerInformed.at ? ` at ${fmtStamp(ticket.cleanerInformed.at)}` : ''}{ticket.cleanerInformed.deadline ? `, deadline ${ticket.cleanerInformed.deadline}` : ''}</span>
+        </p>
+      )}
       {ticket.reminderActive && stage === 'REPORTED' && (
         <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-[11.5px] font-bold text-amber-900 flex items-start gap-2">
           <BellRing className="w-4 h-4 shrink-0 mt-0.5" />

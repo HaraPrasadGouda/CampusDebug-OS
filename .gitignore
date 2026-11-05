@@ -37,3 +37,10 @@ data/activated_students.json
 # Runtime stores added by Fix 3 (student feedback / read receipts)
 data/mess_feedback.json
 data/notice_acks.json
+
+# Room cleaning runtime data
+data/cleaning_store.json
+data/cleaning_meta.json
+# teacher dashboard v2 local stores
+data/lesson_plans.json
+data/teacher_leave_log.json

@@ -33,6 +33,7 @@ import {
   Lock
 } from 'lucide-react';
 import AiCategoryChip from '../AiCategoryChip';
+import CleaningCheckCard from '../CleaningCheckCard';
 import { StudentTicketActions, StageTicks, hasLifecycle, ticketCode } from '../TicketLifecycle';
 import { getTodayMenuKey, getTodayMenu, getTomorrowMenu, isFeastDay, getTodayDayLabel, getMealStatus, fmtDuration, MEAL_ORDER } from '../../data/messMenu';
 import { isLeaveWindowOpen } from '../../utils/leaveWindow';
@@ -351,6 +352,9 @@ export default function StudentDashboard({
           </div>
         </div>
       )}
+
+      {/* 1c. Room cleaning check — shows itself only on cleaning day 1-9 PM for hostellers */}
+      <div className="order-2 col-span-full empty:hidden"><CleaningCheckCard /></div>
 
       {/* 2. Quick Actions — phone: swipe row of round icons (after the Gate
           Pass strip); desktop: one row of 6 tiles right under the greeting */}
@@ -1107,6 +1111,17 @@ export default function StudentDashboard({
 
                       {/* Right Chevron */}
                       <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-blue-600 group-hover:translate-x-0.5 transition-all shrink-0 self-center" />
+
+                      {/* Document request: same tick-style progress as complaints */}
+                      {isDoc && (
+                        <div className="basis-full w-full border-t border-slate-100 pt-2.5 mt-0.5 cursor-default" onClick={(e) => e.stopPropagation()}>
+                          <StageTicks
+                            labels={['Requested', 'Ready for Pickup']}
+                            stage={String(docStatus).toUpperCase() === 'READY_FOR_PICKUP' ? 2 : 1}
+                            rejected={String(docStatus).toUpperCase() === 'REJECTED'}
+                          />
+                        </div>
+                      )}
 
                       {/* Complaint lifecycle: progress + Resolved / Not fixed (own complaint) */}
                       {showLifecycle && (

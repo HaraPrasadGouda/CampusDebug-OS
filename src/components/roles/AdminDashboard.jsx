@@ -50,6 +50,8 @@ const mapServerNotice = (n) => ({
 });
 
 import { initSyncEngine, flushOfflineQueue } from '../../utils/syncEngine';
+import AdminCoversCard from '../teacher/AdminCoversCard';
+import AdminCoverAlerts from '../teacher/AdminCoverAlerts';
 
 export default function AdminDashboard({ onNotification, searchQuery: externalSearchQuery = '' }) {
   const [activeTab, setActiveTab] = useState('dispatcher'); // 'dispatcher' | 'csv' | 'metrics'
@@ -970,6 +972,8 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
 
   return (
     <div className="space-y-5 animate-in fade-in duration-200">
+      {/* Cover board escalation: an absent teacher's class nobody took */}
+      <AdminCoverAlerts onNotification={onNotification} />
       
       {/* Laptop: the tools live as a grouped sub-menu under "Home" in the app sidebar */}
       {toolNavSlot && createPortal(
@@ -1324,6 +1328,9 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
                   </div>
                 </div>
               )}
+
+              {/* Today's teacher absences & substitute covers (read-only) */}
+              <AdminCoversCard />
 
               {/* Attendance locks — today's saved classes are FROZEN; only
                   this panel can release one for re-marking. */}

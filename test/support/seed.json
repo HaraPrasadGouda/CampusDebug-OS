@@ -1,0 +1,52 @@
+{
+ "leave_requests": [
+  {
+   "id": "00000000-0000-4000-9000-000000000901",
+   "student_id": "00000013-0000-4000-8000-000000000013",
+   "student_roll": "2301109001",
+   "student_name": "Ananya Mishra",
+   "resident_type": "dayscholar",
+   "mentor_roll": "FAC003",
+   "routed_to": null,
+   "reason": "Fever, going home",
+   "status": "PENDING",
+   "created_at": "2026-11-04T09:40:00+05:30"
+  },
+  {
+   "id": "00000000-0000-4000-9000-000000000902",
+   "student_id": "00000015-0000-4000-8000-000000000015",
+   "student_roll": "2301109003",
+   "student_name": "Sipra Nayak",
+   "resident_type": "dayscholar",
+   "mentor_roll": "FAC003",
+   "routed_to": null,
+   "reason": "Sister's wedding \u2014 family function",
+   "status": "PENDING",
+   "created_at": "2026-11-04T09:52:00+05:30"
+  },
+  {
+   "id": "00000000-0000-4000-9000-000000000903",
+   "student_id": "00000017-0000-4000-8000-000000000017",
+   "student_roll": "2301109005",
+   "student_name": "Lipsa Pradhan",
+   "resident_type": "dayscholar",
+   "mentor_roll": "FAC003",
+   "routed_to": null,
+   "reason": "Bank work for scholarship",
+   "status": "PENDING",
+   "created_at": "2026-11-04T10:05:00+05:30"
+  },
+  {
+   "id": "00000000-0000-4000-9000-000000000904",
+   "student_id": "00000018-0000-4000-8000-000000000018",
+   "student_roll": "2301109021",
+   "student_name": "Soumya Ranjan Jena",
+   "resident_type": "dayscholar",
+   "mentor_roll": "FAC019",
+   "routed_to": null,
+   "reason": "Dentist appointment at 2 PM",
+   "status": "PENDING",
+   "created_at": "2026-11-04T09:58:00+05:30"
+  }
+ ]
+}
