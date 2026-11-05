@@ -1459,6 +1459,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
           setDocStatus={setDocStatus}
           escalated={campusStats.escalated || []}
           messForecast={messForecast}
+          lastNotice={dispatchedNotices[0]?.publishedAt || null}
           isLg={isLg}
           stats={{
             students: adminKpis[0].value,

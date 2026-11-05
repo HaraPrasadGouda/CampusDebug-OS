@@ -101,7 +101,7 @@ function CancelledRow({ b, busy, onUndo }) {
 }
 
 export default function AdminHome({
-  onNotification, onGo, docRequests, docBusyId, setDocStatus, escalated = [], messForecast, stats, noticePanel, isLg = false
+  onNotification, onGo, docRequests, docBusyId, setDocStatus, escalated = [], messForecast, stats, noticePanel, isLg = false, lastNotice = null
 }) {
   const session = useMemo(readSession, []);
   const cover = useCoverBoard(onNotification);
@@ -138,6 +138,7 @@ export default function AdminHome({
           <div className="min-w-0">
             <p className="text-[16px] font-extrabold text-emerald-900 leading-tight">All clear</p>
             <p className="mt-1 text-[12.5px] font-medium text-slate-600 leading-snug">Every class is covered, no certificate requests are waiting and nothing is escalated to you.</p>
+            {lastNotice && <p data-home-last-notice className="mt-1.5 text-[11.5px] font-bold text-emerald-800">Last notice sent {lastNotice}</p>}
           </div>
         </div>
       )}
@@ -199,7 +200,7 @@ export default function AdminHome({
                 <span className="w-9 h-9 rounded-xl bg-rose-100 text-rose-700 flex items-center justify-center shrink-0"><AlertTriangle className="w-4 h-4" /></span>
                 <div className="min-w-0 flex-1">
                   <p className="text-[13px] font-extrabold text-slate-900 leading-snug break-words">{escalatedHeadline(t)}</p>
-                  {(t.location || t.category) && <p className="text-[11.5px] text-slate-600 leading-snug break-words">{[t.location, escalatedHeadline(t) !== t.category ? t.category : null].filter(Boolean).join(' · ')}</p>}
+                  {(t.location || t.category) && <p className="text-[11.5px] text-slate-600 leading-snug break-words">{[t.location, t.category && !escalatedHeadline(t).toLowerCase().includes(String(t.category).toLowerCase()) ? t.category : null].filter(Boolean).join(' · ')}</p>}
                   {t.breachedHours != null && <p className="mt-1 text-[11px] font-mono font-extrabold text-rose-700">SLA breached {hoursText(t.breachedHours)} ago</p>}
                 </div>
               </div>
@@ -255,8 +256,8 @@ export default function AdminHome({
   );
   const tiles = (
     <div data-home-tiles className="grid grid-cols-2 gap-2.5">
-      {tile(Utensils, 'bg-amber-100 text-amber-700', plates != null ? plates.toLocaleString() : '—', 'Plates today', plates != null ? `${Math.round(saved * 10) / 10} kg saved · ${opted} opted out` : null, 'text-emerald-700')}
-      {tile(Users, 'bg-purple-100 text-purple-700', stats.students, 'Enrolled students', stats.blocks != null ? `${stats.blocks} hostel blocks` : null)}
+      {tile(Utensils, 'bg-amber-100 text-amber-700', plates != null ? plates.toLocaleString() : '—', 'Plates today', plates != null && (saved > 0 || opted > 0) ? `${Math.round(saved * 10) / 10} kg saved · ${opted} opted out` : null, 'text-emerald-700')}
+      {tile(Users, 'bg-purple-100 text-purple-700', stats.students, 'Enrolled students', stats.blocks != null ? `${stats.blocks} hostel block${Number(stats.blocks) === 1 ? '' : 's'}` : null)}
       {tile(TrendingUp, 'bg-emerald-100 text-emerald-700', stats.sla, 'Resolution SLA rate', 'Target: >90%')}
       {tile(GraduationCap, 'bg-sky-100 text-sky-700', stats.teachers, 'Teachers', 'Faculty on roster')}
     </div>
@@ -284,11 +285,13 @@ export default function AdminHome({
 
       {isLg ? (
         <div className="grid grid-cols-12 gap-4 items-start">
-          <div className="col-span-7 space-y-3">{needsColumn}</div>
-          <div className="col-span-5 space-y-4" data-home-side>
-            {noticePanel}
+          <div className="col-span-7 space-y-4">
+            {needsColumn}
             {coversCard}
             {tiles}
+          </div>
+          <div className="col-span-5" data-home-side>
+            {noticePanel}
           </div>
         </div>
       ) : (

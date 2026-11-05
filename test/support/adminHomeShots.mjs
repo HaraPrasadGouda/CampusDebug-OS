@@ -19,8 +19,9 @@ for (const busy of [true, false]) {
   const app = await startApp({ dist: true, profilesFile: path.join(dir, 'profiles.json'), mockEnv: { EXTRA_TABLES_FILE: path.join(dir, 'extra.json') } });
   try {
     if (busy) { app.clock('09:30'); await app.api('POST', '/api/leave-requests/teacher-absent', 'FAC003', { onLeave: true, substituteRoll: 'FAC019' }); }
+    if (!busy) { app.clock('09:40'); await app.api('POST', '/api/notices', 'DEAN01', { title: 'Water supply restored in Block B', content: 'Supply is back in all rooms.', target: 'All Students', category: 'General', urgency: 'Normal' }); }
     app.clock('14:05');
-    for (const vp of [[390, busy ? 3300 : 1700, 1.3], [1440, busy ? 1500 : 1000, 1.0]]) {
+    for (const vp of [[390, busy ? 3000 : 1500, 1.3], [1440, busy ? 1950 : 1000, 1.0]]) {
       const cfg = { base: app.base, vp, roll: 'DEAN01', profile: { ...DEAN, rollNumber: 'DEAN01', fullName: DEAN.full_name }, now: '2026-11-04T14:05:00+05:30', scenario: busy ? 'busy' : 'quiet', shots: out, shotOnly: true };
       const r = spawnSync('python3', [path.join(HERE, '../ui/admin_home.py'), JSON.stringify(cfg)], { encoding: 'utf8', timeout: 300000 });
       if (r.status !== 0) console.error(r.stderr.slice(-800));
