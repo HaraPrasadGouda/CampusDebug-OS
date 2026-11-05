@@ -25,6 +25,8 @@ with sync_playwright() as p:
     # ---- warden
     ctx, pg = ctx_for(prof('WARD01', 'Mr. Subrat Kumar Panda', 'WARDEN', 900))
     scale(pg)
+    # Home is the first screen now (covered by wardenHome.ui.test.mjs); these checks open the Pending Passes section first
+    pg.locator('[data-testid=home-section-grid] button', has_text='Pending passes').first.click(); time.sleep(1); scale(pg)
     # 1) pass queue header: the title keeps real width (not a 1-3 word sliver) and Create stays a 44px target inside the screen
     out['hdr'] = pg.evaluate("""()=>{const s=document.querySelector('#wd-passes');const t=[...s.querySelectorAll('h2 span')].find(x=>/Authorization Queue/.test(x.innerText));const r=t.getBoundingClientRect();const lh=parseFloat(getComputedStyle(t).lineHeight);const b=[...s.querySelectorAll('button')].find(x=>/Create/.test(x.innerText)).getBoundingClientRect();return {titleW:r.width,titleLines:Math.round(r.height/lh),btnH:b.height,btnL:b.left,btnR:b.right,iw:window.innerWidth}}""")
     # 2) KPI sub-labels never break mid-word ("Sign-" / "off", "Auto-" / "grouped")

@@ -16,10 +16,12 @@ export const slotFromCard = (c) => ({
 
 const Pill = ({ children, cls }) => <span className={`inline-flex items-center gap-1 text-[10px] font-extrabold rounded-full px-2 py-0.5 border ${cls}`}>{children}</span>;
 
-export default function CoverBoardSection({ board, reload, onNotification, onMark, markOpen, openLabel, markedRec, onLeave = false, myCards = [] }) {
+export default function CoverBoardSection({ board, reload, onNotification, onMark, markOpen, openLabel, markedRec, onLeave = false, myCards = [], compact = false }) {
   const [busy, setBusy] = useState(null);
   const [pick, setPick] = useState({});            // card id -> chosen subjectCode
-  const open = board?.open || [], taken = board?.taken || [], mine = board?.mine || [];
+  const open = board?.open || [], taken = compact ? [] : (board?.taken || []), mineAll = board?.mine || [];
+  // compact = the Today tab: only cards that need ME (open to take, taken but not marked yet), no header/empty state
+  const mine = compact ? mineAll.filter(c => !markedRec?.(c)) : mineAll;
   const total = open.length + mine.length;
 
   const act = async (c, kind) => {
@@ -30,9 +32,10 @@ export default function CoverBoardSection({ board, reload, onNotification, onMar
     setBusy(null);
   };
 
+  if (compact && total === 0) return null;
   return (
-    <section id="td-cover" className="scroll-mt-[124px] rounded-2xl border border-indigo-200 bg-white shadow-sm overflow-hidden">
-      <div className="flex items-center justify-between gap-2 px-4 py-3 bg-gradient-to-r from-indigo-50 to-white border-b border-indigo-100">
+    <section id={compact ? 'td-cover-today' : 'td-cover'} data-testid={compact ? 'cover-cards-today' : 'cover-board'} className={compact ? 'scroll-mt-[124px]' : 'scroll-mt-[124px] rounded-2xl border border-indigo-200 bg-white shadow-sm overflow-hidden'}>
+      {!compact && (<div className="flex items-center justify-between gap-2 px-4 py-3 bg-gradient-to-r from-indigo-50 to-white border-b border-indigo-100">
         <div className="flex items-center gap-2 min-w-0">
           <div className="w-9 h-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center shrink-0 shadow-sm"><LifeBuoy className="w-4 h-4" /></div>
           <div className="min-w-0">
@@ -43,11 +46,11 @@ export default function CoverBoardSection({ board, reload, onNotification, onMar
         <span className={`shrink-0 text-[11px] font-extrabold rounded-full px-2.5 py-1 border ${open.length ? 'bg-amber-100 text-amber-800 border-amber-300' : 'bg-slate-50 text-slate-500 border-slate-200'}`}>
           {open.length ? `${open.length} open` : 'none open'}
         </span>
-      </div>
+      </div>)}
 
-      <div className="p-3 sm:p-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3 items-start">
+      <div className={compact ? 'grid gap-3 items-start' : 'p-3 sm:p-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3 items-start'}>
         {/* I'm on leave: where each of MY classes stands on the board */}
-        {onLeave && (
+        {onLeave && !compact && (
           <div className="col-span-full rounded-2xl border-2 border-amber-200 bg-amber-50/50 p-3.5">
             <p className="text-sm font-extrabold text-slate-900">Your classes on the board</p>
             <p className="text-[12px] text-slate-600 font-medium mt-0.5">Nobody is assigned — free teachers of each section can take a class. You send no requests.</p>
@@ -163,7 +166,7 @@ export default function CoverBoardSection({ board, reload, onNotification, onMar
         ))}
 
         {/* Empty state */}
-        {total === 0 && taken.length === 0 && !onLeave && (
+        {!compact && total === 0 && taken.length === 0 && !onLeave && (
           <div className="col-span-full rounded-2xl border border-dashed border-indigo-200 bg-indigo-50/40 px-4 py-6 text-center">
             <div className="mx-auto w-14 h-14 rounded-2xl bg-indigo-100 text-indigo-600 flex items-center justify-center mb-2.5"><Users className="w-7 h-7" /></div>
             <p className="text-sm font-extrabold text-slate-900">Nothing needs cover right now</p>

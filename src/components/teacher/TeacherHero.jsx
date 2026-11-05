@@ -31,7 +31,7 @@ export default function TeacherHero({ greeting, firstName, dateLabel, periods = 
               : 'No more classes today — your teaching desk is clear.'}
           </p>
         </div>
-        <div className="grid grid-cols-3 gap-2 md:w-[22rem] shrink-0">
+        <div className="hidden sm:grid grid-cols-3 gap-2 md:w-[22rem] shrink-0">   {/* phones: the three counters repeat what Needs you now / the Students badge already say, so they step aside (keeps Needs you now on the first screen) */}
           {stats.map(s => (
             <div key={s.label} className={`rounded-2xl px-3 py-2.5 border ${s.hot ? 'bg-amber-300/20 border-amber-200/50' : 'bg-white/10 border-white/15'}`}>
               <p className="text-xl font-extrabold leading-none flex items-center gap-1.5">{s.value}</p>

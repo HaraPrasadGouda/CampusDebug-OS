@@ -9,10 +9,15 @@ import {
   UserCheck, 
   Lock, 
   GraduationCap,
+  BookOpenCheck,
+  UserRound,
   Sparkles,
   ExternalLink,
   MapPin
 } from 'lucide-react';
+import { useTeacherNav, TEACHER_TABS, goTeacherTab } from '../utils/teacherNav';
+
+const TEACHER_ICONS = { today: Home, students: GraduationCap, classes: BookOpenCheck, me: UserRound };
 
 export default function Sidebar({ 
   isOpen, 
@@ -25,8 +30,10 @@ export default function Sidebar({
   currentRole = 'Student',
   session
 }) {
+  const isTeacherRole = currentRole === 'Teacher';
+  const teacherNav = useTeacherNav();
   const navItems = [
-    { id: 'home', label: 'Home', icon: Home },
+    { id: 'home', label: 'Home', icon: Home, onClick: isTeacherRole ? () => goTeacherTab('today') : undefined },
     { id: 'profile', label: 'Profile', icon: User, onClick: onOpenProfile },
     { id: 'settings', label: 'Settings', icon: Settings, onClick: onOpenSettings },
     { id: 'logout', label: 'Logout', icon: LogOut, onClick: onSignOut, isDanger: true }
@@ -197,10 +204,32 @@ export default function Sidebar({
 
           {/* Navigation Links */}
           <nav className="space-y-1.5 flex-1">
-            <p className="text-[10px] uppercase tracking-wider font-bold text-slate-400 px-3 py-1">Menu</p>
+            {/* TEACHER (laptop only): SECTIONS = the four tab pages. On a phone the drawer stays the old menu
+                (Home, Profile, Settings, Logout) and the same four sections live in the bottom bar. */}
+            {isTeacherRole && (
+              <div className="hidden lg:block space-y-1.5 pb-2" data-testid="sidebar-sections">
+                <p className="text-[10px] uppercase tracking-wider font-bold text-slate-400 px-3 py-1">Sections</p>
+                {TEACHER_TABS.map((t) => {
+                  const TIcon = TEACHER_ICONS[t.id];
+                  const on = teacherNav.tab === t.id;
+                  const n = t.id === 'today' ? teacherNav.counts.today : t.id === 'students' ? teacherNav.counts.students : 0;
+                  return (
+                    <button key={t.id} type="button" data-section={t.id} aria-current={on ? 'page' : undefined} onClick={() => goTeacherTab(t.id)}
+                      className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs sm:text-sm font-semibold transition-all duration-200 cursor-pointer ${on ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/80'}`}>
+                      <TIcon className={`w-4 h-4 shrink-0 ${on ? 'text-white' : 'text-slate-500'}`} />
+                      <span className="flex-1 text-left">{t.label}</span>
+                      {n > 0 && <span className="min-w-[20px] h-5 px-1.5 rounded-full bg-rose-500 text-white text-[10px] font-extrabold flex items-center justify-center">{n}</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            <p className="text-[10px] uppercase tracking-wider font-bold text-slate-400 px-3 py-1">
+              {isTeacherRole ? (<><span className="lg:hidden">Menu</span><span className="hidden lg:inline">Account</span></>) : 'Menu'}
+            </p>
             {navItems.map((item) => {
               const Icon = item.icon;
-              const isActive = activeNav === item.id;
+              const isActive = isTeacherRole ? false : activeNav === item.id;
 
               return (
                 <React.Fragment key={item.id}>

@@ -225,7 +225,7 @@ export function CleaningPanelView({ data, onSave = async () => ({ ok: true }), c
   );
 }
 
-export default function CleaningPanel({ role = 'WARDEN', onAlertCount = () => {} }) {
+export default function CleaningPanel({ role = 'WARDEN', onAlertCount = () => {}, onAlerts = () => {} }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
 
@@ -234,9 +234,9 @@ export default function CleaningPanel({ role = 'WARDEN', onAlertCount = () => {}
       const r = await fetch('/api/cleaning/warden');
       const j = await r.json();
       if (!r.ok || !j.success) throw new Error(j.error || 'Could not load cleaning data');
-      setData(j); setError(''); onAlertCount((j.alerts || []).length);
+      setData(j); setError(''); onAlertCount((j.alerts || []).length); onAlerts(j.alerts || []);
     } catch (e) { setError(e.message || 'Could not load cleaning data'); }
-  }, [onAlertCount]);
+  }, [onAlertCount, onAlerts]);
 
   useEffect(() => { load(); const iv = setInterval(() => { if (document.visibilityState === 'visible') load(); }, 60000); return () => clearInterval(iv); }, [load]);
 

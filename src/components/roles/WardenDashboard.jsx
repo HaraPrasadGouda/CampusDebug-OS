@@ -31,6 +31,7 @@ import { getAllLocal, saveLocal, queueOfflineAction } from '../../utils/db';
 import { getAccessToken } from '../../utils/authClient';
 import { notifyGatePassApproved } from '../../utils/notifications';
 import WardenCreatePassModal from '../modals/WardenCreatePassModal';
+import WardenHome, { latestScanByPass } from './WardenHome';
 import { isPageHidden, onPageActive, POLL_ACTIVE_MS, POLL_IDLE_MS } from '../../utils/livePoll';
 import { getLiveUpdates } from '../../utils/liveUpdates';
 
@@ -57,13 +58,24 @@ function CardEmptyState({ icon: Icon = CheckCircle2, tone = 'emerald', title, su
   );
 }
 
-export default function WardenDashboard({ onNotification, masterClusters = [], searchQuery = '' }) {
+export default function WardenDashboard({ onNotification, masterClusters = [], searchQuery = '', session = null }) {
   const [pendingPasses, setPendingPasses] = useState(INITIAL_PENDING_PASSES);
   const [clusters, setClusters] = useState(
     masterClusters.length > 0 ? masterClusters : INITIAL_CLUSTERS
   );
   const [allTickets, setAllTickets] = useState([]);
-  const [activeTab, setActiveTab] = useState('passes'); // 'tickets' | 'clusters' | 'passes' | 'sla' | 'register'
+  const [activeTab, setActiveTab] = useState('home'); // 'home' | 'tickets' | 'clusters' | 'passes' | 'sla' | 'register' | ...
+  const [homePassesOpen, setHomePassesOpen] = useState(false);   // Home: show every pending pass instead of the first few
+  const [cleaningFirst, setCleaningFirst] = useState(null);      // first red cleaning alert (Home row sub-line)
+  const onCleaningAlerts = React.useCallback((list) => setCleaningFirst(list && list[0] ? `${list[0].block} · Room ${list[0].room}` : null), []);
+  const [isLaptop, setIsLaptop] = useState(() => typeof window !== 'undefined' && window.matchMedia ? window.matchMedia('(min-width: 1280px)').matches : false);
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return undefined;
+    const mq = window.matchMedia('(min-width: 1280px)');
+    const on = () => setIsLaptop(mq.matches);
+    mq.addEventListener ? mq.addEventListener('change', on) : mq.addListener(on);
+    return () => { mq.removeEventListener ? mq.removeEventListener('change', on) : mq.removeListener(on); };
+  }, []);
   const [technicianRoster, setTechnicianRoster] = useState([]);   // active technicians (reassign dropdown)
   const [cleaningAlerts, setCleaningAlerts] = useState(0);        // red alerts in the Cleaning panel
   const [technicians, setTechnicians] = useState([]);             // Technicians panel (DB rows + workload)
@@ -343,6 +355,15 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
     triggerToast('Offline: assignment buffered and will sync when connection returns.', 'warning');
   };
 
+  // One-tap Dispatch for an incident: the category's technician from the DB list — never a made-up name.
+  // Used by the incident card and by the Home "no technician" row (same call either way).
+  const dispatchSpecialist = (cluster, masterIdArg) => {
+    const masterId = masterIdArg || cluster.masterId || cluster.id;
+    const match = technicianRoster.find(r => r.category === cluster.category);
+    if (!match) { triggerToast(techError ? 'Technician list unavailable — try again shortly.' : `No technician for ${cluster.category || 'this category'} — pick one from "Assign to…".`, 'warning'); return; }
+    handleAssignTechnician(masterId, match.name);
+  };
+
   // Mark Cluster Resolved (calls backend to cascade to all individual tickets)
   const handleResolveCluster = async (masterId) => {
     try {
@@ -499,6 +520,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
   // Section switcher chips (layout only): phone/tablet = tabs (only the active card shows);
   // laptop (xl) = all cards visible, a chip scrolls to its card.
   const sectionChips = [
+    { tab: 'home', id: 'wd-home', label: 'Home', count: null, dot: 'bg-indigo-500', hot: false },
     { tab: 'passes', id: 'wd-passes', label: 'Pending Passes', count: pendingPasses.length, dot: 'bg-emerald-500', hot: pendingPasses.length > 0, hotCls: 'bg-emerald-600 text-white' },
     { tab: 'tickets', id: 'wd-tickets', label: 'Student Issues', count: allTickets.length, dot: 'bg-amber-500', hot: false },
     { tab: 'technicians', id: 'wd-technicians', label: 'Technicians', count: techError ? '!' : technicians.filter(t => t.active).length, dot: 'bg-sky-500', hot: !!techError, hotCls: 'bg-rose-600 text-white' },
@@ -509,7 +531,9 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
     { tab: 'fees', id: 'wd-fees', label: 'Fee Payments', count: null, dot: 'bg-emerald-500', hot: false }
   ];
   const jumpToSection = (c) => {
+    if (!c) return;
     setActiveTab(c.tab);
+    if (c.tab === 'home') { requestAnimationFrame(() => window.scrollTo?.({ top: 0 })); return; }
     requestAnimationFrame(() => {
       const el = document.getElementById(c.id);
       if (!el) return;
@@ -517,6 +541,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
       if (isLaptop || el.getBoundingClientRect().top < 124) el.scrollIntoView({ behavior: isLaptop ? 'smooth' : 'auto', block: 'start' });
     });
   };
+  const isHome = activeTab === 'home';
   const tabCls = (tab) => (activeTab === tab ? '' : 'max-xl:hidden');
   const PREVIEW = { passes: 5, tickets: 4, clusters: 3, register: 6 };
   const shownGateRows = shownRegister.filter(r => {
@@ -527,10 +552,76 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
   const toggleAll = (key) => setShowAll(v => ({ ...v, [key]: !v[key] }));
   const viewAllCls = 'w-full min-h-[44px] rounded-xl border text-xs font-bold transition-colors cursor-pointer';
 
+  // ---- Home ("Needs you now") numbers: all derived from data this screen already loads ----
+  const homeGreeting = (() => { const h = new Date().getHours(); return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'; })();
+  const homeGate = (() => {
+    const today = new Date().toDateString();
+    const gateRows = registerRows.filter(r => { const c = String(r.category || '').toUpperCase(); return c !== 'COMMUTE' && c !== 'LEAVE'; });
+    const todayRows = gateRows.filter(r => r.scanned_at && new Date(r.scanned_at).toDateString() === today);
+    // STILL OUT: same per-pass rule as the Gate Register header — a pass is outside iff its latest scan is an EXIT.
+    const outRows = latestScanByPass(gateRows).filter(r => r.direction === 'EXIT' && r.scanned_at)
+      .sort((a, b) => new Date(a.scanned_at).getTime() - new Date(b.scanned_at).getTime());
+    const lateRows = todayRows.filter(r => r.late_return);
+    const lateNames = Array.from(new Set(lateRows.map(r => r.student_name || r.student_roll).filter(Boolean)));
+    return {
+      exits: todayRows.filter(r => r.direction === 'EXIT').length,
+      returns: todayRows.filter(r => r.direction === 'RETURN').length,
+      late: lateRows.length,
+      lateSub: lateNames.length ? `${lateNames[0]}${lateNames.length > 1 ? ` and ${lateNames.length - 1} more` : ''} · see gate register` : 'See gate register',
+      outNow: outRows.length,
+      outRows,
+    };
+  })();
+  const homeOverdue = (() => {
+    const list = breachedTicketsAll;
+    const t = list[0];
+    return {
+      count: list.length,
+      sub: t ? [t.title || t.category, t.location, typeof t.slaHoursLeft === 'number' ? `${Math.abs(t.slaHoursLeft).toFixed(1)}h overdue` : null].filter(Boolean).join(' · ') : '',
+    };
+  })();
+  const homeUnassigned = (() => {
+    const list = openClustersAll.filter(c => !c.assignedTo && !c.technician);
+    const c = list[0];
+    const n = c ? (c.impactedCount || c.studentsImpacted || c.ticket_count || 0) : 0;
+    return {
+      count: list.length,
+      first: list.length === 1 ? c : null,
+      sub: c ? [c.category, c.location, n ? `${n} students` : null].filter(Boolean).join(' · ') + (list.length > 1 ? ` · +${list.length - 1} more` : '') : '',
+    };
+  })();
+
   return (
     <div className="space-y-5 animate-in fade-in duration-200">
       
+      {/* Home (proposal A "Needs you now"): the default screen. Every other section keeps its own KPI strip + chip bar below. */}
+      {isHome && (
+        <WardenHome
+          session={session}
+          greeting={homeGreeting}
+          dateLabel={new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}
+          passes={shownPasses}
+          passCount={pendingPasses.length}
+          wq={wq}
+          gate={homeGate}
+          registerOk={registerOk}
+          chips={sectionChips}
+          isLaptop={isLaptop}
+          overdue={homeOverdue}
+          unassigned={homeUnassigned}
+          cleaning={{ count: cleaningAlerts, sub: cleaningFirst }}
+          onApprove={handleApprovePass}
+          onReject={handleRejectPass}
+          onJump={jumpToSection}
+          onCreatePass={() => setShowCreatePassModal(true)}
+          onDispatch={dispatchSpecialist}
+          passesOpen={homePassesOpen}
+          onTogglePasses={() => setHomePassesOpen(v => !v)}
+        />
+      )}
+
       {/* Warden overview — slim KPI strip (same four numbers, compact so the queues start higher) */}
+      {!isHome && (
       <section className="grid grid-cols-2 xl:grid-cols-4 gap-2 sm:gap-3 w-full">
         <div className="bg-gradient-to-br from-[#edf9f5] to-[#e0f5ed] border border-[#bbf7d0] rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 flex items-center justify-between gap-2 min-w-0">
           <div className="min-w-0">
@@ -564,8 +655,10 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
           <span className="text-2xl sm:text-3xl font-extrabold font-mono text-blue-950 shrink-0">{avgResolutionHours === null ? '—' : avgResolutionHours < 10 ? avgResolutionHours.toFixed(1) : Math.round(avgResolutionHours)}{avgResolutionHours !== null && <span className="text-base font-normal text-blue-800">h</span>}</span>
         </div>
       </section>
+      )}
 
       {/* Section switcher — tap a chip to jump to that section (layout only) */}
+      {!isHome && (
       <nav aria-label="Dashboard sections" className="sticky top-[51px] sm:top-[54px] z-20 -mx-3 sm:-mx-5 lg:-mx-6 px-3 sm:px-5 lg:px-6 py-2 bg-[#F1F5F9]/90 backdrop-blur-md">
         <div className="flex gap-2 overflow-x-auto scrollbar-none -mx-3 px-3 sm:mx-0 sm:px-0 xl:flex-wrap">
           {sectionChips.map(c => (
@@ -587,10 +680,11 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
           ))}
         </div>
       </nav>
+      )}
 
       {/* Sections: phone = one column (Pending Passes first); laptop (xl) = passes + issues on the
           left, SLA heatmap + clusters on the right, Gate Register full width below */}
-      <div className="flex flex-col gap-4 xl:grid xl:grid-cols-12">
+      <div className={isHome ? 'hidden' : 'flex flex-col gap-4 xl:grid xl:grid-cols-12'}>
         <div className="contents">
 
       {/* --- TAB 0: ALL REPORTED STUDENT ISSUES --- */}
@@ -959,12 +1053,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                     <div className="flex flex-wrap items-stretch gap-2">
                       {!isResolved && !cluster.assignedTo && (
                         <button
-                          onClick={() => {
-                            // The category's technician from the DB list — never a made-up name.
-                            const match = technicianRoster.find(r => r.category === cluster.category);
-                            if (!match) { triggerToast(techError ? 'Technician list unavailable — try again shortly.' : `No technician for ${cluster.category || 'this category'} — pick one from "Assign to…".`, 'warning'); return; }
-                            handleAssignTechnician(masterId, match.name);
-                          }}
+                          onClick={() => dispatchSpecialist(cluster, masterId)}
                           className="flex-1 sm:flex-none xl:flex-1 min-h-[44px] justify-center px-3.5 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white font-semibold transition-all cursor-pointer text-xs flex items-center space-x-1 shadow-sm"
                         >
                           <Wrench className="w-3.5 h-3.5" />
@@ -1222,7 +1311,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
               Students answer &quot;Was your room cleaned today?&quot; from 1 PM to 9 PM on cleaning day. A dirty room becomes one complaint for the block&apos;s cleaners.
             </p>
           </div>
-          <CleaningPanel role="WARDEN" onAlertCount={setCleaningAlerts} />
+          <CleaningPanel role="WARDEN" onAlertCount={setCleaningAlerts} onAlerts={onCleaningAlerts} />
         </section>
 
         <section id="wd-register" className={`order-6 xl:col-span-12 xl:row-start-5 scroll-mt-[124px] min-w-0 bg-white border-2 border-slate-300 rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm ${tabCls('register')}`}>
@@ -1254,9 +1343,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
               // a pass is outside iff its LATEST scan (any day) is an EXIT with
               // no RETURN after it — this also catches last-night carry-overs
               // and can never go negative.
-              const lastByPass = new Map();
-              gateRows.forEach(r => { if (r.pass_ref) lastByPass.set(r.pass_ref, r); });
-              const outNow = Array.from(lastByPass.values()).filter(r => r.direction === 'EXIT').length;
+              const outNow = latestScanByPass(gateRows).filter(r => r.direction === 'EXIT').length;
               return (
                 <div className="flex items-center gap-2 flex-wrap shrink-0">
                   <span className="text-[11px] font-mono font-bold text-amber-800 bg-amber-100 border border-amber-200 px-2.5 py-1 rounded-full">{exits} Exits Today</span>
