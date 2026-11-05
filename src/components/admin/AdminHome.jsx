@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import {
-  Sparkles, AlertTriangle, Ban, Undo2, FileText, Check, ChevronRight, Siren, Send, Receipt,
+  AlertTriangle, Ban, Undo2, FileText, Check, ChevronRight, Siren, Send, Receipt,
   KeyRound, UserCheck, Utensils, CheckCircle2, Users, TrendingUp, GraduationCap
 } from 'lucide-react';
 import AdminCoversCard from '../teacher/AdminCoversCard';
@@ -12,16 +12,6 @@ import useCoverBoard from './useCoverBoard';
 // (/api/document-requests), escalated complaints (the tickets the dashboard
 // payload already carries), today's leaves (/api/admin/teacher-covers) and the
 // mess forecast the console already loads.
-const HONORIFICS = /^(dr|prof|professor|mr|mrs|ms|md)\.?$/i;
-function greetingName(full, fallback) {
-  const parts = String(full || '').trim().split(/\s+/).filter(Boolean);
-  if (!parts.length) return fallback;
-  if (HONORIFICS.test(parts[0]) && parts.length > 1) return `${parts[0].replace(/\.?$/, '.')} ${parts[parts.length - 1]}`;
-  return parts[0];
-}
-function readSession() {
-  try { return JSON.parse(localStorage.getItem('campusdebug_session')) || {}; } catch { return {}; }
-}
 const daysAgo = (ms) => {
   const d = Math.floor((Date.now() - ms) / 86400000);
   if (d <= 0) return 'today';
@@ -43,13 +33,11 @@ const hoursText = (h) => {
 };
 
 function Counter({ value, label, tone }) {
-  const cls = tone === 'rose' ? 'bg-rose-500/30 border-rose-300/40'
-    : tone === 'amber' ? 'bg-amber-400/25 border-amber-200/40'
-    : 'bg-white/10 border-white/15';
+  const num = tone === 'rose' ? 'text-rose-600' : tone === 'amber' ? 'text-amber-600' : 'text-slate-900';
   return (
-    <div className={`rounded-2xl border px-2 py-2.5 text-center min-w-0 ${cls}`} data-home-counter={label}>
-      <p className="text-[21px] lg:text-2xl font-extrabold font-mono leading-none">{value}</p>
-      <p className="mt-1 text-[10px] lg:text-[11px] font-bold text-indigo-100 leading-tight">{label}</p>
+    <div className="min-w-0 px-2 py-2 text-center" data-home-counter={label}>
+      <p className={`text-[19px] lg:text-xl font-extrabold font-mono leading-none ${num}`}>{value}</p>
+      <p className="mt-1 text-[10.5px] lg:text-[11px] font-bold text-slate-500 leading-tight">{label}</p>
     </div>
   );
 }
@@ -103,14 +91,11 @@ function CancelledRow({ b, busy, onUndo }) {
 export default function AdminHome({
   onNotification, onGo, docRequests, docBusyId, setDocStatus, escalated = [], messForecast, stats, noticePanel, isLg = false, lastNotice = null
 }) {
-  const session = useMemo(readSession, []);
   const cover = useCoverBoard(onNotification);
   const [leaveRows, setLeaveRows] = useState(null);
 
-  const hour = new Date().getHours();
-  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
-  const isDean = String(session.profileRole || '').toUpperCase() === 'DEAN';
-  const dateLabel = `${new Date().toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' })} · ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+  const dateLabel = new Date().toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' });
+  const [noticeOpen, setNoticeOpen] = useState(false);   // laptop: the Send a Notice form stays closed until asked for
 
   const banners = cover.banners || [];
   const needCover = banners.filter(b => b.level !== 'final');
@@ -232,6 +217,29 @@ export default function AdminHome({
     </div>
   );
 
+  const noticeCard = noticeOpen ? (
+    <div data-home-notice-form className="space-y-2">
+      <div className="flex justify-end">
+        <button type="button" data-home-notice-close onClick={() => setNoticeOpen(false)} className="min-h-[36px] px-3 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 text-[12px] font-extrabold cursor-pointer">Close</button>
+      </div>
+      {noticePanel}
+    </div>
+  ) : (
+    <div data-home-notice-card className="rounded-2xl bg-white border border-slate-200 p-4 shadow-sm">
+      <div className="flex items-start gap-3">
+        <span className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0"><Send className="w-5 h-5" /></span>
+        <div className="min-w-0 flex-1">
+          <h2 className="text-[15px] font-extrabold text-slate-900 leading-tight">Send a Notice</h2>
+          <p className="mt-1 text-[12px] text-slate-500 leading-snug">Target notifications strictly to affected students without broadcasting irrelevant alerts campus-wide.</p>
+          {lastNotice && <p data-home-last-notice-card className="mt-1.5 text-[11.5px] font-bold text-slate-600">Last notice sent {lastNotice}</p>}
+        </div>
+      </div>
+      <button type="button" data-home-notice-open onClick={() => setNoticeOpen(true)} className="mt-3 w-full min-h-[44px] rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-[13px] font-extrabold inline-flex items-center justify-center gap-1.5 cursor-pointer transition-colors">
+        <Send className="w-4 h-4" /> Write a notice
+      </button>
+    </div>
+  );
+
   const coversCard = (
     <div data-home-covers className="rounded-2xl bg-white border border-slate-200 p-3.5 shadow-sm">
       <div className="flex items-center gap-2 mb-2.5 flex-wrap">
@@ -265,21 +273,13 @@ export default function AdminHome({
 
   return (
     <div data-admin-home className="space-y-3 lg:space-y-4">
-      <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-indigo-900 via-indigo-700 to-violet-600 text-white p-4 lg:p-6 shadow-lg shadow-indigo-900/20">
-        <div className="pointer-events-none absolute -right-10 -top-12 w-48 h-48 rounded-full bg-white/10" />
-        <div className="pointer-events-none absolute right-16 -bottom-16 w-40 h-40 rounded-full bg-fuchsia-400/20" />
-        <div className="relative z-10 flex flex-col lg:flex-row lg:items-end lg:justify-between gap-3.5 lg:gap-8">
-          <div className="min-w-0">
-            <p className="text-[11px] font-bold uppercase tracking-widest text-indigo-200 flex items-center gap-1.5"><Sparkles className="w-3.5 h-3.5 shrink-0" /> {dateLabel}</p>
-            <h1 className="mt-1 text-[21px] lg:text-3xl font-extrabold tracking-tight leading-tight break-words">{greeting}, {greetingName(session.name, isDean ? 'Dean' : 'Admin')}!</h1>
-            <p className="mt-1 text-[13px] lg:text-sm text-indigo-100 font-medium leading-snug">{isDean ? 'Dean' : 'Admin'} · Administration</p>
-          </div>
-          <div className="grid grid-cols-4 gap-2 lg:w-[26rem] shrink-0">
-            <Counter value={leaveRows ? leaveRows.length : '—'} label="On leave" />
-            <Counter value={cover.banners ? needCover.length : '—'} label="No cover" tone={needCover.length ? 'rose' : null} />
-            <Counter value={docRequests ? pending.length : '—'} label="Requests" tone={pending.length ? 'amber' : null} />
-            <Counter value={escalated.length} label="Escalated" tone={escalated.length ? 'rose' : null} />
-          </div>
+      <div data-home-strip>
+        <p data-home-date className="px-1 pb-1.5 text-[11.5px] font-semibold text-slate-500">{dateLabel}</p>
+        <div className="grid grid-cols-4 divide-x divide-slate-200 rounded-2xl bg-white border border-slate-200 shadow-sm">
+          <Counter value={leaveRows ? leaveRows.length : '—'} label="On leave" />
+          <Counter value={cover.banners ? needCover.length : '—'} label="No cover" tone={needCover.length ? 'rose' : null} />
+          <Counter value={docRequests ? pending.length : '—'} label="Requests" tone={pending.length ? 'amber' : null} />
+          <Counter value={escalated.length} label="Escalated" tone={escalated.length ? 'rose' : null} />
         </div>
       </div>
 
@@ -291,7 +291,7 @@ export default function AdminHome({
             {tiles}
           </div>
           <div className="col-span-5" data-home-side>
-            {noticePanel}
+            {noticeCard}
           </div>
         </div>
       ) : (

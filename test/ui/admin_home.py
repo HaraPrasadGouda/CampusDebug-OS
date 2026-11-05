@@ -1,6 +1,6 @@
 # Admin / Dean Home ("Needs you now") checks, headless Chromium. Driven by test/adminHome.ui.test.mjs.
 # usage: python3 admin_home.py '{"base":..,"vp":[w,h,k],"roll":"ADMIN01","profile":{..},"now":"2026-11-04T14:05:00+05:30","scenario":"busy|quiet|actions","shots":""}'
-import sys, json, time, os
+import sys, json, time, os, re
 from datetime import datetime
 from playwright.sync_api import sync_playwright
 cfg = json.loads(sys.argv[1]); w, h, k = cfg['vp']; scen = cfg.get('scenario', 'busy')
@@ -41,7 +41,12 @@ with sync_playwright() as p:
     out['escRows'] = pg.locator('[data-home-escalated]').count()
     out['cancelledRows'] = pg.locator('[data-home-cancelled]').count()
     out['quick'] = pg.locator('[data-home-go="dispatcher"], [data-home-go="fees"], [data-home-go="security"]').locator('visible=true').count()
-    out['greeting'] = pg.locator('[data-admin-home] h1').inner_text()
+    out['greeting'] = bool(re.search(r'Good (morning|afternoon|evening)', pg.locator('[data-admin-home]').inner_text()))
+    out['h1'] = pg.locator('[data-admin-home] h1').count()
+    out['date'] = pg.locator('[data-home-date]').inner_text()
+    out['strip'] = pg.evaluate("()=>{const r=document.querySelector('[data-home-strip]').getBoundingClientRect();const g=document.querySelector('[data-home-strip] .grid').getBoundingClientRect();return {top:r.top,bottom:r.bottom,h:g.height,cells:[...document.querySelectorAll('[data-home-counter]')].map(e=>Math.round(e.getBoundingClientRect().height))}}")
+    out['noticeCard'] = pg.locator('[data-home-notice-card]').locator('visible=true').count()
+    out['noticeBtn'] = pg.locator('[data-home-notice-open]').locator('visible=true').count()
     out['tiles'] = pg.locator('[data-home-tiles] > div').count()
     out['small'] = small_targets(pg); out['side'] = side_scroll(pg); out['edge'] = past_edge(pg); out['clipped'] = clipped(pg)
     # first screen (phone): the "Needs you now" heading and the first action are visible without scrolling, above the bottom bar
@@ -72,7 +77,17 @@ with sync_playwright() as p:
             res['noticeForm'] = pg.locator('.admin-dash form').count()
             pg.locator('[data-admin-group="Home"]').locator('visible=true').first.click(); time.sleep(1)
         else:
+            # laptop: the form starts closed; ONE click on "Write a notice" opens the real form in place, sending works, Close folds it back
+            res['formBefore'] = pg.locator('[data-home-side] form').count()
+            pg.locator('[data-home-notice-open]').click(); time.sleep(.6)
             res['noticeForm'] = pg.locator('[data-home-side] form').count()
+            shot(pg, 'noticeOpen')
+            pg.locator('[data-home-side] input[type=text]').first.fill('Water supply restored in Block B')
+            pg.locator('[data-home-side] textarea').first.fill('Supply is back in all rooms.')
+            pg.get_by_role('button', name='Dispatch Targeted Notice').click(); time.sleep(2.5)
+            res['sentFormStillThere'] = pg.locator('[data-home-side] form').count()
+            pg.locator('[data-home-notice-close]').click(); time.sleep(.5)
+            res['closedAgain'] = [pg.locator('[data-home-notice-card]').count(), pg.locator('[data-home-side] form').count()]
         res['backHome'] = pg.locator('[data-admin-home]').count()
         # every admin tool still reachable
         reach = {}

@@ -63,7 +63,18 @@ const common = (o, vp) => {
     assert.deepEqual(o.edge, [], `something past the screen edge: ${JSON.stringify(o.edge)}`);
     assert.deepEqual(o.clipped, [], `clipped text: ${JSON.stringify(o.clipped)}`);
     assert.deepEqual(o.errors, []);
-    assert.equal(o.hasForm, phone ? 0 : 1, phone ? 'phone: the notice form is one tap away, not on Home' : 'laptop: the notice form sits beside Needs you now');
+    assert.equal(o.hasForm, 0, phone ? 'phone: the notice form is one tap away, not on Home' : 'laptop: the notice form starts closed');
+    assert.equal(o.noticeCard, phone ? 0 : 1, 'laptop: a compact closed "Send a Notice" card sits beside Needs you now');
+    assert.equal(o.noticeBtn, phone ? 0 : 1, 'laptop: one "Write a notice" button');
+    // no greeting / wish card: a slim counter strip + a muted date caption instead
+    assert.equal(o.greeting, false, 'no "Good morning/afternoon/evening" anywhere on Home');
+    assert.equal(o.h1, 0);
+    assert.match(o.date, /^Wednesday,? 4 November$/, 'date is a plain muted caption, no clock time');
+    assert.deepEqual(Object.keys(o.counters), ['On leave', 'No cover', 'Requests', 'Escalated']);
+    assert.ok(o.strip.h < 90, `counter strip is slim (${o.strip.h}px)`);
+    assert.ok(o.strip.bottom < o.first.headTop, 'strip sits above "Needs you now"');
+    assert.ok(o.first.headBottom < o.first.navTop, `Needs-you heading must be inside the first viewport ${JSON.stringify(o.first)}`);
+    if (!phone) assert.ok(o.first.firstBottom == null || o.first.firstBottom <= o.first.ih, `first action inside the first laptop viewport ${JSON.stringify(o.first)}`);
     assert.equal(o.tiles, 4);
     if (phone) {
         assert.equal(o.bar.length, 5);
@@ -90,7 +101,6 @@ describe('Admin / Dean Home — Needs you now (headless Chromium)', { skip: have
                     assert.equal(o.docRows, 3, 'three requests inline, the rest behind "See all"');
                     assert.equal(o.escRows, 3);
                     assert.equal(o.cancelledRows, 1);
-                    assert.match(o.greeting, who.role === 'DEAN' ? /Good (morning|afternoon|evening), Dr\. Rath!/ : /Good (morning|afternoon|evening), Admin!/);
                     if (vp[0] < 800) {   // first screen: heading and the first action are above the bottom bar
                         assert.ok(o.first.headBottom < o.first.navTop, `Needs-you heading below the first screen ${JSON.stringify(o.first)}`);
                         assert.ok(o.first.firstBottom <= o.first.navTop, `first action below the first screen ${JSON.stringify(o.first)}`);
@@ -129,6 +139,14 @@ describe('Admin / Dean Home — Needs you now (headless Chromium)', { skip: have
                 const banners = (await app.api('GET', '/api/admin/cover-board', 'ADMIN01')).json.banners;
                 assert.deepEqual(banners.map((b) => [b.level, b.canCancel, b.canUndo]).sort(), [['final', false, true], ['warn', true, false]]);
                 assert.ok(a.noticeForm >= 1, 'notice form reachable from Home');
+                if (vp[0] >= 800) {   // laptop: closed at first, ONE click opens the real form in place, sending still works, Close folds it back
+                    assert.equal(a.formBefore, 0);
+                    assert.equal(a.noticeForm, 1);
+                    assert.deepEqual(a.closedAgain, [1, 0]);
+                    const sent = (await app.api('GET', '/api/notices', 'ADMIN01')).json;
+                    const list = Array.isArray(sent) ? sent : (sent.notices || []);
+                    assert.ok(list.some((n) => n.title === 'Water supply restored in Block B'), 'notice sent from the Home form reached the server');
+                }
                 assert.equal(a.backHome, 1);
                 const all = ['dispatcher', 'timetable', 'setup', 'mess', 'docs', 'fees', 'security', 'csv', 'metrics'];
                 if (vp[0] < 800) {
