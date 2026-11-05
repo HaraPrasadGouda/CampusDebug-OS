@@ -691,7 +691,7 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
                       <strong>Reason:</strong> {leave.reason}
                     </p>
                     <p className="text-[11px] text-slate-500 mt-0.5">
-                      Requested {timeHM(leave.created_at)} • one-way leave — approved exit, back next working day
+                      Requested {timeHM(leave.created_at)}
                     </p>
                     {onLeave && leave.routed_to && leave.routed_to === myState.delegatedTo && (
                       <p className="inline-flex items-center gap-1 mt-1.5 text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-full px-2 py-0.5">

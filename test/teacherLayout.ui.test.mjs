@@ -38,6 +38,10 @@ describe('Teacher dashboard phone layout (headless Chromium)', { skip: have ? fa
                 assert.equal(o.att_saved, true, 'Save still closes the modal');
                 assert.ok(o.rows.length > 0);
                 for (const r of o.rows) { assert.ok(r.rollRight <= r.rowRight - 4 && r.scr, `roll ${r.txt} clipped`); }
+                assert.ok(o.cards > 0, 'seed has a pending leave for this mentor');
+                assert.ok(o.approval_text.includes('Requested ') && !/one-way|back next working/i.test(o.approval_text), 'mentor card keeps only "Requested <time>"');
+                // note placeholder fully visible: it wraps inside the box (phones) or fits one line (laptop); never cut off
+                assert.ok(o.note_need[0] <= o.note_need[1] + 1, `note placeholder needs ${o.note_need[2]} lines = ${o.note_need[0]}px but the box is ${o.note_need[1]}px`);
                 assert.equal(o.side_scroll, false);
                 assert.deepEqual(o.errors, []);
             } finally { await app.stop(); }

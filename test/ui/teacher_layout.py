@@ -44,6 +44,15 @@ with sync_playwright() as p:
     pg.get_by_text('Create leave for student').first.click(); time.sleep(1.5); scale(pg); time.sleep(.4)
     out['rows'] = pg.evaluate("""()=>{const d=document.querySelector('[role=dialog]');const rows=[...d.querySelectorAll('button.w-full')];return rows.map(b=>{const r=b.getBoundingClientRect();const s=[...b.querySelectorAll('span.font-mono')][0];if(!s)return null;const q=s.getBoundingClientRect();return {rollW:q.width,rollRight:q.right,rowRight:r.right,rowH:r.height,scr:s.scrollWidth<=s.clientWidth+1,txt:s.innerText}}).filter(Boolean)}""")
     shot(pg, 'createleave')
+    # 4) Approval card: note box shows its whole placeholder; the repeated 'one-way leave' line is gone from mentor cards
+    pg.reload(wait_until='networkidle'); time.sleep(3)
+    pg.locator('#td-approvals').scroll_into_view_if_needed(); scale(pg); time.sleep(.4)
+    out['cards'] = pg.locator('#td-approvals textarea').count()
+    out['approval_text'] = pg.locator('#td-approvals').inner_text()
+    out['note_fit'] = pg.evaluate(FIT, '#td-approvals textarea')
+    # lines the placeholder needs (word-wrap safety +4%) x line height + padding must fit the box height
+    out['note_need'] = pg.evaluate("()=>{const e=document.querySelector('#td-approvals textarea');const cs=getComputedStyle(e);const c=document.createElement('canvas').getContext('2d');c.font=cs.fontWeight+' '+cs.fontSize+' '+cs.fontFamily;const inner=e.clientWidth-parseFloat(cs.paddingLeft)-parseFloat(cs.paddingRight);const lh=parseFloat(cs.lineHeight)||parseFloat(cs.fontSize)*1.2;const lines=Math.ceil(c.measureText(e.placeholder).width*1.04/inner);return [lines*lh+parseFloat(cs.paddingTop)+parseFloat(cs.paddingBottom), e.clientHeight, lines]}")
+    shot(pg, 'approvals')
     out['side_scroll'] = pg.evaluate("()=>document.documentElement.scrollWidth>window.innerWidth+1")
     out['errors'] = errs[:6]
     ctx.close()

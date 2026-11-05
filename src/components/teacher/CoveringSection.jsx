@@ -130,7 +130,7 @@ export default function CoveringSection({
                         {leave.student_name} <span className="font-mono text-[11px] text-slate-500">({leave.student_roll})</span>
                       </p>
                       <p className="text-xs text-slate-700 mt-1 leading-relaxed"><strong>Reason:</strong> {leave.reason}</p>
-                      <p className="text-[11px] text-slate-500 mt-0.5">Requested {timeHM(leave.created_at)} • one-way leave — back next working day</p>
+                      <p className="text-[11px] text-slate-500 mt-0.5">Requested {timeHM(leave.created_at)}</p>
                     </div>
                     <input
                       value={noteDraft}
