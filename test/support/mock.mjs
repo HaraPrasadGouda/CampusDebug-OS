@@ -3,7 +3,8 @@ import http from 'node:http';
 import fs from 'node:fs';
 const profiles = JSON.parse(fs.readFileSync(process.env.PROFILES_FILE || new URL('./profiles.json', import.meta.url)));
 const SEED = process.env.SEED_FILE ? JSON.parse(fs.readFileSync(process.env.SEED_FILE,'utf8')) : {};
-const tables = { profiles, gate_passes: [], leave_requests: SEED.leave_requests||[], pass_scans: [], meal_rsvps: [], tickets: [], master_incidents: [], document_requests: [] };
+const tables = { profiles, gate_passes: [], leave_requests: [], pass_scans: [], meal_rsvps: [], tickets: [], master_incidents: [], document_requests: [] };
+for (const [k, v] of Object.entries(SEED)) if (Array.isArray(v) && k !== 'profiles') tables[k] = v;   // any table may be seeded (warden heavy-data checks seed tickets, technicians, scans)
 let seq = 1;
 const authUsers = [];
 function splitTop(s){ const out=[]; let d=0, cur=''; for (const ch of s){ if(ch==='(')d++; if(ch===')')d--; if(ch===','&&d===0){out.push(cur);cur='';} else cur+=ch;} if(cur)out.push(cur); return out; }
