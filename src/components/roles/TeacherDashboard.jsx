@@ -520,7 +520,7 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
                       ? `${profName(myState.declinedBy.name)} can't cover — pick another teacher`
                       : 'On Leave Today · no colleague present'}
               </p>
-              <p className="text-[11px] text-slate-500 leading-snug mt-0.5">
+              <p className={`text-[11px] text-slate-500 leading-snug mt-0.5 ${!onLeave ? 'hidden sm:block' : ''}`}>
                 {!onLeave
                   ? (coverOpen
                     ? 'Taking a day off? Pick a present colleague to approve your students\' leaves. Your classes go on the cover board.'
@@ -948,11 +948,13 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
 
   const classesTab = (
     <div className="flex flex-col gap-4 xl:grid xl:grid-cols-12 xl:items-start" data-testid="tab-classes">
-      <div className="flex flex-col gap-4 xl:col-span-6">
+      <div className="order-1 xl:col-span-5">
         <AttendanceList rows={dayRows} loaded={!!ttMine} markedRec={markedRec} markOpen={markOpen} openLabel={openLabel} onMark={setMarkSlot} nowMin={nowM} />
+      </div>
+      <div className="order-2 xl:order-3 xl:col-span-12">
         <CoverBoardSection {...coverBoardProps} />
       </div>
-      <div className="xl:col-span-6">
+      <div className="order-3 xl:order-2 xl:col-span-7">
         <TeacherInsights only={['plan', 'analytics']} title="Lesson plan & analytics" request={insightsReq} />
       </div>
     </div>
