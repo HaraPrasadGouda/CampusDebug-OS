@@ -28,15 +28,16 @@ import {
   Compass,
   FileText,
   MessageSquare,
-  Layers,
   ChevronDown,
   ChevronUp,
   Lock
 } from 'lucide-react';
 import AiCategoryChip from '../AiCategoryChip';
+import { StudentTicketActions, StageTicks, hasLifecycle, ticketCode } from '../TicketLifecycle';
 import { getTodayMenuKey, getTodayMenu, getTomorrowMenu, isFeastDay, getTodayDayLabel, getMealStatus, fmtDuration, MEAL_ORDER } from '../../data/messMenu';
 import { isLeaveWindowOpen } from '../../utils/leaveWindow';
 import { leaveNumber } from '../../utils/passNumber';
+import { canAutoRefresh } from '../../utils/liveUpdates';
 
 export default function StudentDashboard({
   activities = [],
@@ -50,6 +51,52 @@ export default function StudentDashboard({
 }) {
   const [activeFeedTab, setActiveFeedTab] = useState('all'); // 'all' | 'issues' | 'passes' | 'mess'
   const [ticketDetail, setTicketDetail] = useState(null); // read-only complaint detail card
+
+  // Complaint lifecycle actions (Resolved / Not fixed) on the student's own
+  // complaints. The server answers with the updated ticket; it is shown at
+  // once and the feed reloads from the server right after.
+  const [ticketPatch, setTicketPatch] = useState({});   // { id: updated ticket }
+  const [ticketBusy, setTicketBusy] = useState(null);   // id being saved
+  const [ticketMsg, setTicketMsg] = useState({});       // { id: { ok, text } }
+  useEffect(() => { setTicketPatch({}); }, [activities]);
+  const withPatch = (act) => (ticketPatch[act.id] ? { ...act, ...ticketPatch[act.id] } : act);
+  const ticketAction = async (act, kind) => {
+    setTicketBusy(act.id);
+    setTicketMsg((m) => ({ ...m, [act.id]: null }));
+    try {
+      const res = await fetch(`/api/tickets/${act.id}/${kind === 'resolve' ? 'resolve' : 'not-fixed'}`, { method: 'POST' });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok && d?.success) {
+        const patch = d.ticket || (kind === 'resolve'
+          ? { lifecycleStage: 'RESOLVED', status: 'RESOLVED', studentResolvedAt: d.studentResolvedAt || new Date().toISOString() }
+          : { lifecycleStage: 'REPORTED', status: d.status || 'ASSIGNED', studentResolvedAt: null, notFixedCount: d.notFixedCount });
+        setTicketPatch((p) => ({ ...p, [act.id]: patch }));
+        setTicketDetail((td) => (td && td.id === act.id ? { ...td, ...patch } : td));
+        setTicketMsg((m) => ({ ...m, [act.id]: { ok: true, text: kind === 'resolve' ? 'Marked resolved — the warden can close it now.' : 'Sent back to the technician.' } }));
+        window.dispatchEvent(new CustomEvent('campus_tickets_updated', { detail: {} }));
+      } else {
+        setTicketMsg((m) => ({ ...m, [act.id]: { ok: false, text: d?.error || 'Could not save — try again.' } }));
+      }
+    } catch {
+      setTicketMsg((m) => ({ ...m, [act.id]: { ok: false, text: 'No connection — try again when you are online.' } }));
+    } finally {
+      setTicketBusy(null);
+    }
+  };
+  const renderTicketLifecycle = (t, compact = false) => (
+    <>
+      <StudentTicketActions
+        ticket={t}
+        busy={ticketBusy === t.id}
+        compact={compact}
+        onResolve={(x) => ticketAction(x, 'resolve')}
+        onNotFixed={(x) => ticketAction(x, 'not-fixed')}
+      />
+      {ticketMsg[t.id] && (
+        <p className={`mt-2 text-[11px] font-bold ${ticketMsg[t.id].ok ? 'text-emerald-700' : 'text-rose-700'}`}>{ticketMsg[t.id].text}</p>
+      )}
+    </>
+  );
 
   // --- TODAY'S NOTICE: a dated notice (showOn) pinned by the admin surfaces
   // as a hero card ONLY on its target date — the antidote to notices
@@ -86,7 +133,7 @@ export default function StudentDashboard({
       } catch { /* offline: the card simply doesn't render */ }
     };
     loadNotice();
-    const iv = setInterval(loadNotice, 120000);
+    const iv = setInterval(() => { if (canAutoRefresh()) loadNotice(); }, 120000); // Settings → Live updates
     return () => { alive = false; clearInterval(iv); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -205,7 +252,7 @@ export default function StudentDashboard({
     };
     if (st === 'REJECTED' || st === 'EXPIRED') return {
       badge: st, badgeCls: 'bg-amber-100 text-amber-800 border-amber-300', icon: 'dot', dotCls: 'bg-amber-600',
-      footer: st === 'REJECTED' ? 'Rejected — tap to request again' : 'Expired at 16:30 Gate Close — tap to request again',
+      footer: st === 'REJECTED' ? 'Rejected — tap to request again' : 'Expired — tap to request again',
       footerDot: 'bg-amber-500', action: 'Request →'
     };
     return {
@@ -432,12 +479,12 @@ export default function StudentDashboard({
 
       {/* Card 1: Attendance */}
       <div className="order-4 col-span-1 relative min-w-0 rounded-2xl border border-[#bbf7d0] bg-gradient-to-b from-[#f0fdf4] to-white shadow-[0_1px_2px_rgba(15,23,42,0.04)] p-3.5 lg:p-4 flex flex-col lg:hover:shadow-lg lg:hover:-translate-y-0.5 transition-all duration-300">
-        {/* Phone: the whole tile opens today's timetable (same action as the
-            "View Today's Timetable" link, which is shown on desktop) */}
+        {/* Phone: the whole tile opens the student's attendance (classes
+            marked present/absent). Desktop keeps its "View Today's Timetable" link. */}
         <button
           type="button"
           aria-label="Attendance"
-          onClick={() => onOpenModal('timetable')}
+          onClick={() => onOpenModal('attendance')}
           className="lg:hidden absolute inset-0 z-[1] rounded-2xl cursor-pointer active:bg-emerald-900/[0.03]"
         />
         <div className="flex items-center gap-2.5">
@@ -762,7 +809,7 @@ export default function StudentDashboard({
               )}
               <span className="inline-flex items-center gap-1 text-[11px] lg:text-xs font-semibold text-[#78350f] bg-white/60 lg:bg-transparent border border-[#fde68a] lg:border-0 rounded-full px-2.5 lg:px-0 py-0.5">
                 <MapPin className="w-3.5 h-3.5 text-amber-700 shrink-0" />
-                <span>Mess Hall B</span>
+                <span>Campus Mess</span>
               </span>
             </div>
           </div>
@@ -938,7 +985,9 @@ export default function StudentDashboard({
               Nothing here yet — gate passes, complaints and feedback you submit will appear in this feed.
             </div>
           ) : (
-            sortedActivities.map((act) => {
+            sortedActivities.map((rawAct) => {
+              const act = withPatch(rawAct);
+              const showLifecycle = act.type === 'ticket' && hasLifecycle(act);
               const isPass = act.type === 'gate_pass';
               const isElectrical = act.category === 'Electrical';
               const isPlumbing = act.category === 'Plumbing';
@@ -966,9 +1015,9 @@ export default function StudentDashboard({
                       onOpenModal('complaint');
                     }
                   }}
-                  className="p-[11px] lg:px-3 rounded-xl bg-white border border-[#edf1f5] hover:border-slate-200 hover:shadow-md transition-all duration-200 cursor-pointer flex items-start lg:items-center justify-between gap-2.5 lg:gap-3 group"
+                  className={`p-[11px] lg:px-3 rounded-xl bg-white border border-[#edf1f5] hover:border-slate-200 hover:shadow-md transition-all duration-200 cursor-pointer flex items-start lg:items-center justify-between gap-2.5 lg:gap-3 group ${showLifecycle ? 'flex-wrap' : ''}`}
                 >
-                  <div className="flex items-start lg:items-center gap-2.5 lg:gap-3 min-w-0">
+                  <div className={`flex items-start lg:items-center gap-2.5 lg:gap-3 min-w-0 ${showLifecycle ? 'flex-1 basis-0' : ''}`}>
                     {/* Icon Badge */}
                     <div className={`w-[30px] h-[30px] lg:w-[34px] lg:h-[34px] rounded-[9px] lg:rounded-[10px] flex items-center justify-center shrink-0 ${
                       isPass 
@@ -992,7 +1041,7 @@ export default function StudentDashboard({
                     {/* Title & Info */}
                     <div className="min-w-0">
                       <p className="text-[13px] lg:text-[13.5px] font-semibold text-slate-800 leading-snug lg:truncate group-hover:text-blue-600 transition-colors">
-                        <span className="font-mono text-slate-900 font-bold mr-1.5 inline-block max-w-[118px] lg:max-w-none truncate align-bottom">{act.id}</span>
+                        <span className="font-mono text-slate-900 font-bold mr-1.5 inline-block max-w-[118px] lg:max-w-none truncate align-bottom">{showLifecycle ? ticketCode(act) : act.id}</span>
                         <span>• {act.title}</span>
                       </p>
 
@@ -1037,14 +1086,9 @@ export default function StudentDashboard({
                                             : 'Pending Admin Verification')
                                     : ((act.statusLabel || act.status || 'Reported').replace(/_/g, ' '))}
                                 </span>
-                                {act.assignedTo && ['ASSIGNED', 'IN_PROGRESS'].includes(String(act.status).toUpperCase()) && (
+                                {act.assignedTo && !showLifecycle && ['ASSIGNED', 'IN_PROGRESS'].includes(String(act.status).toUpperCase()) && (
                                   <span className="text-[10px] text-sky-700 flex items-center gap-0.5">
                                     <Wrench className="w-3 h-3" /> {act.assignedTo}
-                                  </span>
-                                )}
-                                {act.masterJoined && (
-                                  <span className="text-[10px] text-purple-700 flex items-center gap-0.5">
-                                    <Layers className="w-3 h-3" /> Clustered — one fix serves all matches
                                   </span>
                                 )}
                                 {!isDoc && <AiCategoryChip ticket={act} />}
@@ -1063,6 +1107,13 @@ export default function StudentDashboard({
 
                       {/* Right Chevron */}
                       <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-blue-600 group-hover:translate-x-0.5 transition-all shrink-0 self-center" />
+
+                      {/* Complaint lifecycle: progress + Resolved / Not fixed (own complaint) */}
+                      {showLifecycle && (
+                        <div className="basis-full w-full border-t border-slate-100 pt-2.5 mt-0.5 cursor-default" onClick={(e) => e.stopPropagation()}>
+                          {renderTicketLifecycle(act, true)}
+                        </div>
+                      )}
                     </div>
                   );
                 })
@@ -1085,7 +1136,7 @@ export default function StudentDashboard({
             <div className="flex items-start justify-between p-5 border-b border-slate-100">
               <div className="min-w-0 pr-3">
                 <h3 className="text-lg font-extrabold text-slate-900 truncate">{ticketDetail.title}</h3>
-                <p className="text-[10px] font-mono text-slate-400 truncate">{ticketDetail.id}</p>
+                <p className="text-[10px] font-mono text-slate-400 truncate">{hasLifecycle(ticketDetail) ? `${ticketCode(ticketDetail)} · ${ticketDetail.id}` : ticketDetail.id}</p>
               </div>
               <button
                 type="button"
@@ -1155,32 +1206,19 @@ export default function StudentDashboard({
                 </span>
               </div>
 
-              {/* Lifecycle progress bar — exactly where this request sits */}
+              {/* Lifecycle progress bar — exactly where this request sits.
+                  Server complaints use the Reported → Resolved → Closed bar
+                  (with Resolved / Not fixed) further down. */}
+              {!(!isDocDetail && hasLifecycle(ticketDetail)) && (
               <div className="pt-1">
-                <div className="flex gap-1.5">
-                  {Array.from({ length: stageCount }, (_, i) => {
-                    const done = i < stage;
-                    return (
-                      <div key={i} className={`flex-1 h-1.5 rounded-full transition-colors ${
-                        docRejected && !done ? 'bg-rose-400'
-                          : done ? 'bg-emerald-500' : 'bg-slate-200'
-                      }`} />
-                    );
-                  })}
-                </div>
-                <div className="flex justify-between mt-1">
-                  {stageLabels.map((label, i) => (
-                    <span key={label} className={`text-[9px] font-bold ${i < stage && !docRejected ? 'text-emerald-700' : 'text-slate-400'}`}>
-                      {label}
-                    </span>
-                  ))}
-                </div>
+                <StageTicks labels={stageLabels} stage={stage} rejected={docRejected} />
               </div>
+              )}
 
               <div className="flex items-center gap-2 text-slate-700 font-bold">
                 <MapPin className="w-4 h-4 text-amber-600 shrink-0" /> {ticketDetail.location || 'Hostel'}
               </div>
-              {ticketDetail.assignedTo && (
+              {ticketDetail.assignedTo && !hasLifecycle(ticketDetail) && (
                 <div className="flex items-center gap-2 text-slate-700 font-bold">
                   <Wrench className="w-4 h-4 text-sky-600 shrink-0" /> {ticketDetail.assignedTo}
                 </div>
@@ -1200,12 +1238,6 @@ export default function StudentDashboard({
                   "{ticketDetail.description || ticketDetail.raw_text || '—'}"
                 </p>
               </div>
-              {ticketDetail.masterJoined && (
-                <p className="text-[11px] text-purple-700 flex items-start gap-1.5 font-bold">
-                  <Layers className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                  Clustered into a Master Incident — one technician fix resolves all matching complaints on this floor.
-                </p>
-              )}
               {isDocDetail && ticketDetail.remarks && (
                 <p className="text-[11px] text-slate-500 px-1">
                   <b className="text-slate-700">Office remarks:</b> {ticketDetail.remarks}
@@ -1214,7 +1246,12 @@ export default function StudentDashboard({
 
               {/* Accountability loop: the student confirms the technician's job
                   is done; the warden can only AFTER that verify-close it. */}
-              {!isDocDetail && detailStatus !== 'CLOSED' && !detailStudentConfirmed && (
+              {!isDocDetail && hasLifecycle(ticketDetail) && (
+                <div className="rounded-xl border border-slate-200 p-3">
+                  {renderTicketLifecycle(ticketDetail)}
+                </div>
+              )}
+              {!isDocDetail && !hasLifecycle(ticketDetail) && detailStatus !== 'CLOSED' && !detailStudentConfirmed && (
                 <button
                   type="button"
                   onClick={confirmTicket}
@@ -1224,12 +1261,12 @@ export default function StudentDashboard({
                   <span>Technician finished — Confirm Job Done</span>
                 </button>
               )}
-              {!isDocDetail && detailStudentConfirmed && detailStatus === 'CLOSED' && (
+              {!isDocDetail && !hasLifecycle(ticketDetail) && detailStudentConfirmed && detailStatus === 'CLOSED' && (
                 <p className="text-[11px] text-emerald-700 font-bold px-1">
                   ✔ Verified & closed by warden — complaint fully resolved.
                 </p>
               )}
-              {!isDocDetail && detailStudentConfirmed && detailStatus !== 'CLOSED' && (
+              {!isDocDetail && !hasLifecycle(ticketDetail) && detailStudentConfirmed && detailStatus !== 'CLOSED' && (
                 <p className="text-[11px] text-slate-500 px-1">
                   You confirmed the fix on {relativeTime(ticketDetail)} — the warden verifies and closes it from here.
                 </p>

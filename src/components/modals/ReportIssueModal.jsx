@@ -4,7 +4,6 @@ import {
   X, 
   MapPin, 
   AlertTriangle, 
-  Layers, 
   WifiOff, 
   CheckCircle2, 
   Zap, 
@@ -30,28 +29,34 @@ const CATEGORIES = [
   { id: 'Cleanliness', label: 'Washroom / Hygiene', icon: Sparkles, color: 'text-rose-600' }
 ];
 
-// Prefill location from the logged-in student's session (local action while offline safe)
-const readStudentLocation = () => {
-  try {
-    const s = JSON.parse(localStorage.getItem('campusdebug_session') || 'null');
-    if (s?.role === 'Student' && s.room && s.block) {
-      return { block: s.block.startsWith('Hostel') ? s.block : `Hostel ${s.block}`, floor: s.floor || '3rd Floor', room: s.room };
-    }
-  } catch { /* session unavailable */ }
-  return { block: 'Hostel Block B', floor: '3rd Floor', room: '304' }; // sensible default
+// Who + where come from the signed-in student's real profile (the same
+// record the server uses). These fields are shown read-only: the server
+// ignores any name/roll/block/room sent in the request and reads them from
+// the profile, so a complaint can only ever be filed for your own room.
+const NOT_SET = 'Not set in profile';
+const readStudentDetails = () => {
+  let p = null;
+  try { p = getStoredProfile(); } catch { /* profile unavailable */ }
+  const val = (...xs) => {
+    const v = xs.find(x => x !== undefined && x !== null && String(x).trim() !== '');
+    return v === undefined ? '' : String(v).trim();
+  };
+  return {
+    name: val(p?.fullName, p?.full_name, p?.name),
+    roll: val(p?.rollNumber, p?.roll_number),
+    block: val(p?.hostelBlock, p?.hostel_block),
+    room: val(p?.roomNumber, p?.room_number)
+  };
 };
 
 export default function ReportIssueModal({ isOpen, onClose, onTicketCreated }) {
-  const [formData, setFormData] = useState(() => {
-    const loc = readStudentLocation();
-    return {
-      category: 'Electrical',
-      block: loc.block,
-      floor: loc.floor,
-      room: loc.room,
-      description: ''
-    };
-  });
+  const [formData, setFormData] = useState({ category: 'Electrical', description: '' });
+  const [submitError, setSubmitError] = useState(null);
+  // Re-read on every render so a fresh login always shows the current profile
+  const me = readStudentDetails();
+  const locationLabel = me.block
+    ? [`Hostel ${me.block.replace(/^Hostel\s*/i, '')}`, me.room ? `Room ${me.room}` : ''].filter(Boolean).join(', ')
+    : '';
 
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -94,8 +99,9 @@ export default function ReportIssueModal({ isOpen, onClose, onTicketCreated }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!formData.description.trim()) return;
+    if (!formData.description.trim() || !me.block) return;
 
+    setSubmitError(null);
     setIsSubmitting(true);
     const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
 
@@ -110,13 +116,17 @@ export default function ReportIssueModal({ isOpen, onClose, onTicketCreated }) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               complaintText: formData.description,
-              hostelBlock: formData.block,
-              floor: formData.floor,
-              room: formData.room,
               category: formData.category
             })
           });
 
+          if (!res.ok && res.status >= 400 && res.status < 500) {
+            // The server refused it (not a network problem) — say why and
+            // keep the form open instead of queuing it as "offline".
+            const err = await res.json().catch(() => ({}));
+            setSubmitError(err.error || 'This complaint could not be filed.');
+            return;
+          }
           if (res.ok) {
             serverResult = await res.json();
             if (serverResult && serverResult.ticket) {
@@ -129,11 +139,11 @@ export default function ReportIssueModal({ isOpen, onClose, onTicketCreated }) {
                 type: 'ticket',
                 title: ai.title || formData.description,
                 category: ai.category || formData.category,
-                location: ai.location || `${formData.block}, ${formData.floor}, Room ${formData.room}`,
+                location: ai.location || locationLabel,
                 urgency: aiUrgency,
                 description: formData.description,
                 status: ai.status || 'ASSIGNED',
-                statusLabel: ai.statusLabel || `Routed to ${ai.assignedTo || 'Maintenance'}`,
+                statusLabel: ai.statusLabel || 'Reported',
                 assignedTo: ai.assignedTo || serverResult.assignedTechnician?.name,
                 assignedTechId: ai.assignedTechId || serverResult.assignedTechnician?.id,
                 masterId: ai.masterId || serverResult.masterId || undefined,
@@ -144,7 +154,17 @@ export default function ReportIssueModal({ isOpen, onClose, onTicketCreated }) {
                 sla: ai.sla || (ai.sla_hours ? `SLA: ${ai.sla_hours}h Target` : 'SLA: 4h Standard'),
                 sla_hours: ai.sla_hours || 4,
                 createdAt: ai.createdAt || new Date().toISOString(),
-                time: 'Just now'
+                time: 'Just now',
+                // Lifecycle (Reported → Resolved → Closed) — the card shows
+                // the progress bar + Resolved / Not fixed right away.
+                shortCode: ai.shortCode || undefined,
+                lifecycleStage: ai.lifecycleStage || undefined,
+                reportedAt: ai.reportedAt || undefined,
+                studentResolvedAt: null,
+                closedAt: null,
+                notFixedCount: 0,
+                technician: ai.technician ? { id: ai.technician.id, name: ai.technician.name, role: ai.technician.role } : null,
+                student_id: ai.student_id || undefined
               };
 
               if (typeof window !== 'undefined') {
@@ -171,9 +191,9 @@ export default function ReportIssueModal({ isOpen, onClose, onTicketCreated }) {
         createdTicket = {
           id: ticketId,
           type: 'ticket',
-          title: `${formData.category}: Room #${formData.room} - ${formData.description}`,
+          title: `${formData.category}: ${me.room ? `Room #${me.room} - ` : ''}${formData.description}`,
           category: formData.category,
-          location: `${formData.block}, ${formData.floor}, Room ${formData.room}`,
+          location: locationLabel,
           urgency: fallbackUrgency,
           description: formData.description,
           status: 'PENDING',
@@ -188,9 +208,6 @@ export default function ReportIssueModal({ isOpen, onClose, onTicketCreated }) {
         // /api/parse-ticket (full AI classification + routing when back online)
         await queueOfflineAction('CREATE_TICKET', {
           complaintText: formData.description,
-          hostelBlock: formData.block,
-          floor: formData.floor,
-          room: formData.room,
           category: formData.category,
           urgency: fallbackUrgency,
           ticket: createdTicket
@@ -208,14 +225,8 @@ export default function ReportIssueModal({ isOpen, onClose, onTicketCreated }) {
       }
 
       onClose();
-      const loc = readStudentLocation();
-      setFormData({
-        category: 'Electrical',
-        block: loc.block,
-        floor: loc.floor,
-        room: loc.room,
-        description: ''
-      });
+      setSubmitError(null);
+      setFormData({ category: 'Electrical', description: '' });
     } catch (err) {
       console.error('Failed to submit ticket:', err);
     } finally {
@@ -280,46 +291,45 @@ export default function ReportIssueModal({ isOpen, onClose, onTicketCreated }) {
             </div>
           </div>
 
-          {/* Location Details */}
-          <div className="grid grid-cols-3 gap-2.5">
-            <div>
-              <label className="block text-slate-700 font-medium mb-1">Hostel Block</label>
-              <select
-                value={formData.block}
-                onChange={(e) => setFormData({ ...formData, block: e.target.value })}
-                className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2 text-slate-800 focus:outline-none focus:border-emerald-600"
-              >
-                <option value="Hostel Block A">Block A</option>
-                <option value="Hostel Block B">Block B</option>
-                <option value="Hostel Block C">Block C</option>
-                <option value="Girls Hostel 1">Girls Hostel 1</option>
-                <option value="Girls Hostel 2">Girls Hostel 2</option>
-              </select>
+          {/* Your details — locked, straight from your college profile */}
+          <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-3">
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <span className="flex items-center gap-1.5 text-slate-700 font-semibold min-w-0">
+                <MapPin className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                <span className="truncate">Your details</span>
+              </span>
+              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-600 bg-white border border-slate-200 rounded-full px-2 py-0.5 shrink-0">
+                <Lock className="w-3 h-3" />
+                Locked
+              </span>
             </div>
-            <div>
-              <label className="block text-slate-700 font-medium mb-1">Floor</label>
-              <select
-                value={formData.floor}
-                onChange={(e) => setFormData({ ...formData, floor: e.target.value })}
-                className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2 text-slate-800 focus:outline-none focus:border-emerald-600"
-              >
-                <option value="Ground Floor">Ground</option>
-                <option value="1st Floor">1st Floor</option>
-                <option value="2nd Floor">2nd Floor</option>
-                <option value="3rd Floor">3rd Floor</option>
-                <option value="4th Floor">4th Floor</option>
-              </select>
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                ['Student Name', me.name, 'col-span-2 sm:col-span-1'],
+                ['Roll No.', me.roll, 'col-span-2 sm:col-span-1'],
+                ['Hostel Block', me.block, ''],
+                ['Room No.', me.room, ''],
+              ].map(([label, value, span]) => (
+                <div key={label} className={`min-w-0 ${span}`}>
+                  <label className="block text-slate-500 font-medium mb-1 text-[11px]">{label}</label>
+                  <div
+                    aria-readonly="true"
+                    title="From your college profile — can't be edited here"
+                    className="flex items-center gap-1.5 w-full bg-slate-100 border border-slate-200 rounded-lg px-2.5 py-2 cursor-not-allowed select-text"
+                  >
+                    <Lock className="w-3 h-3 text-slate-400 shrink-0" />
+                    <span className={`min-w-0 break-words ${value ? 'text-slate-800 font-semibold' : 'text-slate-400 italic'} ${label === 'Roll No.' || label === 'Room No.' ? 'font-mono' : ''}`}>
+                      {value || NOT_SET}
+                    </span>
+                  </div>
+                </div>
+              ))}
             </div>
-            <div>
-              <label className="block text-slate-700 font-medium mb-1">Room #</label>
-              <input
-                type="text"
-                required
-                value={formData.room}
-                onChange={(e) => setFormData({ ...formData, room: e.target.value })}
-                className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-2 text-slate-800 font-mono focus:outline-none focus:border-emerald-600"
-              />
-            </div>
+            <p className="text-[11px] text-slate-500 leading-snug mt-2">
+              {me.block
+                ? 'Filled from your college profile and can\'t be changed here. Wrong room? Ask your warden to update your profile.'
+                : 'Your hostel block isn\'t set in your profile yet, so a complaint can\'t be filed. Please ask your warden to update it.'}
+            </p>
           </div>
 
           {/* Description Textarea */}
@@ -339,13 +349,12 @@ export default function ReportIssueModal({ isOpen, onClose, onTicketCreated }) {
             </div>
           </div>
 
-          {/* Spatial Clustering Notice */}
-          <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-start space-x-2.5">
-            <Layers className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-            <p className="text-[11px] text-amber-900 leading-relaxed font-mono">
-              Spatial Deduplication Active: If roommates from Block B 3rd floor submit identical complaints, tickets collapse into 1 Master Ticket with multi-student confirmation.
-            </p>
-          </div>
+          {submitError && (
+            <div role="alert" className="p-3 bg-rose-50 border border-rose-200 rounded-lg flex items-start gap-2 text-[11px] text-rose-800 font-semibold">
+              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+              <span>{submitError}</span>
+            </div>
+          )}
 
           {/* Action Buttons */}
           <div className="flex items-center justify-end space-x-2 pt-2 border-t border-slate-100">
@@ -358,8 +367,8 @@ export default function ReportIssueModal({ isOpen, onClose, onTicketCreated }) {
             </button>
             <button 
               type="submit"
-              disabled={isSubmitting}
-              className="px-5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-medium flex items-center space-x-1.5 transition-all cursor-pointer shadow-sm"
+              disabled={isSubmitting || !me.block}
+              className="px-5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-medium flex items-center space-x-1.5 transition-all cursor-pointer shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isSubmitting ? (
                 <span>Logging Ticket...</span>

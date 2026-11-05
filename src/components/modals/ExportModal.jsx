@@ -76,10 +76,8 @@ export default function ExportModal({ isOpen, onClose, onNotification }) {
         `"${c.assignedTo || 'Unassigned'}"`
       ]);
 
-      if (rows.length === 0) {
-        rows.push(['MST-PLUMB-301', 'Plumbing', 'Low Water Pressure', 'Hostel Block B — 3rd Floor', '3', 'RESOLVED', 'Manoj Kumar']);
-        rows.push(['MST-ELEC-204', 'Electrical', 'Corridor MCB Trip', 'Hostel Block A — 2nd Floor', '8', 'IN_PROGRESS', 'Technician Team A']);
-      }
+      // No clusters → the file carries just the header row (no sample rows
+      // that look like real incidents).
 
       const csvString = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
       triggerDownload(csvString, `Maintenance_Master_Clusters_${new Date().toISOString().slice(0,10)}.csv`);
@@ -128,7 +126,7 @@ export default function ExportModal({ isOpen, onClose, onNotification }) {
                   Option A: Gate Pass Entry/Exit Audit Log
                 </span>
                 <span className="text-[10px] text-slate-500 font-mono block">
-                  Cryptographic HMAC pass verification logs
+                  Gate pass scan logs
                 </span>
               </div>
             </div>

@@ -568,10 +568,6 @@ export default function LoginScreen({ onLogin }) {
               © 2026 CampusDebug OS
             </div>
             <div className="flex items-center text-[12px] font-medium text-[#a0a6a3]">
-              <button type="button" onClick={() => openHelp(null)} className="min-h-[44px] px-2 hover:text-emerald-700 transition-colors cursor-pointer">Privacy</button>
-              <span className="text-[#c9cfcc]">·</span>
-              <button type="button" onClick={() => openHelp(null)} className="min-h-[44px] px-2 hover:text-emerald-700 transition-colors cursor-pointer">Terms</button>
-              <span className="text-[#c9cfcc]">·</span>
               <button type="button" onClick={() => openHelp(null)} className="min-h-[44px] min-w-[44px] pl-2 hover:text-emerald-700 transition-colors cursor-pointer">Help</button>
             </div>
           </div>

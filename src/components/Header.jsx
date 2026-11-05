@@ -22,6 +22,7 @@ import { getOutboxCount } from '../utils/db';
 import { getPendingSyncCount } from '../utils/syncEngine';
 import FacultyFinderDropdown from './FacultyFinderDropdown';
 import { isPageHidden, onPageActive } from '../utils/livePoll';
+import { canAutoRefresh } from '../utils/liveUpdates';
 
 const ROLES = [
   { id: 'Student', label: 'Student', title: 'Student Portal', icon: User, color: 'text-blue-600 bg-blue-50' },
@@ -117,7 +118,7 @@ export default function Header({
   useEffect(() => {
     fetchBellNotices();
     // Fix 2: no bell refresh while the tab is hidden; refresh on return.
-    const bellInterval = setInterval(() => { if (!isPageHidden()) fetchBellNotices(); }, 20000);
+    const bellInterval = setInterval(() => { if (canAutoRefresh()) fetchBellNotices(); }, 20000); // + Settings → Live updates
     const offBellActive = onPageActive(fetchBellNotices);
     return () => { clearInterval(bellInterval); offBellActive(); };
   }, []);
@@ -269,7 +270,7 @@ export default function Header({
                 ? 'Search feed… or find a teacher (try "priya")'
                 : currentRole === 'Warden'
                   ? 'Search tickets, passes, clusters, register…'
-                  : 'Search, actions, or ask AI...'}
+                  : 'Search or jump to…'}
               className="w-full pl-10 pr-4 py-2 bg-slate-100/60 hover:bg-slate-100 focus:bg-white text-xs sm:text-sm text-slate-800 placeholder-slate-400 rounded-full border border-transparent focus:border-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-500/10 transition-all duration-200"
             />
             {searchQuery && (

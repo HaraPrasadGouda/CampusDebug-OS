@@ -85,32 +85,23 @@ export default function NeedHelpModal({ open, onClose, onReportProblem, initialI
           ))}
         </div>
 
-        {/* Contact cards (demo placeholder contact channel for the hackathon build) */}
+        {/* Who to ask in person — real routes in the app, no placeholder
+            email/phone (none of those was a real support channel). */}
         <div className="px-5 pb-2">
-          <p className="text-[11px] font-mono uppercase tracking-wider text-slate-500 font-bold mb-2">Still stuck? Reach us</p>
+          <p className="text-[11px] font-mono uppercase tracking-wider text-slate-500 font-bold mb-2">Still stuck? Ask in person</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <a
-              href="mailto:support@campusdebug.in"
-              className="flex items-center gap-2.5 p-3 rounded-xl border border-slate-200 bg-slate-50/70 hover:border-emerald-300 hover:bg-emerald-50/50 transition-colors"
-            >
+            <div className="flex items-center gap-2.5 p-3 rounded-xl border border-slate-200 bg-slate-50/70">
               <Mail className="w-4 h-4 text-emerald-600 shrink-0" />
               <div className="min-w-0">
-                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Email support</p>
-                <p className="text-xs font-bold text-slate-800 truncate">support@campusdebug.in</p>
+                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Forgot password</p>
+                <p className="text-xs font-bold text-slate-800">The college admin office can reset it to your default password</p>
               </div>
-            </a>
-            {/* Placeholder only — the old number here was a real person's
-                number, so it is masked and deliberately NOT a tel: link. */}
-            <div
-              aria-disabled="true"
-              title="Demo placeholder — not a real number"
-              className="flex items-center gap-2.5 p-3 rounded-xl border border-slate-200 bg-slate-50/70 cursor-default select-none"
-            >
-              <Phone className="w-4 h-4 text-slate-400 shrink-0" />
+            </div>
+            <div className="flex items-center gap-2.5 p-3 rounded-xl border border-slate-200 bg-slate-50/70">
+              <Phone className="w-4 h-4 text-emerald-600 shrink-0" />
               <div className="min-w-0">
-                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">College helpdesk</p>
-                <p className="text-xs font-bold text-slate-800 truncate">+91 XXXXX XXXXX</p>
-                <p className="text-[10px] text-slate-400">Demo placeholder</p>
+                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Pass or leave help</p>
+                <p className="text-xs font-bold text-slate-800">Hostellers: your hostel warden · Day scholars: your mentor</p>
               </div>
             </div>
           </div>

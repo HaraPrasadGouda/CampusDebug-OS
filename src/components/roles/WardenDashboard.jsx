@@ -18,15 +18,18 @@ import {
   TrendingUp,
   RefreshCw,
   UserCheck,
-  ClipboardList
+  ClipboardList,
+  Phone
 } from 'lucide-react';
 import AiCategoryChip from '../AiCategoryChip';
+import { WardenTicketLifecycle, hasLifecycle, ticketCode } from '../TicketLifecycle';
 import { generateSignedPassToken } from '../../utils/crypto';
 import { getAllLocal, saveLocal, queueOfflineAction } from '../../utils/db';
 import { getAccessToken } from '../../utils/authClient';
 import { notifyGatePassApproved } from '../../utils/notifications';
 import WardenCreatePassModal from '../modals/WardenCreatePassModal';
 import { isPageHidden, onPageActive, POLL_ACTIVE_MS, POLL_IDLE_MS } from '../../utils/livePoll';
+import { getLiveUpdates } from '../../utils/liveUpdates';
 
 // NO seeded demo data — the warden queue only shows REAL passes/tickets/clusters
 // created by actual student activity (IndexedDB + Supabase via /api/dashboard-data).
@@ -58,7 +61,11 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
   );
   const [allTickets, setAllTickets] = useState([]);
   const [activeTab, setActiveTab] = useState('passes'); // 'tickets' | 'clusters' | 'passes' | 'sla' | 'register'
-  const [technicianRoster, setTechnicianRoster] = useState([]);
+  const [technicianRoster, setTechnicianRoster] = useState([]);   // active technicians (reassign dropdown)
+  const [technicians, setTechnicians] = useState([]);             // Technicians panel (DB rows + workload)
+  const [techError, setTechError] = useState(null);               // "Technician list unavailable"
+  const [techLoaded, setTechLoaded] = useState(false);
+  const [closingId, setClosingId] = useState(null);
   const [registerRows, setRegisterRows] = useState([]);
   const [registerOk, setRegisterOk] = useState(false);
   const [showCreatePassModal, setShowCreatePassModal] = useState(false);
@@ -107,12 +114,15 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
           if (data.gatePasses && data.gatePasses.length > 0) {
             serverPasses = data.gatePasses;
           }
-          if (data.technicianRoster && data.technicianRoster.length > 0) {
-            setTechnicianRoster(data.technicianRoster);
-          }
+          // Technicians come ONLY from the database — no built-in list.
+          setTechnicianRoster(Array.isArray(data.technicianRoster) ? data.technicianRoster : []);
+          setTechnicians(Array.isArray(data.technicians) ? data.technicians : []);
+          setTechError(data.techniciansError || (Array.isArray(data.technicians) ? null : 'Technician list unavailable'));
+          setTechLoaded(true);
           if (data.tickets && data.tickets.length > 0) {
             setAllTickets(prev => {
-              const combined = [...data.tickets, ...prev];
+              // server rows last so a fresh lifecycle state wins over an older copy
+              const combined = [...prev, ...data.tickets];
               const map = new Map();
               combined.forEach(t => map.set(t.id, t));
               return Array.from(map.values()).sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
@@ -186,7 +196,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
       refreshWardenData();
     };
     const pollInterval = setInterval(() => {
-      if (isPageHidden()) return;
+      if (isPageHidden() || !getLiveUpdates()) return; // Settings → Live updates
       const every = pendingCountRef.current > 0 ? POLL_ACTIVE_MS : POLL_IDLE_MS;
       if (Date.now() - lastPollAt >= every) pollNow();
     }, 3000);
@@ -354,7 +364,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
           detail: { masterClusters: data.masterClusters || clusters }
         }));
 
-        triggerToast(`Master Incident ${masterId} marked as RESOLVED. ${data.resolvedTickets || 0} student tickets auto-resolved. Notifications dispatched!`);
+        triggerToast(data.message || `Master Incident ${masterId} marked resolved. Each student confirms their own complaint before you close it.`);
       } else {
         await queueOfflineAction('TECHNICIAN_ACTION', { masterId, action: 'RESOLVE' });
         triggerToast(`Master Incident ${masterId} resolution queued (offline mode).`, 'warning');
@@ -386,7 +396,9 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
           if (masterId) {
             setClusters(clusters.map(c => (c.masterId === masterId || c.id === masterId) ? { ...c, assignedTo: tech.name } : c));
           } else {
-            setAllTickets(prev => prev.map(t => String(t.id) === String(ticketId) ? { ...t, assignedTo: tech.name } : t));
+            setAllTickets(prev => prev.map(t => String(t.id) === String(ticketId)
+              ? { ...t, assignedTo: tech.name, assignedTechId: tech.id, technician: tech, assignedBy: data.assignedBy || 'Warden', assignedAt: new Date().toISOString(), smsStatus: data.smsStatus || t.smsStatus, smsKind: 'reassign' }
+              : t));
           }
           triggerToast(data.message || `Reassigned to ${tech.name}.`);
           refreshWardenData();
@@ -400,29 +412,33 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
     triggerToast('Reassignment buffered offline — will sync.', 'warning');
   };
 
-  // Warden supervisor close: only available after the STUDENT confirmed the
-  // fix ("job done"). Server physically refuses to close unconfirmed tickets.
+  // Warden close: the button only exists once the STUDENT marked the
+  // complaint Resolved; the server refuses (403) otherwise.
   const handleCloseTicket = async (target) => {
     const isOnline = typeof navigator === 'undefined' ? true : navigator.onLine;
-    if (isOnline) {
-      try {
-        const res = await fetch(`/api/tickets/${target.id}/close`, { method: 'POST' });
-        const data = await res.json().catch(() => ({}));
-        if (res.ok && data?.success) {
-          setAllTickets(prev => prev.map(t => String(t.id) === String(target.id)
-            ? { ...t, status: 'CLOSED', statusLabel: 'Closed — student confirmed, warden verified', studentConfirmed: true }
-            : t));
-          triggerToast(`Ticket closed after the student's "job done" confirmation.`);
-          refreshWardenData();
-          return;
-        }
-        triggerToast(data?.error || 'Close refused — the student has not confirmed yet.', 'warning');
-        return;
-      } catch (err) {
-        console.warn('Close failed:', err.message);
-      }
+    if (!isOnline) {
+      triggerToast('Close needs connectivity — the Resolved check lives on the server.', 'warning');
+      return;
     }
-    triggerToast('Close needs connectivity — the confirmation gate lives on the server.', 'warning');
+    setClosingId(target.id);
+    try {
+      const res = await fetch(`/api/tickets/${target.id}/close`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data?.success) {
+        setAllTickets(prev => prev.map(t => String(t.id) === String(target.id)
+          ? { ...t, ...(data.ticket || { status: 'CLOSED', lifecycleStage: 'CLOSED', closedAt: data.closedAt, closedBy: data.closedBy }) }
+          : t));
+        triggerToast(`Complaint ${ticketCode(target)} closed.`);
+        refreshWardenData();
+      } else {
+        triggerToast(data?.error || 'Close refused — the student has not marked it Resolved yet.', 'warning');
+      }
+    } catch (err) {
+      console.warn('Close failed:', err.message);
+      triggerToast('Close failed — check the connection and try again.', 'warning');
+    } finally {
+      setClosingId(null);
+    }
   };
 
   // Live relative-time label — cloud rows carry a server-computed `time`;
@@ -446,12 +462,29 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
     return `${Math.floor(diff / 86400000)}d ago`;
   };
 
-  // Real SLA risk: pending tickets whose 4h SLA window has <1h remaining (or already breached)
-  const slaAtRiskCount = allTickets.filter(t => {
-    const isPending = ['PENDING', 'IN_PROGRESS', 'ASSIGNED'].includes(String(t.status || '').toUpperCase());
-    const ms = t.createdAtMs || (t.createdAt ? new Date(t.createdAt).getTime() : (t.created_at ? new Date(t.created_at).getTime() : 0));
-    return isPending && ms > 0 && (Date.now() - ms) > 3 * 3600 * 1000;
-  }).length;
+  // ONE critical-SLA counter for the whole screen (top card, section chip
+  // and the heatmap's "Critical" column all read this): open clusters whose
+  // SLA is used up + open/escalated tickets the SLA engine marks breached.
+  const slaOfCluster = (c) => (typeof c.slaHoursLeft === 'number' ? c.slaHoursLeft : 4);
+  const openClustersAll = displayClusters.filter(c => c.status !== 'RESOLVED' && String(c.status || '').toUpperCase() !== 'CLOSED');
+  const breachedClustersAll = openClustersAll.filter(c => slaOfCluster(c) <= 0);
+  const breachedTicketsAll = allTickets.filter(t =>
+    ['PENDING', 'ASSIGNED', 'IN_PROGRESS', 'ESCALATED_TO_DEAN'].includes(String(t.status || '').toUpperCase()) && t.slaState === 'breached'
+  );
+  const slaAtRiskCount = breachedClustersAll.length + breachedTicketsAll.length;
+
+  // Real average resolution time: resolved/closed tickets in the loaded list,
+  // created_at → last update (updated_at is bumped by the DB trigger when the
+  // ticket is resolved/closed). null = nothing resolved yet → tile says so.
+  const avgResolutionHours = (() => {
+    const done = allTickets.map(t => {
+      if (!['RESOLVED', 'CLOSED'].includes(String(t.status || '').toUpperCase())) return null;
+      const start = t.createdAtMs || (t.created_at ? new Date(t.created_at).getTime() : 0);
+      const end = t.updated_at ? new Date(t.updated_at).getTime() : 0;
+      return start > 0 && end > start ? (end - start) / 3600000 : null;
+    }).filter(h => h !== null);
+    return done.length ? done.reduce((a, b) => a + b, 0) / done.length : null;
+  })();
 
   // Real impacted-student count from actual cluster data (not hardcoded)
   const impactedStudentsCount = clusters.reduce(
@@ -464,6 +497,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
   const sectionChips = [
     { tab: 'passes', id: 'wd-passes', label: 'Pending Passes', count: pendingPasses.length, dot: 'bg-emerald-500', hot: pendingPasses.length > 0, hotCls: 'bg-emerald-600 text-white' },
     { tab: 'tickets', id: 'wd-tickets', label: 'Student Issues', count: allTickets.length, dot: 'bg-amber-500', hot: false },
+    { tab: 'technicians', id: 'wd-technicians', label: 'Technicians', count: techError ? '!' : technicians.filter(t => t.active).length, dot: 'bg-sky-500', hot: !!techError, hotCls: 'bg-rose-600 text-white' },
     { tab: 'clusters', id: 'wd-clusters', label: 'Master Incidents', count: clusters.length, dot: 'bg-purple-500', hot: false },
     { tab: 'sla', id: 'wd-sla', label: 'SLA Heatmap', count: slaAtRiskCount > 0 ? slaAtRiskCount : null, dot: 'bg-rose-500', hot: slaAtRiskCount > 0, hotCls: 'bg-rose-600 text-white' },
     { tab: 'register', id: 'wd-register', label: 'Gate Register', count: registerRows.length, dot: 'bg-slate-700', hot: false }
@@ -503,7 +537,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
         <div className="bg-gradient-to-br from-[#faf5ff] to-[#f3e8ff] border border-[#e9d5ff] rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 flex items-center justify-between gap-2 min-w-0">
           <div className="min-w-0">
             <span className="block text-[11px] sm:text-xs font-extrabold text-purple-950 leading-snug">Master Clusters</span>
-            <span className="block text-[10px] sm:text-[11px] text-purple-800 font-bold leading-snug">{impactedStudentsCount} Students · <span className="font-mono">AI Grouped</span></span>
+            <span className="block text-[10px] sm:text-[11px] text-purple-800 font-bold leading-snug">{impactedStudentsCount} Students · <span className="font-mono">Auto-grouped</span></span>
           </div>
           <span className="text-2xl sm:text-3xl font-extrabold font-mono text-purple-900 shrink-0">{clusters.length}</span>
         </div>
@@ -511,7 +545,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
         <div className="bg-gradient-to-br from-[#fff1f2] to-[#ffe4e6] border border-[#fecdd3] rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 flex items-center justify-between gap-2 min-w-0">
           <div className="min-w-0">
             <span className="block text-[11px] sm:text-xs font-extrabold text-rose-950 leading-snug">Critical SLA At-Risk</span>
-            <span className="block text-[10px] sm:text-[11px] text-rose-800 font-bold leading-snug">{slaAtRiskCount > 0 ? '<1h Remaining' : 'No breaches'} · <span className="font-mono">Escalated</span></span>
+            <span className="block text-[10px] sm:text-[11px] text-rose-800 font-bold leading-snug">{slaAtRiskCount > 0 ? 'SLA breached' : 'No breaches'} · <span className="font-mono">Escalated</span></span>
           </div>
           <span className="text-2xl sm:text-3xl font-extrabold font-mono text-rose-600 shrink-0">{slaAtRiskCount}</span>
         </div>
@@ -519,9 +553,9 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
         <div className="bg-gradient-to-br from-[#eff6ff] to-[#dbeafe] border border-[#bfdbfe] rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 flex items-center justify-between gap-2 min-w-0">
           <div className="min-w-0">
             <span className="block text-[11px] sm:text-xs font-extrabold text-blue-950 leading-snug">Avg Resolution Time</span>
-            <span className="block text-[10px] sm:text-[11px] text-blue-800 font-bold leading-snug">Within SLA · <span className="font-mono">Target: 4h</span></span>
+            <span className="block text-[10px] sm:text-[11px] text-blue-800 font-bold leading-snug">{avgResolutionHours === null ? 'No resolved tickets yet' : avgResolutionHours <= 4 ? 'Within SLA' : 'Above SLA'} · <span className="font-mono">Target: 4h</span></span>
           </div>
-          <span className="text-2xl sm:text-3xl font-extrabold font-mono text-blue-950 shrink-0">3.2<span className="text-base font-normal text-blue-800">h</span></span>
+          <span className="text-2xl sm:text-3xl font-extrabold font-mono text-blue-950 shrink-0">{avgResolutionHours === null ? '—' : avgResolutionHours < 10 ? avgResolutionHours.toFixed(1) : Math.round(avgResolutionHours)}{avgResolutionHours !== null && <span className="text-base font-normal text-blue-800">h</span>}</span>
         </div>
       </section>
 
@@ -574,14 +608,31 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
             <CardEmptyState title={wq ? `No issues match "${wq}".` : 'No student maintenance issues logged yet.'} />
           ) : (
             <div className="space-y-3 xl:flex-1 xl:min-h-0 xl:overflow-y-auto xl:overscroll-contain xl:-mr-2 xl:pr-2">
-              {preview('tickets', shownTickets).map((t) => (
-                <div 
+              {preview('tickets', shownTickets).map((t) => {
+                const statusU = String(t.status || '').toUpperCase();
+                const lifecycle = hasLifecycle(t);
+                const reassign = technicianRoster.length > 0 ? (
+                  <select
+                    value=""
+                    onChange={(e) => handleReassign(t, e.target.value)}
+                    aria-label="Reassign technician"
+                    className="w-full min-h-[44px] text-xs px-2 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-700 cursor-pointer"
+                  >
+                    <option value="">Reassign to…</option>
+                    {technicianRoster.map(r => (
+                      <option key={r.id} value={r.id}>{r.name} ({r.role})</option>
+                    ))}
+                  </select>
+                ) : null;
+                return (
+                <div
                   key={t.id}
-                  className="bg-slate-50/70 border border-slate-200 rounded-xl p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 hover:border-slate-300 transition-all"
+                  className="bg-slate-50/70 border border-slate-200 rounded-xl p-3.5 sm:p-4 flex flex-col gap-3 hover:border-slate-300 transition-all"
                 >
+                  <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2 sm:gap-4">
                   <div className="space-y-1.5 min-w-0 flex-1">
                     <div className="flex items-center flex-wrap gap-x-2 gap-y-1">
-                      <span className="font-mono text-xs font-bold text-amber-700">{t.id}</span>
+                      <span className="font-mono text-xs font-bold text-amber-700">{lifecycle ? ticketCode(t) : t.id}</span>
                       <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-100 text-amber-800 font-semibold">
                         {t.category}
                       </span>
@@ -611,13 +662,17 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                     </div>
                   </div>
 
-                  <div className="flex flex-col items-stretch gap-2 shrink-0 border-t sm:border-t-0 border-slate-200 pt-3 sm:pt-0 sm:w-[210px]">
-                    <div className="flex flex-row flex-wrap sm:flex-col items-center sm:items-end gap-1.5">
-                      <span className="text-xs font-mono px-3 py-1 rounded-full bg-amber-50 text-amber-800 border border-amber-200 font-semibold">
+                  <div className="flex flex-row flex-wrap sm:flex-col items-center sm:items-end gap-1.5 shrink-0 sm:max-w-[230px]">
+                      <span className={`text-xs font-mono px-3 py-1 rounded-full border font-semibold ${
+                        statusU === 'CLOSED' ? 'bg-slate-100 text-slate-700 border-slate-300'
+                          : t.lifecycleStage === 'RESOLVED' ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                          : statusU === 'ESCALATED_TO_DEAN' ? 'bg-rose-50 text-rose-700 border-rose-200'
+                          : 'bg-amber-50 text-amber-800 border-amber-200'
+                      }`}>
                         {(t.statusLabel || t.status || 'REPORTED').replace(/_/g, ' ')}
                       </span>
-                      {/* Real SLA countdown from the server (hidden if already escalated) */}
-                      {typeof t.slaHoursLeft === 'number' && !['RESOLVED', 'CLOSED', 'ESCALATED_TO_DEAN'].includes(String(t.status).toUpperCase()) && (
+                      {/* Real SLA countdown from the server (hidden once resolved/escalated) */}
+                      {typeof t.slaHoursLeft === 'number' && !['RESOLVED', 'CLOSED', 'ESCALATED_TO_DEAN'].includes(statusU) && (
                         <span className={`text-[10px] font-mono px-2 py-0.5 rounded border font-bold ${
                           t.slaState === 'breached' ? 'bg-rose-50 text-rose-700 border-rose-200'
                           : t.slaHoursLeft < 1 ? 'bg-amber-50 text-amber-800 border-amber-300'
@@ -629,71 +684,32 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                             : `${t.slaHoursLeft.toFixed(1)}h Left`}
                         </span>
                       )}
-                      {t.assignedTo && (
-                        <span className="text-[10px] text-sky-700 font-mono flex items-center gap-1">
-                          <Wrench className="w-3 h-3" /> {t.assignedTo}
-                        </span>
-                      )}
                       {t.master_incident_id && (
                         <span className="text-[10px] text-purple-700 font-mono flex items-center gap-1">
                           <Layers className="w-3 h-3" /> Linked to cluster
                         </span>
                       )}
-                    </div>
-
-                    {/* Warden supervisor controls — escalation is AUTOMATIC via the
-                        SLA loop (4h breach → Dean + student SMS), so no manual
-                        escalate button. Warden can still reassign the crew. */}
-                    <div className="flex flex-col gap-1.5">
-                      {['RESOLVED', 'CLOSED'].includes(String(t.status).toUpperCase()) ? (
-                        <>
-                          <span className={`text-[10px] font-mono font-bold px-2 ${String(t.status).toUpperCase() === 'CLOSED' ? 'text-slate-500' : 'text-emerald-700'}`}>
-                            {String(t.status).toUpperCase() === 'CLOSED' ? '✔ Closed — student confirmed, warden verified' : '✔ Resolved — student notified'}
-                          </span>
-                          {String(t.status).toUpperCase() === 'RESOLVED' && t.studentConfirmed && (
-                            <button
-                              onClick={() => handleCloseTicket(t)}
-                              className="px-3 py-1 min-h-[44px] rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-[11px] font-bold cursor-pointer transition-colors"
-                            >
-                              🔒 Confirm & Close
-                            </button>
-                          )}
-                          {String(t.status).toUpperCase() === 'RESOLVED' && !t.studentConfirmed && (
-                            <span className="text-[10px] text-slate-500 font-mono px-2">
-                              Awaiting student "job done" confirmation to close
-                            </span>
-                          )}
-                        </>
-                      ) : String(t.status).toUpperCase() === 'ESCALATED_TO_DEAN' ? (
-                        <span className="text-[10px] text-rose-700 font-mono px-2">
-                          🚨 Auto-escalated to Dean (SLA breach)
-                        </span>
-                      ) : (
-                        <>
-                          {t.studentConfirmed && (
-                            <button
-                              onClick={() => handleCloseTicket(t)}
-                              className="px-3 py-1 min-h-[44px] rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-[11px] font-bold cursor-pointer transition-colors"
-                            >
-                              🔒 Confirm & Close
-                            </button>
-                          )}
-                          <select
-                            value=""
-                            onChange={(e) => handleReassign(t, e.target.value)}
-                            className="w-full min-h-[44px] text-xs px-2 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-700 cursor-pointer"
-                          >
-                            <option value="">Reassign to…</option>
-                            {technicianRoster.map(r => (
-                              <option key={r.id} value={r.id}>{r.name} ({r.role})</option>
-                            ))}
-                          </select>
-                        </>
+                      {statusU === 'ESCALATED_TO_DEAN' && (
+                        <span className="text-[10px] text-rose-700 font-mono">🚨 Auto-escalated to Dean (SLA breach)</span>
                       )}
-                    </div>
                   </div>
+                  </div>
+
+                  {/* Technician + lifecycle. Close shows ONLY after the student's
+                      Resolved (server enforces it too). Escalation stays automatic. */}
+                  {lifecycle ? (
+                    <WardenTicketLifecycle
+                      ticket={t}
+                      busy={closingId === t.id}
+                      onClose={handleCloseTicket}
+                      reassignSlot={reassign}
+                    />
+                  ) : (
+                    <p className="text-[11px] text-slate-500 font-mono">Saved on this device only — technician and progress appear once it reaches the server.</p>
+                  )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
           {shownTickets.length > PREVIEW.tickets && !wq && (
@@ -713,7 +729,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                 <span className={`shrink-0 text-[11px] font-mono font-bold px-2.5 py-1 rounded-full border ${pendingPasses.length > 0 ? 'text-white bg-emerald-600 border-emerald-600' : 'text-slate-600 bg-slate-50 border-slate-200'}`}>{pendingPasses.length}</span>
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                Approving creates the signed gate QR (Ed25519) that guard phones can check offline.
+                Approving creates the student's secure gate QR, which guard phones can check even offline.
               </p>
             </div>
             <button
@@ -873,6 +889,29 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                     </div>
                   </div>
 
+                  {/* Lifecycle roll-up of the merged complaints (each student
+                      resolves their own; the warden closes each one) */}
+                  {typeof cluster.reportedCount === 'number' && cluster.reportedCount > 0 && (
+                    <div className="rounded-lg bg-white border border-purple-200 px-3 py-2.5 space-y-1.5">
+                      <p className="text-[12.5px] font-bold text-slate-900">
+                        {cluster.reportedCount} {cluster.reportedCount === 1 ? 'student' : 'students'} reported · <span className="text-emerald-700">{cluster.resolvedCount || 0} resolved</span> · <span className="text-slate-600">{cluster.closedCount || 0} closed</span>
+                      </p>
+                      {cluster.technician && (
+                        <p className="text-[11.5px] font-semibold text-slate-600 flex items-center gap-1.5">
+                          <Wrench className="w-3.5 h-3.5 text-sky-600 shrink-0" />
+                          {cluster.technician.name} · {cluster.technician.role} — texted once for the whole incident
+                        </p>
+                      )}
+                      {Array.isArray(cluster.memberCodes) && cluster.memberCodes.length > 0 && (
+                        <div className="flex flex-wrap gap-1">
+                          {cluster.memberCodes.map(code => (
+                            <span key={code} className="text-[10.5px] font-mono font-bold px-1.5 py-0.5 rounded bg-purple-50 text-purple-800 border border-purple-200">#{code}</span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {/* Impacted Rooms & Location */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2 gap-3 text-xs">
                     <div className="bg-white p-2.5 rounded-lg border border-slate-200">
@@ -914,10 +953,10 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                       {!isResolved && !cluster.assignedTo && (
                         <button
                           onClick={() => {
-                            const match = technicianRoster.find(r => r.specialty && String(cluster.category || '').toLowerCase().split(' ').some(w => 
-                              w.length > 3 && r.specialty.toLowerCase().includes(w)))
-                              || technicianRoster.find(r => r.id === 'TECH-CLEAN-01');
-                            handleAssignTechnician(masterId, match ? match.name : 'Technician Team A');
+                            // The category's technician from the DB list — never a made-up name.
+                            const match = technicianRoster.find(r => r.category === cluster.category);
+                            if (!match) { triggerToast(techError ? 'Technician list unavailable — try again shortly.' : `No technician for ${cluster.category || 'this category'} — pick one from "Assign to…".`, 'warning'); return; }
+                            handleAssignTechnician(masterId, match.name);
                           }}
                           className="flex-1 sm:flex-none xl:flex-1 min-h-[44px] justify-center px-3.5 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white font-semibold transition-all cursor-pointer text-xs flex items-center space-x-1 shadow-sm"
                         >
@@ -965,14 +1004,12 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
 
       {/* --- TAB 3: SLA AGING HEATMAP (all values derived from live ticket/cluster data) --- */}
       {(() => {
-        const slaOf = (c) => (typeof c.slaHoursLeft === 'number' ? c.slaHoursLeft : 4);
-        const openClusters = displayClusters.filter(c => c.status !== 'RESOLVED' && String(c.status || '').toUpperCase() !== 'CLOSED');
+        const slaOf = slaOfCluster;
+        const openClusters = openClustersAll;
         const onTrack = openClusters.filter(c => slaOf(c) > 2);
         const warnZone = openClusters.filter(c => slaOf(c) <= 2 && slaOf(c) > 0);
-        const breached = openClusters.filter(c => slaOf(c) <= 0);
-        const breachedTickets = allTickets.filter(t =>
-          ['PENDING', 'ASSIGNED', 'IN_PROGRESS', 'ESCALATED_TO_DEAN'].includes(String(t.status || '').toUpperCase()) && t.slaState === 'breached'
-        );
+        const breached = breachedClustersAll;       // same counter as the top card
+        const breachedTickets = breachedTicketsAll;
         return (
           <section id="wd-sla" className={`order-4 xl:order-1 xl:col-start-8 xl:col-span-5 xl:row-start-1 xl:flex xl:flex-col xl:max-h-[600px] scroll-mt-[124px] min-w-0 bg-white border-2 border-rose-200 rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm ${tabCls('sla')}`}>
           <div className="flex items-start justify-between gap-3 border-b border-rose-100 pb-3">
@@ -1088,7 +1125,85 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
       })()}
         </div>
 
-        <section id="wd-register" className={`order-5 xl:col-span-12 xl:row-start-3 scroll-mt-[124px] min-w-0 bg-white border-2 border-slate-300 rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm ${tabCls('register')}`}>
+        {/* --- TECHNICIANS (from the database) — who is on what, and who assigned it --- */}
+        <section id="wd-technicians" className={`order-5 xl:col-span-12 xl:row-start-3 scroll-mt-[124px] min-w-0 bg-white border-2 border-sky-200 rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm ${tabCls('technicians')}`}>
+          <div className="flex items-start justify-between gap-3 border-b border-sky-100 pb-3">
+            <div className="min-w-0">
+              <h2 className="text-[15px] font-bold text-slate-900 flex items-center gap-2.5">
+                <span className="w-9 h-9 rounded-xl bg-sky-100/70 text-sky-700 border border-sky-200 flex items-center justify-center shrink-0">
+                  <UserCheck className="w-4 h-4" />
+                </span>
+                <span>Technicians</span>
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                One per category. New complaints go to them automatically by SMS; a complaint closes only after the student marks it Resolved.
+              </p>
+            </div>
+            <span className="shrink-0 text-[11px] font-mono font-bold px-2.5 py-1 rounded-full border text-sky-800 bg-sky-50 border-sky-200">{technicians.filter(t => t.active).length}</span>
+          </div>
+
+          {techError ? (
+            <div className="flex-1 min-h-[200px] flex flex-col items-center justify-center text-center px-4 py-10">
+              <span className="w-14 h-14 rounded-full ring-8 flex items-center justify-center mb-4 bg-rose-50 text-rose-600 ring-rose-100">
+                <AlertTriangle className="w-7 h-7" />
+              </span>
+              <p className="text-sm font-semibold text-slate-800">Technician list unavailable</p>
+              <p className="text-xs text-slate-500 mt-1 max-w-sm">
+                The server could not read the technicians table, so new complaints are saved without a technician. Complaints are not lost — assign them here once the list is back.
+              </p>
+            </div>
+          ) : !techLoaded ? (
+            <CardEmptyState icon={RefreshCw} tone="emerald" title="Loading technicians…" />
+          ) : technicians.length === 0 ? (
+            <CardEmptyState icon={UserCheck} title="No technicians in the database yet." sub="Add one technician per category in the technicians table." />
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-3">
+              {technicians.map((tech) => {
+                const s = tech.stats || {};
+                const wardens = Object.entries(s.wardens || {});
+                return (
+                  <div key={tech.id} className={`rounded-xl border p-3.5 space-y-3 ${tech.active ? 'bg-slate-50/70 border-slate-200' : 'bg-slate-100 border-slate-200 opacity-70'}`}>
+                    <div className="flex flex-wrap items-start gap-2.5 min-w-0">
+                      <span className="w-10 h-10 rounded-xl bg-white border border-sky-200 text-sky-700 flex items-center justify-center shrink-0">
+                        <Wrench className="w-4 h-4" />
+                      </span>
+                      <div className="min-w-0 flex-1 basis-[150px]">
+                        <p className="text-[13.5px] font-bold text-slate-900 leading-snug">{tech.name}</p>
+                        <p className="text-[11.5px] text-slate-600 font-semibold leading-snug">{tech.role} · {tech.category}</p>
+                        <p className="text-[10.5px] text-slate-400 font-mono">{tech.id}{!tech.active ? ' · inactive' : ''}</p>
+                      </div>
+                      {tech.phone && (
+                        <a href={`tel:${tech.phone}`} className="shrink-0 min-h-[44px] px-2.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-[11.5px] font-bold font-mono flex items-center justify-center gap-1.5" aria-label={`Call ${tech.name}`}>
+                          <Phone className="w-3.5 h-3.5 shrink-0" />{tech.phone}
+                        </a>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-4 gap-1.5 text-center">
+                      {[
+                        { k: 'open', label: 'Assigned', cls: 'text-amber-800 bg-amber-50 border-amber-200' },
+                        { k: 'awaitingClose', label: 'Resolved, to close', cls: 'text-emerald-800 bg-emerald-50 border-emerald-200' },
+                        { k: 'closed', label: 'Closed', cls: 'text-slate-700 bg-white border-slate-200' },
+                        { k: 'notFixed', label: 'Not fixed', cls: 'text-rose-700 bg-rose-50 border-rose-200' }
+                      ].map(c => (
+                        <div key={c.k} className={`rounded-lg border px-1 py-1.5 ${c.cls}`}>
+                          <div className="text-lg font-extrabold font-mono leading-none">{s[c.k] || 0}</div>
+                          <div className="text-[10px] font-bold leading-tight mt-1">{c.label}</div>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-[11px] text-slate-600 font-semibold leading-snug">
+                      {(s.total || 0) === 0
+                        ? 'No complaints assigned yet.'
+                        : <>Assigned by: <b>Auto {s.byAuto || 0}</b>{wardens.length > 0 && <> · {wardens.map(([n, c]) => `${n} ${c}`).join(' · ')}</>}</>}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+
+        <section id="wd-register" className={`order-6 xl:col-span-12 xl:row-start-4 scroll-mt-[124px] min-w-0 bg-white border-2 border-slate-300 rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm ${tabCls('register')}`}>
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 pb-3">
             <div className="min-w-0">
               <h2 className="text-[15px] font-bold text-slate-900 flex items-center gap-2.5">

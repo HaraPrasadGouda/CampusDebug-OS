@@ -120,8 +120,8 @@ export async function verifySignedPassToken(rawTokenBase64) {
       return {
         valid: false,
         message: key.keyId !== tokenObj.kid
-          ? 'Signature mismatch: this QR was signed with a different gate key than the one on this phone. Connect the guard phone to the internet once and scan again.'
-          : 'Cryptographic signature mismatch! Tampered or counterfeit pass.'
+          ? 'This QR was made with a newer gate key than the one on this phone. Connect the guard phone to the internet once and scan again.'
+          : 'QR not valid — ask the student to reopen their pass and show the fresh QR.'
       };
     }
 
@@ -146,7 +146,7 @@ export async function verifySignedPassToken(rawTokenBase64) {
         isExpired: true,
         kind: payload.kind || 'PASS',
         payload,
-        message: `Signature valid — pass window elapsed (expired ${new Date(payload.validUntil).toLocaleTimeString()}). A return scan will be recorded LATE.`
+        message: `QR is genuine — pass window elapsed (expired ${new Date(payload.validUntil).toLocaleTimeString()}). A return scan will be recorded LATE.`
       };
     }
 

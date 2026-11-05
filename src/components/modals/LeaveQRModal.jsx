@@ -7,6 +7,7 @@ import { pickTodaysLeave, saveLeaveSnapshot, readLeaveSnapshot } from '../../uti
 import { isLeaveWindowOpen, LEAVE_WINDOW_MSG } from '../../utils/leaveWindow';
 import ScannableQR from '../ScannableQR';
 import { leaveNumber } from '../../utils/passNumber';
+import { canAutoRefresh } from '../../utils/liveUpdates';
 
 /**
  * DAY-SCHOLAR LEAVE (Phase 1) — replaces the old IN/OUT commute alternation.
@@ -47,13 +48,24 @@ export default function LeaveQRModal({ isOpen, onClose, onToast }) {
     if (!isOpen) return;
     let alive = true;
     load(true);
-    const poll = setInterval(() => load(false), 8000);
+    // Settings → Live updates: ON = refresh every 15 s while the tab is
+    // visible; OFF = only on open and with the Refresh button. The dashboard
+    // already pulls the same endpoint for day scholars and broadcasts it
+    // (below), so skip a tick that a fresh broadcast already covered.
+    let lastSnapshotAt = Date.now();
+    const poll = setInterval(() => {
+      if (!canAutoRefresh()) return;
+      if (Date.now() - lastSnapshotAt < 10000) return;
+      lastSnapshotAt = Date.now();
+      load(false);
+    }, 15000);
     // The dashboard polls the same endpoint (fast while a leave is live) and
     // broadcasts each fresh snapshot — adopt it so the modal and the Active
     // Gate Pass card always show the same state at the same moment.
     const onLeaveState = (e) => {
       const j = e?.detail;
       if (!alive || !j?.success) return;
+      lastSnapshotAt = Date.now();
       setState({ phase: 'READY', leaves: j.leaves || [], outToday: j.outToday, hasLiveRequest: j.hasLiveRequest });
     };
     window.addEventListener('campus_leave_state', onLeaveState);
@@ -119,7 +131,7 @@ export default function LeaveQRModal({ isOpen, onClose, onToast }) {
       APPROVED: { cls: 'bg-emerald-50 border-emerald-300 text-emerald-800', icon: CheckCircle2, text: 'APPROVED — SHOW QR AT GATE' },
       OUT: { cls: 'bg-sky-50 border-sky-300 text-sky-800', icon: LogOut, text: 'OUT OF CAMPUS (LEAVE)' },
       REJECTED: { cls: 'bg-rose-50 border-rose-300 text-rose-700', icon: XCircle, text: 'REQUEST REJECTED' },
-      EXPIRED: { cls: 'bg-slate-50 border-slate-300 text-slate-600', icon: XCircle, text: 'EXPIRED (16:30 GATE CLOSE)' }
+      EXPIRED: { cls: 'bg-slate-50 border-slate-300 text-slate-600', icon: XCircle, text: 'EXPIRED' }
     };
     const m = map[anyStatus];
     const Icon = m.icon;
