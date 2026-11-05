@@ -454,6 +454,7 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
   const needsNow = ownPendingAll.length + coveringPending + coverCardsN;
   const studentsBadge = ownPendingAll.length + coveringPending;
   const quiet = needsNow === 0;
+  const lightDay = coverCardsN === 0 && coveringPending === 0;
   const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 
   useEffect(() => { setTeacherCounts({ today: needsNow, students: studentsBadge }); }, [needsNow, studentsBadge]);
@@ -464,12 +465,16 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
   // New tab on screen: jump to what was asked for (a card / a tool), else back to where this tab was scrolled.
+  // Keyed on the tab AND the requested anchor, but a cleared anchor (null) never re-scrolls.
+  const lastTab = React.useRef(null);
   useLayoutEffect(() => {
-    const a = takeAnchor();
     const el = document.getElementById('app-scroll');
+    const a = takeAnchor();
+    const tabChanged = lastTab.current !== tab;
+    lastTab.current = tab;
     if (a && a.startsWith('insights:')) { setInsightsReq({ id: a.slice(9), n: Date.now() }); if (el) el.scrollTop = 0; return; }
     if (a) { const t = document.getElementById(a); if (t) { t.scrollIntoView({ block: 'start' }); return; } }
-    if (el) el.scrollTop = savedScroll(tab);
+    if (tabChanged && el) el.scrollTop = savedScroll(tab);
   }, [tab, navAnchor]);
   useEffect(() => { if (tab === 'me') alerts.refresh(); }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -567,14 +572,7 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
       </section>
       <div className="flex flex-col gap-4 xl:grid xl:grid-cols-12 xl:items-start">
         <div className="flex flex-col gap-3 xl:col-span-7">
-          {quiet ? (
-            <>
-              <AllClearCard />
-              <NextClassCard row={nextClassRow} minsLeft={nextRow ? nextRow.startMin - nowM : 0} markState={nextMarkState} onMark={() => nextRow && setMarkSlot(nextRow.slot)} />
-              <QuickActions createOpen={createOpen} onCreateLeave={openCreateLeave} onGateLog={() => goTeacherTab('students', 'td-gatelog')} onLessonPlan={() => goTeacherTab('classes', 'insights:plan')} />
-              <p data-testid="cover-quiet-line" className="px-1 text-[12px] font-semibold text-slate-500">Cover board: no open requests</p>
-            </>
-          ) : (
+          {quiet ? <AllClearCard /> : (
             <>
               <NeedsHeading count={needsNow} />
               {ownPendingAll.length > 0 && (
@@ -586,6 +584,14 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
                   sub={`${plural(g.pendingCount, 'leave request')} · until they are back`} onClick={() => goTeacherTab('students', 'td-covering')} />
               ))}
               <CoverBoardSection {...coverBoardProps} compact />
+            </>
+          )}
+          {/* A light day (no cover cards, nobody being covered; at most my own mentees' requests): the next class and the quick actions stay under it */}
+          {lightDay && (
+            <>
+              <NextClassCard row={nextClassRow} minsLeft={nextRow ? nextRow.startMin - nowM : 0} markState={nextMarkState} onMark={() => nextRow && setMarkSlot(nextRow.slot)} />
+              <QuickActions createOpen={createOpen} onCreateLeave={openCreateLeave} onGateLog={() => goTeacherTab('students', 'td-gatelog')} onLessonPlan={() => goTeacherTab('classes', 'insights:plan')} />
+              <p data-testid="cover-quiet-line" className="px-1 text-[12px] font-semibold text-slate-500">Cover board: no open requests</p>
             </>
           )}
         </div>
