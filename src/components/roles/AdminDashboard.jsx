@@ -974,7 +974,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
   }, []);
 
   return (
-    <div className="space-y-5 animate-in fade-in duration-200">
+    <div className="admin-dash space-y-5 animate-in fade-in duration-200">
       {/* Cover board escalation: an absent teacher's class nobody took */}
       <AdminCoverAlerts onNotification={onNotification} />
       
@@ -993,7 +993,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
                     type="button"
                     data-admin-tab={id}
                     onClick={() => setActiveTab(id)}
-                    className={`w-full min-h-[38px] flex items-center gap-2 rounded-lg border px-2 py-1 text-left transition-colors cursor-pointer ${on ? t.sel : 'border-transparent text-slate-600 hover:bg-slate-100/80 hover:text-slate-900'}`}
+                    className={`w-full min-h-[44px] lg:min-h-[38px] flex items-center gap-2 rounded-lg border px-2 py-1 text-left transition-colors cursor-pointer ${on ? t.sel : 'border-transparent text-slate-600 hover:bg-slate-100/80 hover:text-slate-900'}`}
                   >
                     <span className={`w-6 h-6 rounded-md flex items-center justify-center shrink-0 ${on ? t.on : t.off}`}>
                       <t.Icon className="w-3.5 h-3.5" />
@@ -1035,7 +1035,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
       {/* Phone: the 5 groups as a bottom tab bar (portal to <body> so it stays fixed) */}
       {createPortal(
         <nav className={`${toolNavSlot && slotShown ? 'lg:hidden' : ''} fixed bottom-0 inset-x-0 z-30 bg-white/95 backdrop-blur border-t border-slate-200 shadow-[0_-4px_16px_rgba(15,23,42,0.06)] pb-[env(safe-area-inset-bottom)]`}>
-          <div className="grid grid-cols-5 max-w-lg mx-auto">
+          <div className="flex max-w-lg mx-auto">
             {adminGroups.map((g) => {
               const on = g.ids.includes(activeTab);
               const t = adminTabs[g.ids[0]];
@@ -1045,7 +1045,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
                   type="button"
                   data-admin-group={g.title}
                   onClick={() => setActiveTab(on ? activeTab : g.ids[0])}
-                  className={`min-h-[60px] flex flex-col items-center justify-center gap-1 px-0.5 cursor-pointer ${on ? 'text-slate-900' : 'text-slate-500'}`}
+                  className={`min-h-[60px] flex-[1_1_auto] flex flex-col items-center justify-center gap-1 px-0.5 cursor-pointer ${on ? 'text-slate-900' : 'text-slate-500'}`}
                 >
                   <span className={`w-9 h-7 rounded-full flex items-center justify-center ${on ? t.on : 'text-slate-500'}`}>
                     <t.Icon className="w-4 h-4" />
@@ -1086,7 +1086,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
         <span className={`w-1 h-5 rounded-full shrink-0 ${(adminTabs[activeTab] || adminTabs.dispatcher).bar}`}></span>
         <span className="text-[10px] sm:text-[11px] font-bold uppercase tracking-wider text-slate-400 shrink-0">{activeGroup.title}</span>
         <span className="text-slate-300 shrink-0">/</span>
-        <h3 className="font-display font-extrabold text-sm sm:text-base text-slate-900 truncate">{(adminTabs[activeTab] || adminTabs.dispatcher).label}</h3>
+        <h3 className="font-display font-extrabold text-sm sm:text-base text-slate-900 leading-tight break-words min-w-0">{(adminTabs[activeTab] || adminTabs.dispatcher).label}</h3>
       </div>
 
       {/* --- FEE PAYMENTS (read-only list of the students' demo Settle Dues receipts) --- */}
@@ -1242,13 +1242,13 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
                 Live version <code className="font-mono bg-slate-100 px-1 py-0.5 rounded">{ttInfo.version}</code>
                 {ttInfo.generatedAt ? ` — generated ${new Date(ttInfo.generatedAt).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} by ${ttInfo.generatedBy || 'system'}` : ''}
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[26rem] overflow-y-auto overscroll-contain" data-testid="tt-section-list">
                 {(ttInfo.sections || []).map(sec => {
                   const isBusy = ttSecBusy === sec.key;
                   return (
                     <div key={sec.key} className="flex items-center justify-between gap-2 rounded-lg border border-slate-100 bg-slate-50/50 px-3 py-2">
                       <div className="min-w-0">
-                        <p className="text-xs font-bold text-slate-800 truncate">{sec.label}</p>
+                        <p className="text-xs font-bold text-slate-800 break-words leading-snug">{sec.label}</p>
                         <p className="text-[10px] text-slate-500 font-mono">{sec.sessions} scheduled sessions</p>
                       </div>
                       <button
@@ -1722,7 +1722,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
                     <input type="number" min="1" value={hb.capacity} onChange={e => ccMutate(d => { d.hostelBlocks[hi].capacity = parseInt(e.target.value, 10) || 0; })}
                       placeholder="Capacity" className="w-24 text-[11px] font-bold text-slate-900 bg-white border border-slate-200 rounded-lg px-2 py-1" />
                     <select value={hb.warden || ''} onChange={e => ccMutate(d => { d.hostelBlocks[hi].warden = e.target.value || null; })}
-                      className="text-[11px] font-bold text-slate-800 bg-white border border-slate-200 rounded-lg px-2 py-1 cursor-pointer">
+                      className="w-full sm:w-auto max-w-full min-w-0 text-[11px] font-bold text-slate-800 bg-white border border-slate-200 rounded-lg px-2 py-1 cursor-pointer">
                       <option value="">warden…</option>
                       {staff.wardens.map(w => <option key={w.id} value={w.id}>{w.id} · {w.name}</option>)}
                     </select>
@@ -1761,7 +1761,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
                     <input value={ovRoll} onChange={e => setOvRoll(e.target.value)} placeholder="Roll number"
                       className="w-36 text-[11px] font-bold text-slate-900 bg-white border border-slate-200 rounded-lg px-2 py-1" />
                     <select value={ovBlock} onChange={e => setOvBlock(e.target.value)}
-                      className="text-[11px] font-bold text-slate-800 bg-white border border-slate-200 rounded-lg px-2 py-1 cursor-pointer">
+                      className="max-w-full min-w-0 text-[11px] font-bold text-slate-800 bg-white border border-slate-200 rounded-lg px-2 py-1 cursor-pointer">
                       <option value="">block…</option>
                       {(cc.hostelBlocks || []).map(hb => <option key={hb.name} value={hb.name}>{hb.name} ({hb.gender})</option>)}
                     </select>
@@ -1931,15 +1931,15 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
                   <div className="grid grid-cols-3 gap-3">
                     <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 text-center">
                       <span className="text-2xl sm:text-3xl font-extrabold font-mono text-slate-900 block">{totalPlates.toLocaleString()}</span>
-                      <span className="text-[10px] font-mono uppercase tracking-wider text-slate-500 font-bold">Plates Today (4 meals)</span>
+                      <span className="block leading-snug text-[10px] font-mono uppercase tracking-wider text-slate-500 font-bold">Plates Today (4 meals)</span>
                     </div>
                     <div className="bg-amber-50/70 border border-amber-200 rounded-xl p-3.5 text-center">
                       <span className="text-2xl sm:text-3xl font-extrabold font-mono text-amber-900 block">{totalSaved.toFixed(1)}</span>
-                      <span className="text-[10px] font-mono uppercase tracking-wider text-amber-700 font-bold">Kg Food Saved Today</span>
+                      <span className="block leading-snug text-[10px] font-mono uppercase tracking-wider text-amber-700 font-bold">Kg Food Saved Today</span>
                     </div>
                     <div className="bg-emerald-50/70 border border-emerald-200 rounded-xl p-3.5 text-center">
                       <span className="text-2xl sm:text-3xl font-extrabold font-mono text-emerald-800 block">{totalOpted}</span>
-                      <span className="text-[10px] font-mono uppercase tracking-wider text-emerald-700 font-bold">Opt-Outs Today</span>
+                      <span className="block leading-snug text-[10px] font-mono uppercase tracking-wider text-emerald-700 font-bold">Opt-Outs Today</span>
                     </div>
                   </div>
                 );
@@ -2291,7 +2291,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
                   required
                   value={noticeForm.title}
                   onChange={(e) => setNoticeForm({ ...noticeForm, title: e.target.value })}
-                  placeholder="e.g., Water Pump Motor Overhaul — Block B 3rd Floor"
+                  placeholder="e.g., Water off 2–5 PM, Block B"
                   className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 focus:outline-none focus:border-emerald-600"
                 />
               </div>
@@ -2309,7 +2309,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
               </div>
 
               {/* Action Tag & Urgency */}
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-slate-700 font-medium mb-1">Interactive Action Tag</label>
                   <select
@@ -2348,7 +2348,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
                   type="text"
                   value={noticeForm.smsPhones}
                   onChange={(e) => setNoticeForm({ ...noticeForm, smsPhones: e.target.value })}
-                  placeholder="10-digit mobile numbers, comma-separated — leave blank for notification-only"
+                  placeholder="10-digit numbers, comma-separated"
                   className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 focus:outline-none focus:border-emerald-600"
                 />
               </div>

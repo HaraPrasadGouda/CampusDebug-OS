@@ -191,7 +191,7 @@ export default function WardenCreatePassModal({ isOpen, onClose }) {
             </div>
           </div>
           <button type="button" onClick={handleClose}
-            className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center transition-colors cursor-pointer shrink-0">
+            className="w-[44px] h-[44px] rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center transition-colors cursor-pointer shrink-0">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -234,7 +234,7 @@ export default function WardenCreatePassModal({ isOpen, onClose }) {
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder="Name or roll number (e.g. Diya / 2201107101)"
                   autoFocus
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-9 pr-3 py-2.5 text-xs text-slate-800 focus:outline-none focus:border-emerald-600"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-9 pr-3 min-h-[44px] py-2.5 text-xs text-slate-800 focus:outline-none focus:border-emerald-600"
                 />
               </div>
               {searching && <p className="text-[11px] text-slate-500 px-1">Searching the student directory…</p>}
@@ -311,7 +311,7 @@ export default function WardenCreatePassModal({ isOpen, onClose }) {
                   value={formData.destination}
                   onChange={(e) => setFormData(prev => ({ ...prev, destination: e.target.value }))}
                   placeholder="e.g. Market Complex, Home, Hospital"
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-slate-800 focus:outline-none focus:border-emerald-600"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 min-h-[44px] py-2.5 text-xs text-slate-800 focus:outline-none focus:border-emerald-600"
                 />
               </div>
 
@@ -326,7 +326,7 @@ export default function WardenCreatePassModal({ isOpen, onClose }) {
                       min={new Date().toISOString().slice(0, 10)}
                       value={formData.returnDate}
                       onChange={(e) => setFormData(prev => ({ ...prev, returnDate: e.target.value }))}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-slate-800 focus:outline-none focus:border-emerald-600" />
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 min-h-[44px] py-2.5 text-xs text-slate-800 focus:outline-none focus:border-emerald-600" />
                   </div>
                 )}
                 <div className={isHomeLeave ? '' : 'col-span-2'}>
@@ -336,7 +336,7 @@ export default function WardenCreatePassModal({ isOpen, onClose }) {
                   <input type="time"
                     value={formData.returnTime}
                     onChange={(e) => setFormData(prev => ({ ...prev, returnTime: e.target.value }))}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-slate-800 focus:outline-none focus:border-emerald-600" />
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 min-h-[44px] py-2.5 text-xs text-slate-800 focus:outline-none focus:border-emerald-600" />
                 </div>
               </div>
 
@@ -348,7 +348,7 @@ export default function WardenCreatePassModal({ isOpen, onClose }) {
                   onChange={(e) => setFormData(prev => ({ ...prev, reason: e.target.value }))}
                   rows={2}
                   placeholder="Recorded on the student's behalf at the warden desk…"
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5 text-xs text-slate-800 focus:outline-none focus:border-emerald-600 resize-none" />
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 min-h-[44px] py-2.5 text-xs text-slate-800 focus:outline-none focus:border-emerald-600 resize-none" />
               </div>
 
               {timeError && (

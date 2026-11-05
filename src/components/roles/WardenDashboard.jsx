@@ -535,7 +535,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
         <div className="bg-gradient-to-br from-[#edf9f5] to-[#e0f5ed] border border-[#bbf7d0] rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 flex items-center justify-between gap-2 min-w-0">
           <div className="min-w-0">
             <span className="block text-[11px] sm:text-xs font-extrabold text-emerald-950 leading-snug">Pending Gate Passes</span>
-            <span className="block text-[10px] sm:text-[11px] text-emerald-800 font-bold leading-snug">Awaiting action · <span className="font-mono">Sign-off</span></span>
+            <span className="block text-[10px] sm:text-[11px] text-emerald-800 font-bold leading-snug">Awaiting action · <span className="font-mono whitespace-nowrap">Sign-off</span></span>
           </div>
           <span className="text-2xl sm:text-3xl font-extrabold font-mono text-emerald-900 shrink-0">{pendingPasses.length}</span>
         </div>
@@ -543,7 +543,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
         <div className="bg-gradient-to-br from-[#faf5ff] to-[#f3e8ff] border border-[#e9d5ff] rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 flex items-center justify-between gap-2 min-w-0">
           <div className="min-w-0">
             <span className="block text-[11px] sm:text-xs font-extrabold text-purple-950 leading-snug">Master Clusters</span>
-            <span className="block text-[10px] sm:text-[11px] text-purple-800 font-bold leading-snug">{impactedStudentsCount} Students · <span className="font-mono">Auto-grouped</span></span>
+            <span className="block text-[10px] sm:text-[11px] text-purple-800 font-bold leading-snug">{impactedStudentsCount} Students · <span className="font-mono whitespace-nowrap">Auto-grouped</span></span>
           </div>
           <span className="text-2xl sm:text-3xl font-extrabold font-mono text-purple-900 shrink-0">{clusters.length}</span>
         </div>
@@ -559,7 +559,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
         <div className="bg-gradient-to-br from-[#eff6ff] to-[#dbeafe] border border-[#bfdbfe] rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 flex items-center justify-between gap-2 min-w-0">
           <div className="min-w-0">
             <span className="block text-[11px] sm:text-xs font-extrabold text-blue-950 leading-snug">Avg Resolution Time</span>
-            <span className="block text-[10px] sm:text-[11px] text-blue-800 font-bold leading-snug">{avgResolutionHours === null ? 'No resolved tickets yet' : avgResolutionHours <= 4 ? 'Within SLA' : 'Above SLA'} · <span className="font-mono">Target: 4h</span></span>
+            <span className="block text-[10px] sm:text-[11px] text-blue-800 font-bold leading-snug">{avgResolutionHours === null ? 'No resolved tickets yet' : avgResolutionHours <= 4 ? 'Within SLA' : 'Above SLA'} · <span className="font-mono whitespace-nowrap">Target: 4h</span></span>
           </div>
           <span className="text-2xl sm:text-3xl font-extrabold font-mono text-blue-950 shrink-0">{avgResolutionHours === null ? '—' : avgResolutionHours < 10 ? avgResolutionHours.toFixed(1) : Math.round(avgResolutionHours)}{avgResolutionHours !== null && <span className="text-base font-normal text-blue-800">h</span>}</span>
         </div>
@@ -725,7 +725,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
           )}
         </section>
         <section id="wd-passes" className={`order-1 xl:col-span-7 xl:row-start-1 xl:flex xl:flex-col xl:max-h-[600px] scroll-mt-[124px] min-w-0 bg-white border-2 border-emerald-300 rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm ${tabCls('passes')}`}>
-          <div className="flex items-start justify-between border-b border-emerald-100 pb-3 gap-3">
+          <div className="flex flex-col sm:flex-row sm:items-start justify-between border-b border-emerald-100 pb-3 gap-3">
             <div className="min-w-0">
               <h2 className="text-[15px] font-bold text-slate-900 flex items-center gap-2.5">
                 <span className="w-9 h-9 rounded-xl bg-emerald-100/70 text-emerald-700 border border-emerald-200 flex items-center justify-center shrink-0">
@@ -740,7 +740,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
             </div>
             <button
               onClick={() => setShowCreatePassModal(true)}
-              className="shrink-0 min-h-[44px] px-3 sm:px-4 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold shadow-sm transition-colors cursor-pointer flex items-center gap-1.5"
+              className="shrink-0 w-full sm:w-auto justify-center min-h-[44px] px-3 sm:px-4 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold shadow-sm transition-colors cursor-pointer flex items-center gap-1.5"
             >
               <ArrowRight className="w-3.5 h-3.5 rotate-[-90deg] sm:rotate-45" />
               <span className="hidden sm:inline">Create Pass on Behalf</span>
@@ -936,6 +936,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                             {stu}
                           </span>
                         ))}
+                        {roomsList.length === 0 && <span className="text-xs text-slate-400">—</span>}
                       </div>
                     </div>
                   </div>
@@ -1307,7 +1308,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                       <div className="text-xs font-bold text-slate-900">
                         {row.student_name || 'Student'}
                         <span className="text-[11px] font-normal text-slate-500 font-mono"> ({row.student_roll})</span>
-                        <span className="ml-2 text-[10px] font-mono text-emerald-700 font-bold">{row.pass_ref}</span>
+                        <span className="ml-2 text-[10px] font-mono text-emerald-700 font-bold whitespace-nowrap">{row.pass_ref}</span>
                       </div>
                       <div className="text-[11px] text-slate-600 font-medium flex items-center gap-2 flex-wrap mt-0.5">
                         <span>{row.destination || '—'}</span>

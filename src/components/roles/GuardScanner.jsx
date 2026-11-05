@@ -1364,12 +1364,12 @@ export default function GuardScanner({ searchQuery = '' }) {
 
       {/* Offline Gate Logs Table */}
       <section className="bg-white border border-slate-200 rounded-xl p-4 sm:p-5 space-y-3 shadow-sm">
-        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-          <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-            <Clock className="w-4 h-4 text-emerald-600" />
-            <span>Today's Gate Log</span>
+        <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-3">
+          <h3 className="text-base font-bold text-slate-900 flex items-center gap-2 min-w-0">
+            <Clock className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span className="whitespace-nowrap">Today's Gate Log</span>
           </h3>
-          <span className="text-xs font-mono text-slate-500">
+          <span className="text-xs font-mono text-slate-500 text-right shrink-0">
             {gateLogs.length} Verified Records
           </span>
         </div>

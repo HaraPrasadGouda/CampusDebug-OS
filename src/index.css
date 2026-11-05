@@ -158,3 +158,15 @@ body {
       linear-gradient(172deg, #057a58 0%, #066c51 28%, #07624a 50%, #06533e 70%, #043a2c 86%, #032b22 100%);
   }
 }
+
+
+/* Admin / Dean console: on phones every button, select and text box is at least 44px (WCAG tap target). Scoped to .admin-dash. */
+@media (max-width: 1023px) {
+  .admin-dash button,
+  .admin-dash select,
+  .admin-dash textarea,
+  .admin-dash input:not([type='checkbox']):not([type='radio']):not([type='file']) {
+    min-height: 44px;
+  }
+  .admin-dash button { min-width: 44px; }
+}

@@ -24,28 +24,28 @@ export function FeePaymentsView({ data, error = null, loading = false, onRefresh
 
   return (
     <div data-testid="fee-payments" className="space-y-3 min-w-0">
-      <div className="flex items-stretch gap-2 min-w-0">
-        <div className="grid grid-cols-2 gap-2 flex-1 min-w-0">
-          <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 min-w-0">
-            <p className="text-[18px] sm:text-[20px] font-extrabold font-mono leading-tight text-emerald-900 break-words">{data ? data.totalCount : '—'}</p>
-            <p className="text-[11px] font-bold mt-1 text-emerald-800">Receipts</p>
-          </div>
-          <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 min-w-0">
-            <p className="text-[18px] sm:text-[20px] font-extrabold font-mono leading-tight text-slate-900 break-words">{data ? fmtMoney(data.totalAmount) : '—'}</p>
-            <p className="text-[11px] font-bold mt-1 text-slate-600">Collected (demo)</p>
-          </div>
+      <div className="grid grid-cols-2 gap-2 min-w-0">
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 min-w-0">
+          <p className="text-[16px] sm:text-[20px] font-extrabold font-mono leading-tight text-emerald-900 break-words">{data ? data.totalCount : '—'}</p>
+          <p className="text-[11px] font-bold mt-1 text-emerald-800">Receipts</p>
         </div>
+        <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 min-w-0">
+          <p className="text-[16px] sm:text-[20px] font-extrabold font-mono leading-tight text-slate-900 break-words">{data ? fmtMoney(data.totalAmount) : '—'}</p>
+          <p className="text-[11px] font-bold mt-1 text-slate-600">Collected (demo)</p>
+        </div>
+      </div>
+
+      <div className="flex items-stretch gap-2 min-w-0">
+        <label className="flex-1 flex items-center gap-2 min-h-[44px] min-w-0 px-3 rounded-xl border border-slate-200 bg-white focus-within:border-slate-400">
+          <Search className="w-4 h-4 text-slate-400 shrink-0" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Name, roll or receipt"
+            className="flex-1 min-w-0 bg-transparent outline-none text-base sm:text-sm text-slate-800 placeholder:text-slate-400" />
+        </label>
         <button type="button" onClick={onRefresh} disabled={loading} aria-label="Refresh fee payments"
           className="w-11 min-h-[44px] shrink-0 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 flex items-center justify-center cursor-pointer disabled:opacity-60">
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
         </button>
       </div>
-
-      <label className="flex items-center gap-2 min-h-[44px] px-3 rounded-xl border border-slate-200 bg-white focus-within:border-slate-400">
-        <Search className="w-4 h-4 text-slate-400 shrink-0" />
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, roll or receipt"
-          className="flex-1 min-w-0 bg-transparent outline-none text-base sm:text-sm text-slate-800 placeholder:text-slate-400" />
-      </label>
 
       {error ? (
         <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold">{error}</div>
@@ -63,7 +63,7 @@ export function FeePaymentsView({ data, error = null, loading = false, onRefresh
             {rows.map((p) => (
               <li key={p.receipt_id} className="px-3.5 py-2.5 flex items-start justify-between gap-3 min-w-0">
                 <div className="min-w-0">
-                  <div className="text-[13px] font-bold text-slate-900 break-words">{p.payer_name || 'Student'} <span className="font-mono font-semibold text-slate-500 text-[11px]">· {p.roll_number}</span></div>
+                  <div className="text-[13px] font-bold text-slate-900 break-words">{p.payer_name || 'Student'} <span className="inline-block whitespace-nowrap font-mono font-semibold text-slate-500 text-[11px]">· {p.roll_number}</span></div>
                   <div className="font-mono text-[11px] text-slate-500 break-all">{p.receipt_id}</div>
                 </div>
                 <div className="text-right shrink-0">

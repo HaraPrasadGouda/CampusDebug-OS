@@ -125,6 +125,10 @@ export async function flushOutbox(onNotification) {
         targetBody = { passData: item.pass || item.payload || item };
       } else if (item.actionType === 'WARDEN_APPROVE_PASS') {
         targetEndpoint = item.endpoint || '/api/approve-pass';
+        // The queued payload is the approved pass object, which carries `id`;
+        // the server route requires `passId` (it answered 400 on every replay).
+        const ap = item.payload || item;
+        targetBody = { ...ap, passId: ap.passId || ap.id };
       } else if (item.actionType === 'WARDEN_REJECT_PASS') {
         // Fix 3: rejection had no mapping (it was POSTed to "/undefined" and
         // silently deleted). The warden desk records decisions through the
