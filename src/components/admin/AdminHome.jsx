@@ -32,6 +32,11 @@ const stamp = (iso) => {
   if (isNaN(d)) return '';
   return `${d.toLocaleDateString([], { day: 'numeric', month: 'short' })} · ${d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
 };
+const escalatedHeadline = (t) => {
+  const d = String(t.title || t.description || '').trim();
+  if (d) return d.length > 90 ? `${d.slice(0, 87).trim()}…` : d;
+  return t.category || 'Complaint';
+};
 const hoursText = (h) => {
   if (h < 1) return `${Math.max(1, Math.round(h * 60))} min`;
   return `${Math.round(h)} h`;
@@ -193,8 +198,8 @@ export default function AdminHome({
               <div key={t.id} data-home-escalated={t.id} className="rounded-xl bg-rose-50/60 border border-rose-200 p-3 flex items-start gap-3">
                 <span className="w-9 h-9 rounded-xl bg-rose-100 text-rose-700 flex items-center justify-center shrink-0"><AlertTriangle className="w-4 h-4" /></span>
                 <div className="min-w-0 flex-1">
-                  <p className="text-[13px] font-extrabold text-slate-900 leading-snug break-words">{t.title || t.category || 'Complaint'}</p>
-                  {(t.location || t.category) && <p className="text-[11.5px] text-slate-600 leading-snug break-words">{[t.location, t.title && t.category ? t.category : null].filter(Boolean).join(' · ')}</p>}
+                  <p className="text-[13px] font-extrabold text-slate-900 leading-snug break-words">{escalatedHeadline(t)}</p>
+                  {(t.location || t.category) && <p className="text-[11.5px] text-slate-600 leading-snug break-words">{[t.location, escalatedHeadline(t) !== t.category ? t.category : null].filter(Boolean).join(' · ')}</p>}
                   {t.breachedHours != null && <p className="mt-1 text-[11px] font-mono font-extrabold text-rose-700">SLA breached {hoursText(t.breachedHours)} ago</p>}
                 </div>
               </div>

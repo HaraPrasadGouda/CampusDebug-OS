@@ -515,7 +515,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
             clusterCount: Array.isArray(data.masterClusters) ? data.masterClusters.length : null,
             recentTickets: recent.length,
             escalated: recent.filter(t => String(t.status || '').toUpperCase() === 'ESCALATED_TO_DEAN').map(t => ({
-              id: t.id, title: t.title || null, category: t.category || null, location: t.location || null,
+              id: t.id, title: t.title || null, description: t.description || null, category: t.category || null, location: t.location || null,
               breachedHours: typeof t.slaHoursLeft === 'number' && t.slaHoursLeft < 0 ? -t.slaHoursLeft : null
             })),
             recentResolved: recent.filter(t => ['RESOLVED', 'CLOSED'].includes(String(t.status || '').toUpperCase())).length
