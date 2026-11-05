@@ -24,8 +24,10 @@ import {
   Utensils,
   Calendar,
   RefreshCw,
-  Building2
+  Building2,
+  Receipt
 } from 'lucide-react';
+import FeePaymentsPanel from '../FeePaymentsPanel';
 import { saveLocal, bulkSaveLocal, getAllLocal, queueOfflineAction, getOutboxCount } from '../../utils/db';
 import { getAccessToken } from '../../utils/authClient';
 import { getLiveUpdates } from '../../utils/liveUpdates';
@@ -940,13 +942,14 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
     mess: { label: 'Mess Kitchen Forecast', Icon: Utensils, on: 'bg-amber-600 text-white', off: 'bg-amber-100 text-amber-600', sel: 'bg-amber-50 border-amber-400 text-amber-900', bar: 'bg-amber-500' },
     csv: { label: `Import Students (CSV) (${importedUsers.length})`, Icon: FileSpreadsheet, on: 'bg-purple-600 text-white', off: 'bg-purple-100 text-purple-600', sel: 'bg-purple-50 border-purple-400 text-purple-900', bar: 'bg-purple-500' },
     metrics: { label: 'System Health & Sync Engine', Icon: Database, on: 'bg-sky-600 text-white', off: 'bg-sky-100 text-sky-600', sel: 'bg-sky-50 border-sky-400 text-sky-900', bar: 'bg-sky-500' },
+    fees: { label: 'Fee Payments', Icon: Receipt, on: 'bg-emerald-600 text-white', off: 'bg-emerald-100 text-emerald-600', sel: 'bg-emerald-50 border-emerald-400 text-emerald-900', bar: 'bg-emerald-500' },
     security: { label: 'Password Reset Desk', Icon: ShieldCheck, on: 'bg-rose-600 text-white', off: 'bg-rose-100 text-rose-600', sel: 'bg-rose-50 border-rose-400 text-rose-900', bar: 'bg-rose-500' },
   };
   const adminGroups = [
     { title: 'Communication', ids: ['dispatcher'] },
     { title: 'Academics', ids: ['timetable'] },
     { title: 'Campus & Hostel', ids: ['setup', 'mess'] },
-    { title: 'Support', ids: ['docs', 'security'] },
+    { title: 'Support', ids: ['docs', 'fees', 'security'] },
     { title: 'Data & System', ids: ['csv', 'metrics'] },
   ];
   const activeGroup = adminGroups.find(g => g.ids.includes(activeTab)) || adminGroups[0];
@@ -1059,7 +1062,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
       {/* Phone: tools of the selected group as a segmented switch */}
       {activeGroup.ids.length > 1 && (
         <div className={`${toolNavSlot && slotShown ? 'lg:hidden' : ''} grid grid-cols-2 gap-1 bg-white border border-slate-200 rounded-2xl shadow-sm p-1`}>
-          {activeGroup.ids.map((id) => {
+          {activeGroup.ids.map((id, i) => {
             const t = adminTabs[id];
             const on = activeTab === id;
             return (
@@ -1068,7 +1071,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
                 type="button"
                 data-admin-tab={id}
                 onClick={() => setActiveTab(id)}
-                className={`min-h-[44px] flex items-center justify-center gap-1.5 rounded-xl border px-2 py-1 text-center transition-colors cursor-pointer ${on ? t.sel : 'border-transparent text-slate-600 hover:bg-slate-50'}`}
+                className={`${i === activeGroup.ids.length - 1 && activeGroup.ids.length % 2 === 1 ? 'col-span-2 ' : ''}min-h-[44px] flex items-center justify-center gap-1.5 rounded-xl border px-2 py-1 text-center transition-colors cursor-pointer ${on ? t.sel : 'border-transparent text-slate-600 hover:bg-slate-50'}`}
               >
                 <t.Icon className="w-3.5 h-3.5 shrink-0" />
                 <span className="text-[11px] font-bold leading-tight">{t.label}</span>
@@ -1085,6 +1088,22 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
         <span className="text-slate-300 shrink-0">/</span>
         <h3 className="font-display font-extrabold text-sm sm:text-base text-slate-900 truncate">{(adminTabs[activeTab] || adminTabs.dispatcher).label}</h3>
       </div>
+
+      {/* --- FEE PAYMENTS (read-only list of the students' demo Settle Dues receipts) --- */}
+      {activeTab === 'fees' && (
+        <section className="bg-white border border-slate-200 rounded-xl p-4 sm:p-5 space-y-4 shadow-sm">
+          <div className="border-b border-slate-100 pb-3">
+            <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+              <Receipt className="w-5 h-5 text-emerald-600" />
+              <span>Fee Payments</span>
+            </h2>
+            <p className="text-xs text-slate-500 mt-1">
+              Receipts from students&apos; Settle Dues taps (demo payments, no real money moves). Read-only.
+            </p>
+          </div>
+          <FeePaymentsPanel />
+        </section>
+      )}
 
       {/* --- TAB 5: DOCUMENT DESK (Registrar queue) --- */}
       {activeTab === 'docs' && (

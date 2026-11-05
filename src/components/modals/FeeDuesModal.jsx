@@ -3,7 +3,8 @@ import {
   CreditCard,
   X,
   CheckCircle2,
-  Landmark
+  Landmark,
+  Receipt
 } from 'lucide-react';
 import { getAccessToken, getStoredProfile } from '../../utils/authClient';
 
@@ -11,17 +12,34 @@ import { getAccessToken, getStoredProfile } from '../../utils/authClient';
 // The balance shown here is the signed-in student's actual
 // profiles.fee_due_balance, refreshed from /api/dashboard-data,
 // and "Settle Dues" clears that same column via POST /api/fees/pay.
+// It is a DEMO payment (no real money moves): the server records a receipt and the
+// same spot then shows a "Paid ₹X" receipt card plus the student's past receipts.
+const fmtMoney = (n) => `₹${Number(n).toLocaleString('en-IN', { minimumFractionDigits: Number.isInteger(Number(n)) ? 0 : 2, maximumFractionDigits: 2 })}`;
+const fmtWhen = (iso) => {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' });
+};
+
 export default function FeeDuesModal({ isOpen, onClose, onFeePaid, session }) {
   const [feeDue, setFeeDue] = useState(
     session?.feeDue != null && session.feeDue !== undefined ? Number(session.feeDue) : null
   );
   const [isProcessingPay, setIsProcessingPay] = useState(false);
   const [loadError, setLoadError] = useState(null);
+  const [receipts, setReceipts] = useState([]);   // this student's receipts, newest first
 
   useEffect(() => {
     if (!isOpen) return;
     let alive = true;
     setLoadError(null);
+    // The student's own receipts load alongside the balance — nothing to tap to see them
+    fetch('/api/fees/receipts', {
+      headers: getAccessToken() ? { Authorization: `Bearer ${getAccessToken()}` } : undefined
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => { if (alive && data?.success && Array.isArray(data.receipts)) setReceipts(data.receipts); })
+      .catch(() => { /* offline — receipts just stay as they were */ });
     // Refresh the real balance every time the modal opens
     fetch('/api/dashboard-data', {
       headers: getAccessToken()
@@ -61,13 +79,18 @@ export default function FeeDuesModal({ isOpen, onClose, onFeePaid, session }) {
       .then((data) => {
         if (data?.success) {
           setFeeDue(0);
+          if (data.receipt) {
+            setReceipts((list) => [data.receipt, ...list.filter((x) => x.receipt_id !== data.receipt.receipt_id)]);
+          }
+          // tell the dashboard card behind the modal so it shows "No Dues" at once
+          try { window.dispatchEvent(new CustomEvent('campus_fees_updated', { detail: { feeDue: 0 } })); } catch { /* ignore */ }
           if (onFeePaid) {
             const prev = data.previous != null ? Number(data.previous) : null;
             onFeePaid(
               data.alreadyCleared
                 ? 'Your dues were already settled — showing the latest balance.'
                 : prev != null
-                  ? `₹${prev.toLocaleString('en-IN')} settled — campus dues cleared.`
+                  ? `${fmtMoney(prev)} paid (demo)${data.receipt ? ` — receipt ${data.receipt.receipt_id}` : ''}.`
                   : 'Campus dues cleared.'
             );
           }
@@ -82,6 +105,9 @@ export default function FeeDuesModal({ isOpen, onClose, onFeePaid, session }) {
   };
 
   const pendingAmount = feeDue != null ? feeDue : null;
+  const latest = receipts[0] || null;
+  // the latest receipt is the big card when nothing is due; everything else goes in the small list below
+  const pastReceipts = pendingAmount === 0 && latest ? receipts.slice(1) : receipts;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/40 backdrop-blur-xs animate-in fade-in duration-200 overflow-y-auto">
@@ -105,7 +131,8 @@ export default function FeeDuesModal({ isOpen, onClose, onFeePaid, session }) {
           <button
             type="button"
             onClick={onClose}
-            className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center transition-colors cursor-pointer shrink-0"
+            aria-label="Close"
+            className="w-11 h-11 -mr-2 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center transition-colors cursor-pointer shrink-0"
           >
             <X className="w-4 h-4" />
           </button>
@@ -151,6 +178,7 @@ export default function FeeDuesModal({ isOpen, onClose, onFeePaid, session }) {
                 <div className="text-[11px] font-mono text-slate-500 leading-relaxed">
                   Covers all pending campus dues on your account (mess, exam, hostel, library)
                 </div>
+                <div className="text-[10px] font-semibold text-slate-400">Demo payment — no real money is charged</div>
               </div>
               <div className="flex items-center sm:justify-end gap-3 shrink-0">
                 <span className="text-sm font-bold font-mono text-slate-900">
@@ -159,11 +187,29 @@ export default function FeeDuesModal({ isOpen, onClose, onFeePaid, session }) {
                 <button
                   onClick={handlePayDues}
                   disabled={isProcessingPay}
-                  className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition-all cursor-pointer shadow-sm shrink-0 disabled:opacity-60"
+                  className="px-4 min-h-[44px] rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition-all cursor-pointer shadow-sm shrink-0 disabled:opacity-60"
                 >
                   {isProcessingPay ? 'Processing…' : 'Settle Dues'}
                 </button>
               </div>
+            </div>
+          ) : pendingAmount === 0 && latest ? (
+            <div data-testid="fee-receipt" className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-emerald-900">
+              <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                  <span className="text-lg font-extrabold font-mono tracking-tight whitespace-nowrap">Paid {fmtMoney(latest.amount)}</span>
+                </div>
+                <span className="text-[10px] font-bold px-2 py-1 rounded-full bg-white border border-emerald-200 text-emerald-700 whitespace-nowrap shrink-0">Demo payment</span>
+              </div>
+              <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-[11px]">
+                <dt className="text-emerald-700/80">Receipt</dt>
+                <dd className="font-mono font-bold text-right break-all">{latest.receipt_id}</dd>
+                <dt className="text-emerald-700/80">Paid on</dt>
+                <dd className="font-semibold text-right">{fmtWhen(latest.paid_at)}</dd>
+                <dt className="text-emerald-700/80">Status</dt>
+                <dd className="font-semibold text-right">All dues cleared</dd>
+              </dl>
             </div>
           ) : pendingAmount === 0 ? (
             <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 flex items-center gap-2">
@@ -177,12 +223,33 @@ export default function FeeDuesModal({ isOpen, onClose, onFeePaid, session }) {
             </div>
           )}
 
+          {/* Past receipts — shown as soon as there are any; a long history scrolls inside the box */}
+          {pastReceipts.length > 0 && (
+            <div data-testid="fee-past-receipts" className="border border-slate-200 rounded-xl overflow-hidden">
+              <div className="px-3.5 py-2 bg-slate-50 border-b border-slate-200 flex items-center gap-1.5 text-[11px] font-bold text-slate-600">
+                <Receipt className="w-3.5 h-3.5" /> {pendingAmount === 0 && latest ? 'Past receipts' : 'Your receipts'}
+                <span className="font-mono text-slate-400">({pastReceipts.length})</span>
+              </div>
+              <ul className="max-h-44 overflow-y-auto overscroll-contain divide-y divide-slate-100">
+                {pastReceipts.map((r) => (
+                  <li key={r.receipt_id} className="px-3.5 py-2 flex items-center justify-between gap-3 min-w-0">
+                    <div className="min-w-0">
+                      <div className="font-mono text-[11px] font-bold text-slate-800 break-all">{r.receipt_id}</div>
+                      <div className="text-[10.5px] text-slate-500">{fmtWhen(r.paid_at)} · Demo</div>
+                    </div>
+                    <span className="font-mono text-xs font-bold text-slate-900 whitespace-nowrap">{fmtMoney(r.amount)}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {/* Action Buttons */}
           <div className="flex items-center justify-end pt-3 border-t border-slate-200">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs transition-colors cursor-pointer"
+              className="px-5 min-h-[44px] rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs transition-colors cursor-pointer"
             >
               Close
             </button>
