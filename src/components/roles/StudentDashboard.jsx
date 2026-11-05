@@ -166,6 +166,12 @@ export default function StudentDashboard({
       .catch(() => { /* offline — keep session values */ });
     return () => { alive = false; };
   }, []);
+  // Settle Dues was tapped in the fee modal: the Fees & Dues card behind it shows the new balance at once
+  useEffect(() => {
+    const onFees = (e) => { const v = e?.detail?.feeDue; if (v != null) setMyStats((s) => ({ ...s, feeDue: Number(v) })); };
+    window.addEventListener('campus_fees_updated', onFees);
+    return () => window.removeEventListener('campus_fees_updated', onFees);
+  }, []);
   const attendancePct = myStats.attendance != null ? myStats.attendance : null;
   const ringCircumference = 188.5;
   const ringOffset = attendancePct != null ? ringCircumference * (1 - attendancePct / 100) : ringCircumference;

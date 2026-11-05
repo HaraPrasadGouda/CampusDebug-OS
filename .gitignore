@@ -44,3 +44,4 @@ data/cleaning_meta.json
 # teacher dashboard v2 local stores
 data/lesson_plans.json
 data/teacher_leave_log.json
+data/fee_payments.json

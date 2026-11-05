@@ -11,6 +11,7 @@ import { initPassSigning, passPublicKeyInfo, verifyPassQr, passQrFresh, signPass
 import { leaveNumber, normalizePassNumber } from './src/utils/passNumber.js';
 import { openingPush, istParts, normalizeSettings, answerWindow, lastClosedWindowDate, studentView, answerRoom, closeWindow, morningSms, wardenBlockView, hmToMin, fmtClock, ANSWER_HOURS, RED_ALERT_NOT_FIXED } from './cleaning.js';
 import { createCleaningStore } from './cleaning-store.js';
+import { createFeeStore, newReceiptId } from './fee-store.js';
 
 dotenv.config();
 
@@ -3056,34 +3057,95 @@ app.get('/api/health', async (req, res) => {
 // college-assigned UUIDs, so look up by the profile row resolved in the
 // middleware via the roll-number fallback (authenticateUser does this).
 // Same row id is then reused as student key for passes and tickets below.
-// 7b. API ROUTE: POST /api/fees/pay — REAL dues settlement.
-// Clears the signed-in student's profiles.fee_due_balance to 0 and returns
-// the amount that was settled. The Fee Dues modal shows this same column,
-// so card, modal and ledger can never disagree again.
+// 7b. API ROUTE: POST /api/fees/pay — DEMO fee payment (no real money moves).
+// One tap, no body needed. The server reads the signed-in student's own dues
+// (profiles.fee_due_balance), clears them in a compare-and-swap (so two taps /
+// two servers can never both pay), and records ONE receipt: receipt id, roll,
+// amount (always the server-side dues, never a number from the client), time,
+// method 'DEMO', payer name. A second tap when dues are already 0 returns
+// alreadyCleared plus the existing latest receipt, never a second receipt.
+// Receipts live in public.fee_payments (migration_fee_payments.sql) or, until that
+// table exists, in data/fee_payments.json (fee-store.js).
+const feeStore = createFeeStore({ supabase, file: path.join(__dirname, 'data', 'fee_payments.json') });
+const feePayInFlight = new Map();   // profile row id -> promise of the payment being processed right now
+const feeMoney = (n) => Math.round(Number(n) * 100) / 100;
+
+async function settleDuesOnce({ rowId, roll, name }) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+        const { data: prof, error: selErr } = await supabase
+            .from('profiles').select('fee_due_balance').eq('id', rowId).maybeSingle();
+        if (selErr) throw selErr;
+        const previous = prof?.fee_due_balance != null ? feeMoney(prof.fee_due_balance) : 0;
+        if (!(previous > 0)) return { already: true, previous: 0 };
+        // Compare-and-swap: only clears if the balance is still exactly what we read. Whoever gets
+        // a row back is the one payer; everyone else re-reads (and finds 0).
+        const { data: won, error: updErr } = await supabase
+            .from('profiles').update({ fee_due_balance: 0 }).eq('id', rowId).eq('fee_due_balance', previous).select('id');
+        if (updErr) throw updErr;
+        if (!won || !won.length) continue;
+        let receipt = null;
+        try {
+            const now = new Date();
+            for (let i = 0; i < 6 && !receipt; i++) {
+                receipt = await feeStore.add({ receipt_id: newReceiptId(now), roll_number: roll, student_id: rowId, payer_name: name, amount: previous, method: 'DEMO', paid_at: now.toISOString() });
+            }
+            if (!receipt) throw new Error('could not allocate a receipt id');
+        } catch (e) {
+            // never leave dues cleared without a receipt: put the balance back
+            await supabase.from('profiles').update({ fee_due_balance: previous }).eq('id', rowId).eq('fee_due_balance', 0);
+            throw e;
+        }
+        return { already: false, previous, receipt };
+    }
+    return { already: true, previous: 0 };
+}
+
 app.post('/api/fees/pay', authenticateUser, async (req, res) => {
     try {
         const rowId = req.user?.profile?.id;
-        if (!supabase || !rowId) {
+        const roll = String(req.user?.profile?.roll_number || req.user?.rollNumber || '');
+        if (!supabase || !rowId || !roll) {
             return res.status(503).json({ success: false, error: 'Fee settlement needs a Supabase profile' });
         }
-        const { data: prof, error: selErr } = await supabase
-            .from('profiles')
-            .select('fee_due_balance')
-            .eq('id', rowId)
-            .maybeSingle();
-        if (selErr) throw selErr;
-        const previous = prof?.fee_due_balance != null ? Number(prof.fee_due_balance) : 0;
-        if (previous <= 0) {
-            return res.json({ success: true, alreadyCleared: true, previous, feeDue: 0 });
+        const name = req.user?.profile?.full_name || req.user?.name || null;
+        // a tap that lands while the same student's first tap is still being processed waits for it,
+        // then runs its own read (which now sees 0 dues) — one receipt, one answer for both
+        const running = feePayInFlight.get(rowId);
+        if (running) await running.catch(() => {});
+        const job = settleDuesOnce({ rowId, roll, name });
+        feePayInFlight.set(rowId, job);
+        let result;
+        try { result = await job; } finally { if (feePayInFlight.get(rowId) === job) feePayInFlight.delete(rowId); }
+        if (result.already) {
+            const receipt = await feeStore.latestByRoll(roll);
+            return res.json({ success: true, alreadyCleared: true, previous: 0, feeDue: 0, receipt });
         }
-        const { error: updErr } = await supabase
-            .from('profiles')
-            .update({ fee_due_balance: 0 })
-            .eq('id', rowId);
-        if (updErr) throw updErr;
-        res.json({ success: true, previous, feeDue: 0 });
+        res.json({ success: true, previous: result.previous, amount: result.previous, feeDue: 0, receipt: result.receipt });
     } catch (e) {
         console.warn('fee pay error:', e.message);
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// The signed-in user's OWN receipts, newest first. Any ?roll= in the query is ignored on purpose.
+app.get('/api/fees/receipts', authenticateUser, async (req, res) => {
+    try {
+        const roll = String(req.user?.profile?.roll_number || req.user?.rollNumber || '');
+        if (!roll) return res.json({ success: true, receipts: [] });
+        res.json({ success: true, receipts: await feeStore.listByRoll(roll, 50) });
+    } catch (e) {
+        console.warn('fee receipts error:', e.message);
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// Staff only: every receipt, newest first (read-only). Students and teachers get 403.
+app.get('/api/fees/payments', authenticateUser, requireRole('ADMIN', 'DEAN', 'WARDEN'), async (req, res) => {
+    try {
+        const limit = Math.min(500, Math.max(1, parseInt(req.query.limit, 10) || 200));
+        res.json({ success: true, ...(await feeStore.listAll({ limit })) });
+    } catch (e) {
+        console.warn('fee payments error:', e.message);
         res.status(500).json({ success: false, error: e.message });
     }
 });

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import CleaningPanel from '../CleaningPanel';
+import FeePaymentsPanel from '../FeePaymentsPanel';
 import { 
   ShieldCheck, 
   CheckCircle2, 
@@ -20,7 +21,8 @@ import {
   RefreshCw,
   UserCheck,
   ClipboardList,
-  Phone
+  Phone,
+  Receipt
 } from 'lucide-react';
 import AiCategoryChip from '../AiCategoryChip';
 import { WardenTicketLifecycle, hasLifecycle, ticketCode } from '../TicketLifecycle';
@@ -503,7 +505,8 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
     { tab: 'cleaning', id: 'wd-cleaning', label: 'Cleaning', count: cleaningAlerts > 0 ? cleaningAlerts : null, dot: 'bg-cyan-500', hot: cleaningAlerts > 0, hotCls: 'bg-rose-600 text-white' },
     { tab: 'clusters', id: 'wd-clusters', label: 'Master Incidents', count: clusters.length, dot: 'bg-purple-500', hot: false },
     { tab: 'sla', id: 'wd-sla', label: 'SLA Heatmap', count: slaAtRiskCount > 0 ? slaAtRiskCount : null, dot: 'bg-rose-500', hot: slaAtRiskCount > 0, hotCls: 'bg-rose-600 text-white' },
-    { tab: 'register', id: 'wd-register', label: 'Gate Register', count: registerRows.length, dot: 'bg-slate-700', hot: false }
+    { tab: 'register', id: 'wd-register', label: 'Gate Register', count: registerRows.length, dot: 'bg-slate-700', hot: false },
+    { tab: 'fees', id: 'wd-fees', label: 'Fee Payments', count: null, dot: 'bg-emerald-500', hot: false }
   ];
   const jumpToSection = (c) => {
     setActiveTab(c.tab);
@@ -1341,6 +1344,21 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
               {showAll.register ? 'Show less' : `View all (${shownGateRows.length})`}
             </button>
           )}
+        </section>
+
+        <section id="wd-fees" className={`order-7 xl:col-span-12 xl:row-start-6 scroll-mt-[124px] min-w-0 bg-white border-2 border-emerald-200 rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm ${tabCls('fees')}`}>
+          <div className="border-b border-emerald-100 pb-3">
+            <h2 className="text-[15px] font-bold text-slate-900 flex items-center gap-2.5">
+              <span className="w-9 h-9 rounded-xl bg-emerald-100/70 text-emerald-700 border border-emerald-200 flex items-center justify-center shrink-0">
+                <Receipt className="w-4 h-4" />
+              </span>
+              <span>Fee Payments</span>
+            </h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Receipts from students&apos; Settle Dues taps (demo payments, no real money moves). Read-only.
+            </p>
+          </div>
+          <FeePaymentsPanel />
         </section>
       </div>
 
