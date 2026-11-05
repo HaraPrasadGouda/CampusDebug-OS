@@ -19,7 +19,7 @@ const uid = (n) => `${n.toString(16).padStart(8, '0')}-0000-4000-8000-${n.toStri
 function buildData(scenario) {
     const profiles = JSON.parse(fs.readFileSync(path.join(HERE, 'support/profiles.json'), 'utf8'));
     const person = (i, roll, role, name, extra = {}) => ({ id: uid(i), roll_number: roll, role, full_name: name, phone_number: `9${String(i).padStart(9, '0')}`, ...extra });
-    profiles.push(person(900, 'WARD01', 'WARDEN', 'Mr. Subrat Kumar Panda', { department: 'Hostel Administration' }));
+    profiles.push(person(900, 'WARD01', 'WARDEN', 'Dr. S. K. Mohanty', { department: 'Hostel Administration' }));
     const names = ['Ananya Mishra', 'Rakesh Kumar Behera', 'Subhashree Satapathy', 'Debasish Mohapatra', 'Priyanka Pattnaik', 'Soumya Ranjan Nayak'];
     const studs = Array.from({ length: 60 }, (_, i) => person(1000 + i, `24011${String(i).padStart(5, '0')}`, 'STUDENT', names[i % names.length] + (i >= names.length ? ' Jr.' : ''),
         { resident_type: 'hosteler', hostel_block: 'Hostel ' + 'ABC'[i % 3], room_number: String(100 + i), mentor_roll: 'FAC003', department: 'Computer Science & Engineering', course: 'BTech', section: 'A' }));
@@ -79,7 +79,7 @@ describe('Warden Home "Needs you now" (headless Chromium)', { skip: have ? false
                 const phone = vp[0] < 800;
                 assert.ok(o.home_visible, 'Home is the first screen');
                 assert.ok(o.kpi_strip_hidden, 'old KPI strip is replaced by the hero on Home');
-                assert.match(o.heading, /^Good (morning|afternoon|evening), Subrat!$/);
+                assert.match(o.heading, /^Good (morning|afternoon|evening), Dr\. Mohanty!$/);
                 assert.equal(o.hero_tiles.length, 4);
                 assert.match(o.hero_tiles[0], /^7\s*Still out$/, `still out must ignore passes that already came back: ${o.hero_tiles[0]}`);
                 assert.match(o.needs_badge, /Needs you now\s*\d+/);

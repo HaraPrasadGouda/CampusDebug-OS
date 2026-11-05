@@ -38,6 +38,7 @@ import { StudentTicketActions, StageTicks, hasLifecycle, ticketCode } from '../T
 import { getTodayMenuKey, getTodayMenu, getTomorrowMenu, isFeastDay, getTodayDayLabel, getMealStatus, fmtDuration, MEAL_ORDER } from '../../data/messMenu';
 import { isLeaveWindowOpen } from '../../utils/leaveWindow';
 import { leaveNumber } from '../../utils/passNumber';
+import { greetingName } from '../../utils/displayName';
 import { canAutoRefresh } from '../../utils/liveUpdates';
 
 export default function StudentDashboard({
@@ -317,7 +318,7 @@ export default function StudentDashboard({
         {/* Left greeting text */}
         <div className="relative z-10 min-w-0">
           <h1 className="text-[21px] lg:text-[28px] font-extrabold tracking-tight leading-tight text-slate-900 flex items-center gap-2">
-            <span>{getGreeting()}, {(session?.name || 'Student').split(' ')[0]}!</span>
+            <span>{getGreeting()}, {greetingName(session?.name, 'Student')}!</span>
             <span className="text-xl lg:text-[26px] animate-bounce">👋</span>
           </h1>
           <p className="text-[12.5px] lg:text-sm text-slate-500 mt-1 font-medium leading-relaxed max-w-[72%] lg:max-w-none">
