@@ -9,7 +9,10 @@ const MISSING = /does not exist|could not find the table|42P01|42703|PGRST205|PG
 
 export function createCleaningStore({ supabase, file }) {
   const state = { setupPending: !supabase, lastError: null };
-  let mem = { checks: [], schedules: {} };
+  let mem = { checks: [], schedules: {}, pushLog: {} };
+  // The "push sent" log has its own table (cleaning_push_log). If only THAT table is missing we use the
+  // local file for it alone — the checks keep going to the database (state.setupPending is NOT touched).
+  const pushState = { local: !supabase, lastError: null };
   try {
     if (file && fs.existsSync(file)) mem = { ...mem, ...JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')) };
   } catch { /* start empty */ }
@@ -43,8 +46,54 @@ export function createCleaningStore({ supabase, file }) {
     }
   };
 
+  // push log: mem.pushLog = { 'YYYY-MM-DD': [roll, ...] }; days older than 14 are dropped on write.
+  const pushLocal = {
+    list: (date) => new Set((mem.pushLog[date] || []).map(String)),
+    add: (date, rolls) => {
+      const set = pushLocal.list(date);
+      rolls.forEach((r) => set.add(String(r)));
+      mem.pushLog[date] = [...set];
+      const keep = Object.keys(mem.pushLog).sort().slice(-14);
+      for (const d of Object.keys(mem.pushLog)) if (!keep.includes(d)) delete mem.pushLog[d];
+      save();
+    }
+  };
+  async function pushVia(dbFn, localFn) {
+    if (pushState.local) return localFn();
+    try {
+      const { data, error } = await dbFn();
+      if (error) {
+        if (MISSING.test(`${error.message || ''} ${error.code || ''}`)) { pushState.local = true; pushState.lastError = error.message; return localFn(); }
+        throw new Error(error.message || 'cleaning push log query failed');
+      }
+      return data;
+    } catch (e) {
+      if (MISSING.test(e.message || '')) { pushState.local = true; pushState.lastError = e.message; return localFn(); }
+      throw e;
+    }
+  }
+
   return {
     state,
+    pushState,
+    // Students (roll numbers) of this block who already got the "room check" push on this cleaning day.
+    async listPushed({ block, date }) {
+      const rows = await pushVia(
+        () => supabase.from('cleaning_push_log').select('roll_number').eq('check_date', date).eq('block', block).limit(10000),
+        () => null
+      );
+      if (rows === null) return pushLocal.list(date);
+      return new Set((rows || []).map((r) => String(r.roll_number)));
+    },
+    // Record the push BEFORE it is sent, so a crash or a second tick can never send it twice.
+    async markPushed({ block, date, rolls }) {
+      if (!rolls.length) return;
+      const rows = rolls.map((roll) => ({ check_date: date, roll_number: String(roll), block }));
+      await pushVia(
+        () => supabase.from('cleaning_push_log').upsert(rows, { onConflict: 'check_date,roll_number', ignoreDuplicates: true }),
+        () => { pushLocal.add(date, rolls); return null; }
+      );
+    },
     async listChecks({ block, date } = {}) {
       const data = await viaDb(async () => {
         let q = supabase.from('cleaning_checks').select('*');

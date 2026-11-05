@@ -9,7 +9,7 @@ import { createClient } from '@supabase/supabase-js';
 import { MEAL_WINDOWS, MEAL_ORDER, RSVP_CUTOFF_MINUTES } from './src/data/messMenu.js';
 import { initPassSigning, passPublicKeyInfo, verifyPassQr, passQrFresh, signPassQrBatch, PASS_QR_ROTATE_MS, PASS_QR_MAX_AGE_MS } from './passSigning.js';
 import { leaveNumber, normalizePassNumber } from './src/utils/passNumber.js';
-import { istParts, normalizeSettings, answerWindow, lastClosedWindowDate, studentView, answerRoom, closeWindow, morningSms, wardenBlockView, hmToMin, fmtClock, ANSWER_HOURS, RED_ALERT_NOT_FIXED } from './cleaning.js';
+import { openingPush, istParts, normalizeSettings, answerWindow, lastClosedWindowDate, studentView, answerRoom, closeWindow, morningSms, wardenBlockView, hmToMin, fmtClock, ANSWER_HOURS, RED_ALERT_NOT_FIXED } from './cleaning.js';
 import { createCleaningStore } from './cleaning-store.js';
 
 dotenv.config();
@@ -9278,6 +9278,20 @@ async function cleaningTick(now = new Date()) {
         for (const block of await cleaningBlocks()) {
             try {
                 const settings = await cleaningSettingsFor(block);
+                // 1 PM (window end) push: one per student per cleaning day, only while the question is open.
+                try {
+                    await openingPush({
+                        store: cleaningStore,
+                        roster: async (b) => [...(await cleaningRoster()).rooms.values()].filter(x => x.block === b),
+                        send: async (rolls, msg) => {
+                            const live = !!(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY);
+                            const delivered = await pushToRolls(rolls, msg);
+                            console.log(`🔔 [CLEANING PUSH] ${block}: ${rolls.length} student(s) asked${live ? `, ${delivered} device(s) reached` : ' (push keys missing — dry run)'}`);
+                        }
+                    }, { block, settings, now });
+                } catch (err) {
+                    console.warn(`cleaning push: ${block} skipped:`, err.message);
+                }
                 const date = lastClosedWindowDate(settings, now);
                 if (!date || date < cleaningLiveFrom(now)) continue;
                 await closeWindow({
@@ -9296,7 +9310,7 @@ async function cleaningTick(now = new Date()) {
         cleaningTickBusy = false;
     }
 }
-setInterval(() => { cleaningTick(new Date()); }, 60 * 1000);
+setInterval(() => { cleaningTick(new Date()); }, Number(process.env.CLEANING_TICK_MS) || 60 * 1000);   // CLEANING_TICK_MS: tests only
 
 // What a student sees on their home card (their room only).
 async function cleaningProfileFor(req) {

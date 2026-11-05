@@ -58,7 +58,7 @@ export function buildTimetable() {
     };
 }
 
-export async function startApp({ seed = true, dist = false, profilesFile = '', attendanceFile = '', timetableFile = '' } = {}) {
+export async function startApp({ seed = true, dist = false, profilesFile = '', attendanceFile = '', timetableFile = '', env = {} } = {}) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cdb-teacher-'));
     for (const f of ['server.js', 'coverBoard.js', 'passSigning.js', 'cleaning.js', 'cleaning-store.js', 'package.json']) fs.copyFileSync(path.join(REPO, f), path.join(dir, f));
     fs.cpSync(path.join(REPO, 'src'), path.join(dir, 'src'), { recursive: true });
@@ -81,7 +81,7 @@ export async function startApp({ seed = true, dist = false, profilesFile = '', a
         cwd: dir, stdio: ['ignore', 'pipe', 'pipe'],
         env: {
             PATH: process.env.PATH, HOME: process.env.HOME, TZ: 'Asia/Kolkata', PORT: String(port), FAKE_NOW_FILE: nowFile,
-            SUPABASE_URL: `http://127.0.0.1:${mockPort}`, SUPABASE_SERVICE_ROLE_KEY: 'test-not-a-key', HMAC_SECRET: 'test-not-a-secret'
+            SUPABASE_URL: `http://127.0.0.1:${mockPort}`, SUPABASE_SERVICE_ROLE_KEY: 'test-not-a-key', HMAC_SECRET: 'test-not-a-secret', ...env
         }
     });
     srv.stdout.on('data', d => logs.srv += d); srv.stderr.on('data', d => logs.srv += d);
