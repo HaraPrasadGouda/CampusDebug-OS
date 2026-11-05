@@ -1242,13 +1242,13 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
                 Live version <code className="font-mono bg-slate-100 px-1 py-0.5 rounded">{ttInfo.version}</code>
                 {ttInfo.generatedAt ? ` — generated ${new Date(ttInfo.generatedAt).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} by ${ttInfo.generatedBy || 'system'}` : ''}
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[26rem] overflow-y-auto overscroll-contain" data-testid="tt-section-list">
                 {(ttInfo.sections || []).map(sec => {
                   const isBusy = ttSecBusy === sec.key;
                   return (
                     <div key={sec.key} className="flex items-center justify-between gap-2 rounded-lg border border-slate-100 bg-slate-50/50 px-3 py-2">
                       <div className="min-w-0">
-                        <p className="text-xs font-bold text-slate-800 truncate">{sec.label}</p>
+                        <p className="text-xs font-bold text-slate-800 break-words leading-snug">{sec.label}</p>
                         <p className="text-[10px] text-slate-500 font-mono">{sec.sessions} scheduled sessions</p>
                       </div>
                       <button
@@ -1931,15 +1931,15 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
                   <div className="grid grid-cols-3 gap-3">
                     <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 text-center">
                       <span className="text-2xl sm:text-3xl font-extrabold font-mono text-slate-900 block">{totalPlates.toLocaleString()}</span>
-                      <span className="text-[10px] font-mono uppercase tracking-wider text-slate-500 font-bold">Plates Today (4 meals)</span>
+                      <span className="block leading-snug text-[10px] font-mono uppercase tracking-wider text-slate-500 font-bold">Plates Today (4 meals)</span>
                     </div>
                     <div className="bg-amber-50/70 border border-amber-200 rounded-xl p-3.5 text-center">
                       <span className="text-2xl sm:text-3xl font-extrabold font-mono text-amber-900 block">{totalSaved.toFixed(1)}</span>
-                      <span className="text-[10px] font-mono uppercase tracking-wider text-amber-700 font-bold">Kg Food Saved Today</span>
+                      <span className="block leading-snug text-[10px] font-mono uppercase tracking-wider text-amber-700 font-bold">Kg Food Saved Today</span>
                     </div>
                     <div className="bg-emerald-50/70 border border-emerald-200 rounded-xl p-3.5 text-center">
                       <span className="text-2xl sm:text-3xl font-extrabold font-mono text-emerald-800 block">{totalOpted}</span>
-                      <span className="text-[10px] font-mono uppercase tracking-wider text-emerald-700 font-bold">Opt-Outs Today</span>
+                      <span className="block leading-snug text-[10px] font-mono uppercase tracking-wider text-emerald-700 font-bold">Opt-Outs Today</span>
                     </div>
                   </div>
                 );
@@ -2291,7 +2291,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
                   required
                   value={noticeForm.title}
                   onChange={(e) => setNoticeForm({ ...noticeForm, title: e.target.value })}
-                  placeholder="e.g., Water Pump Motor Overhaul — Block B 3rd Floor"
+                  placeholder="e.g., Water off 2–5 PM, Block B"
                   className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 focus:outline-none focus:border-emerald-600"
                 />
               </div>
@@ -2348,7 +2348,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
                   type="text"
                   value={noticeForm.smsPhones}
                   onChange={(e) => setNoticeForm({ ...noticeForm, smsPhones: e.target.value })}
-                  placeholder="10-digit mobile numbers, comma-separated — leave blank for notification-only"
+                  placeholder="10-digit numbers, comma-separated"
                   className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 focus:outline-none focus:border-emerald-600"
                 />
               </div>
