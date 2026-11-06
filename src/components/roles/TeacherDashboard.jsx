@@ -19,6 +19,7 @@ import PeriodTimeline from '../teacher/PeriodTimeline';
 import TeacherInsights from '../teacher/TeacherInsights';
 import useCoverBoard from '../teacher/useCoverBoard';
 import { fmtMinLabel } from '../../utils/teacherApi';
+import { greetingName } from '../../utils/displayName';
 
 // Day-scholar leave mentor console. scoped server-side: a TEACHER's queue
 // only ever contains their own mentees (+ leaves routed to them while they
@@ -289,8 +290,7 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
   };
   // Faculty names carry honorifics ("Dr. Mitali Bose") — strip them so the
   // card says "Good morning, Mitali!" and never "Good morning, Dr.!"
-  const honorifics = /^(dr|prof|professor|mr|mrs|ms|md)\.?\s+/i;
-  const teacherFirstName = (session?.name || 'Teacher').replace(honorifics, '').trim().split(' ')[0] || 'Teacher';
+  const teacherFirstName = greetingName(session?.name, 'Teacher');
 
   // TIME GATE (client mirror of the server rule): a class's Mark card opens
   // 10 minutes before the period starts. `s.time` = '09:15 AM - 10:15 AM'.

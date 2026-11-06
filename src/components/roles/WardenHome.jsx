@@ -1,4 +1,5 @@
 import React from 'react';
+import { greetingName } from '../../utils/displayName';
 import {
   Sparkles, Check, X, MapPin, Clock, AlertTriangle, ClipboardCheck, Wrench, Layers,
   DoorOpen, Gauge, IndianRupee, Users, Plus, ChevronRight
@@ -199,7 +200,7 @@ export default function WardenHome({
   session, greeting, dateLabel, passes, passCount, wq, gate, registerOk, chips, isLaptop,
   overdue, unassigned, cleaning, onApprove, onReject, onJump, onCreatePass, onDispatch, passesOpen, onTogglePasses,
 }) {
-  const firstName = String(session?.name || 'Warden').replace(/^(mr|mrs|ms|dr|prof)\.?\s+/i, '').split(/\s+/)[0] || 'Warden';
+  const firstName = greetingName(session?.name, 'Warden');
   const needs = passCount + overdue.count + unassigned.count + cleaning.count;
   const quiet = needs === 0;
   const limit = isLaptop ? 4 : 2;

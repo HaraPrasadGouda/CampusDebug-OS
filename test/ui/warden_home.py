@@ -21,7 +21,7 @@ CONTROLS = """()=>{const root=document.querySelector('[data-testid=warden-home]'
 CLIP = """()=>{const root=document.querySelector('[data-testid=warden-home]');const iw=window.innerWidth;const bad=[];root.querySelectorAll('*').forEach(e=>{if(e.offsetParent===null||e.closest('.pointer-events-none'))return;const r=e.getBoundingClientRect();if(r.right>iw+1||r.left<-1)bad.push('offscreen:'+(e.innerText||e.tagName).slice(0,30));const cs=getComputedStyle(e);if(e.children.length===0&&e.scrollWidth>e.clientWidth+1&&cs.display!=='inline'&&e.clientWidth>0)bad.push('clipped:'+(e.innerText||'').slice(0,30)+' '+e.scrollWidth+'>'+e.clientWidth)});return bad.slice(0,8)}"""
 with sync_playwright() as p:
     b = p.chromium.launch(); mob = w < 800
-    pr = {'rollNumber': 'WARD01', 'fullName': 'Mr. Subrat Kumar Panda', 'role': 'WARDEN', 'roll_number': 'WARD01', 'full_name': 'Mr. Subrat Kumar Panda', 'department': 'Hostel Administration', 'id': '%08x-0000-4000-8000-%012x' % (900, 900)}
+    pr = {'rollNumber': 'WARD01', 'fullName': 'Dr. S. K. Mohanty', 'role': 'WARDEN', 'roll_number': 'WARD01', 'full_name': 'Dr. S. K. Mohanty', 'department': 'Hostel Administration', 'id': '%08x-0000-4000-8000-%012x' % (900, 900)}
     ctx = b.new_context(viewport={'width': w, 'height': h}, device_scale_factor=2 if mob else 1, is_mobile=mob, has_touch=mob, timezone_id='Asia/Kolkata', locale='en-IN')
     sess = {'session': {'access_token': 'tok-WARD01', 'refresh_token': 'r', 'expires_in': 36000}, 'profile': pr, 'storedAt': int(time.time() * 1000)}
     ctx.add_init_script("localStorage.setItem('campus_auth_session', %s);" % json.dumps(json.dumps(sess)))
