@@ -1004,6 +1004,12 @@ export default function StudentDashboard({
               const isNotice = act.type === 'notice';
               const isMess = act.type === 'mess';
               const isDoc = act.category === 'Admin Document' || /^DOC-\d+$/i.test(String(act.id || ''));
+              // Document and gate-pass rows share one fixed right-hand "tracker" slot
+              // (laptop) / a full-width strip under the title (phone), so every
+              // row's bar starts and ends at the same x. Complaint rows with a
+              // lifecycle keep their own full-width block (it carries buttons).
+              const hasTracker = isDoc || isPass;
+              const gridRow = !showLifecycle;
               // Live registrar verdict (polled) overrides the local guess
               const docStatus = docStatusMap?.[act.id] || (String(act.status || '').startsWith('PENDING_OFFICE') ? 'PENDING' : act.status);
 
@@ -1025,7 +1031,7 @@ export default function StudentDashboard({
                       onOpenModal('complaint');
                     }
                   }}
-                  className={`p-[11px] lg:px-3 rounded-xl bg-white border border-[#edf1f5] hover:border-slate-200 hover:shadow-md transition-all duration-200 cursor-pointer flex items-start lg:items-center justify-between gap-2.5 lg:gap-3 group ${showLifecycle ? 'flex-wrap' : ''}`}
+                  className={`p-[11px] lg:px-3 rounded-xl bg-white border border-[#edf1f5] hover:border-slate-200 hover:shadow-md transition-all duration-200 cursor-pointer gap-2.5 lg:gap-3 group ${showLifecycle ? 'flex flex-wrap items-start lg:items-center justify-between' : `grid items-start lg:items-center lg:min-h-[76px] grid-cols-[minmax(0,1fr)_auto] ${hasTracker ? 'lg:grid-cols-[minmax(0,1fr)_340px_16px]' : 'lg:grid-cols-[minmax(0,1fr)_16px]'}`}`}
                 >
                   <div className={`flex items-start lg:items-center gap-2.5 lg:gap-3 min-w-0 ${showLifecycle ? 'flex-1 basis-0' : ''}`}>
                     {/* Icon Badge */}
@@ -1050,8 +1056,8 @@ export default function StudentDashboard({
 
                     {/* Title & Info */}
                     <div className="min-w-0">
-                      <p className="text-[13px] lg:text-[13.5px] font-semibold text-slate-800 leading-snug lg:truncate group-hover:text-blue-600 transition-colors">
-                        <span className="font-mono text-slate-900 font-bold mr-1.5 inline-block max-w-[118px] lg:max-w-none truncate align-bottom">{showLifecycle ? ticketCode(act) : act.id}</span>
+                      <p className="text-[13px] lg:text-[13.5px] font-semibold text-slate-800 leading-snug lg:line-clamp-2 break-words group-hover:text-blue-600 transition-colors">
+                        <span className="font-mono text-slate-900 font-bold mr-1.5 inline-block max-w-[118px] lg:max-w-none truncate align-bottom">{ticketCode(act)}</span>
                         <span>• {act.title}</span>
                       </p>
 
@@ -1116,11 +1122,11 @@ export default function StudentDashboard({
                       </div>
 
                       {/* Right Chevron */}
-                      <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-blue-600 group-hover:translate-x-0.5 transition-all shrink-0 self-center" />
+                      <ChevronRight className={`w-4 h-4 text-slate-400 group-hover:text-blue-600 group-hover:translate-x-0.5 transition-all shrink-0 self-center ${gridRow ? (hasTracker ? 'lg:col-start-3' : 'lg:col-start-2') + ' lg:row-start-1' : ''}`} />
 
                       {/* Document request: same tick-style progress as complaints */}
                       {isDoc && (
-                        <div className="basis-full w-full border-t border-slate-100 pt-2.5 mt-0.5 cursor-default" onClick={(e) => e.stopPropagation()}>
+                        <div data-testid="row-tracker" className="col-span-2 lg:col-span-1 lg:col-start-2 lg:row-start-1 min-w-0 border-t lg:border-t-0 border-slate-100 pt-2.5 lg:pt-0 cursor-default" onClick={(e) => e.stopPropagation()}>
                           <StageTicks
                             labels={['Requested', 'Ready for Pickup']}
                             stage={String(docStatus).toUpperCase() === 'READY_FOR_PICKUP' ? 2 : 1}
@@ -1128,6 +1134,17 @@ export default function StudentDashboard({
                           />
                         </div>
                       )}
+
+                      {/* Gate pass: same slot and same 2-step geometry as documents, from the pass status already loaded */}
+                      {isPass && (() => {
+                        const ps = String(act.status || '').toUpperCase();
+                        const stage = ps === 'RETURNED' ? 2 : ps === 'APPROVED' || ps === 'USED' ? 1 : 0;
+                        return (
+                          <div data-testid="row-tracker" className="col-span-2 lg:col-span-1 lg:col-start-2 lg:row-start-1 min-w-0 border-t lg:border-t-0 border-slate-100 pt-2.5 lg:pt-0 cursor-default" onClick={(e) => e.stopPropagation()}>
+                            <StageTicks labels={['Approved', 'Returned']} stage={stage} rejected={ps === 'REJECTED'} />
+                          </div>
+                        );
+                      })()}
 
                       {/* Complaint lifecycle: progress + Resolved / Not fixed (own complaint) */}
                       {showLifecycle && (

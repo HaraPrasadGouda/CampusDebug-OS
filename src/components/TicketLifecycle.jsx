@@ -75,11 +75,11 @@ export function LifecycleProgress({ ticket, viewer = 'student' }) {
 // `stage` = how many steps are done (1..N); `rejected` paints the unfinished steps rose.
 export function StageTicks({ labels, stage, rejected = false }) {
   const n = labels.length;
-  const idx = Math.min(Math.max(stage, 1), n) - 1;
-  const fill = n <= 1 ? '0%' : `${(idx / (n - 1)) * 100}%`;
+  const idx = Math.min(Math.max(stage, 0), n) - 1; // stage 0 = nothing reached yet
+  const fill = n <= 1 || idx < 0 ? '0%' : `${(idx / (n - 1)) * 100}%`;
   const edge = `${50 / n}%`;
   return (
-    <div className="relative w-full pt-1" aria-label={`Progress: ${labels[idx]}`}>
+    <div className="relative w-full pt-1" aria-label={idx < 0 ? 'Progress: not started' : `Progress: ${labels[idx]}`}>
       <div className="absolute top-[14px] h-1.5 -translate-y-1/2 rounded-full bg-slate-200" style={{ left: edge, right: edge }}>
         <div className="absolute inset-y-0 left-0 rounded-full bg-emerald-500 transition-all" style={{ width: fill }} />
       </div>
