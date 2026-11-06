@@ -25,8 +25,7 @@ const CATEGORIES = [
   { id: 'Electrical', label: 'Electrical (Fan/Switch)', icon: Zap, color: 'text-amber-600' },
   { id: 'Plumbing', label: 'Plumbing (Water/Tap)', icon: Droplet, color: 'text-sky-600' },
   { id: 'Wi-Fi / LAN', label: 'Wi-Fi / LAN Network', icon: Wifi, color: 'text-emerald-600' },
-  { id: 'Furniture', label: 'Bed / Desk / Door', icon: Home, color: 'text-indigo-600' },
-  { id: 'Cleanliness', label: 'Washroom / Hygiene', icon: Sparkles, color: 'text-rose-600' }
+  { id: 'Furniture', label: 'Bed / Desk / Door', icon: Home, color: 'text-indigo-600' }
 ];
 
 // Who + where come from the signed-in student's real profile (the same

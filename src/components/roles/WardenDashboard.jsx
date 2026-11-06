@@ -1234,7 +1234,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                 <span>Technicians</span>
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                One per category. New complaints go to them automatically by SMS; a complaint closes only after the student marks it Resolved.
+                Plumbing, electrical, Wi-Fi and furniture have one technician each; cleaning staff are listed below, two per block. New complaints go to them automatically by SMS; a complaint closes only after the student marks it Resolved.
               </p>
             </div>
             <span className="shrink-0 text-[11px] font-mono font-bold px-2.5 py-1 rounded-full border text-sky-800 bg-sky-50 border-sky-200">{technicians.filter(t => t.active).length}</span>
@@ -1256,7 +1256,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
             <CardEmptyState icon={UserCheck} title="No technicians in the database yet." sub="Add one technician per category in the technicians table." />
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-3">
-              {technicians.map((tech) => {
+              {[...technicians.filter(t => t.active && t.category !== 'Cleanliness'), ...technicians.filter(t => t.active && t.category === 'Cleanliness')].map((tech) => {
                 const s = tech.stats || {};
                 const wardens = Object.entries(s.wardens || {});
                 return (
