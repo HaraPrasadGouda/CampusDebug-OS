@@ -97,7 +97,7 @@ export default function MessFeedbackModal({ isOpen, onClose, onFeedbackSubmitted
         status: 'RESOLVED',
         statusLabel: aiTelemetry
           ? `AI Score: Hygiene ${aiTelemetry.hygieneScore}% • Quality ${aiTelemetry.foodQualityScore}% (${aiTelemetry.sentiment})`
-          : 'Logged to Mess Warden & Caterer',
+          : 'Feedback saved',
         aiTelemetry,
         sla: 'Instant Telemetry',
         createdAt: new Date().toISOString(),

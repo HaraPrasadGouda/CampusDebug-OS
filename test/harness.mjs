@@ -60,7 +60,7 @@ export function buildTimetable() {
 
 export async function startApp({ seed = true, dist = false, profilesFile = '', attendanceFile = '', timetableFile = '', env = {}, mockEnv = {} } = {}) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cdb-teacher-'));
-    for (const f of ['server.js', 'coverBoard.js', 'passSigning.js', 'cleaning.js', 'cleaning-store.js', 'fee-store.js', 'package.json']) fs.copyFileSync(path.join(REPO, f), path.join(dir, f));
+    for (const f of ['server.js', 'coverBoard.js', 'noticeAudience.js', 'passSigning.js', 'cleaning.js', 'cleaning-store.js', 'fee-store.js', 'package.json']) fs.copyFileSync(path.join(REPO, f), path.join(dir, f));
     fs.cpSync(path.join(REPO, 'src'), path.join(dir, 'src'), { recursive: true });
     fs.symlinkSync(path.join(REPO, 'node_modules'), path.join(dir, 'node_modules'));
     if (dist) for (const d of ['dist', 'public']) if (fs.existsSync(path.join(REPO, d))) fs.symlinkSync(path.join(REPO, d), path.join(dir, d));   // live: a rebuild shows at once

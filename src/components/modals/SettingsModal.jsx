@@ -1,10 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { X, Bell, Wifi, Moon, RefreshCw, Database, Shield, Check } from 'lucide-react';
+import { X, Bell, Moon, RefreshCw, Database, Shield, Check } from 'lucide-react';
 import PasswordInput from '../auth/PasswordInput';
 import { useLiveUpdates } from '../../utils/liveUpdates';
 
 export default function SettingsModal({ isOpen, onClose }) {
-  const [offlineSync, setOfflineSync] = useState(true);
   // Live updates: saved on this device, applies to every open screen at once.
   const [autoRefresh, setAutoRefresh] = useLiveUpdates();
   const [pushStatus, setPushStatus] = useState({ ok: null, text: '' });
@@ -70,22 +69,6 @@ export default function SettingsModal({ isOpen, onClose }) {
 
         {/* Settings List */}
         <div className="p-6 space-y-4">
-          <div className="flex items-center justify-between p-3.5 rounded-2xl bg-slate-50 border border-slate-100">
-            <div className="flex items-center gap-3">
-              <Wifi className="w-5 h-5 text-blue-600" />
-              <div>
-                <p className="text-xs font-semibold text-slate-800">Background Sync</p>
-                <p className="text-[11px] text-slate-600">Auto-sync actions when online</p>
-              </div>
-            </div>
-            <button 
-              onClick={() => setOfflineSync(!offlineSync)}
-              className={`w-11 h-6 flex items-center rounded-full p-1 transition-colors cursor-pointer ${offlineSync ? 'bg-blue-600' : 'bg-slate-300'}`}
-            >
-              <div className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-transform ${offlineSync ? 'translate-x-5' : 'translate-x-0'}`} />
-            </button>
-          </div>
-
           {/* Push registration — once ON, it stays ON. Unsubscribing would
               silently drop the device out of the push group (falling back to
               the SMS channel), so the UI shows a permanent Active badge
