@@ -6,6 +6,11 @@ import crypto from 'crypto';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import { createClient } from '@supabase/supabase-js';
+import { noticeVisibleTo } from './noticeAudience.js';
+
+// Pin the process clock to IST so leave / attendance / college-hours rules
+// behave the same on any host (override with TZ in the environment).
+process.env.TZ = process.env.TZ || 'Asia/Kolkata';
 import { MEAL_WINDOWS, MEAL_ORDER, RSVP_CUTOFF_MINUTES } from './src/data/messMenu.js';
 import { initPassSigning, passPublicKeyInfo, verifyPassQr, passQrFresh, signPassQrBatch, PASS_QR_ROTATE_MS, PASS_QR_MAX_AGE_MS } from './passSigning.js';
 import { leaveNumber, normalizePassNumber } from './src/utils/passNumber.js';
@@ -2624,8 +2629,14 @@ function persistNotices() {
 const NOTICE_STAFF_ROLES = ['ADMIN', 'DEAN', 'WARDEN'];
 app.get('/api/notices', authenticateUser, (req, res) => {
     // Newest first; cap the payload so 3s polling stays cheap.
-    let notices = [...noticesDB].sort((a, b) => b.createdAt - a.createdAt).slice(0, 100);
     const isStaff = NOTICE_STAFF_ROLES.includes(String(req.user?.role || '').toUpperCase());
+    let notices = [...noticesDB].sort((a, b) => b.createdAt - a.createdAt);
+    // Students only see notices aimed at them (block / course / section / year).
+    if (String(req.user?.role || '').toUpperCase() === 'STUDENT') {
+        const prof = req.user?.profile || null;
+        notices = notices.filter(n => noticeVisibleTo(n, prof));
+    }
+    notices = notices.slice(0, 100);
     if (supabase && !isStaff) {
         notices = notices.map(n => Array.isArray(n.smsDispatchedTo)
             ? { ...n, smsDispatchedTo: n.smsDispatchedTo.map(({ phone, ...rest }) => rest) }
@@ -4400,7 +4411,9 @@ app.post('/api/commute-scan', authenticateUser, requireRole('GUARD', 'WARDEN', '
             });
         }
 
-        const direction = (last && last.direction === 'IN') ? 'OUT' : 'IN';
+        // Day scholars are only logged when they LEAVE during college hours
+        // (no IN scan, no alternating register).
+        const direction = 'OUT';
         const { error: insErr } = await supabase.from('pass_scans').insert({
             pass_ref: `COMMUTE-${roll}`,
             student_roll: roll,
@@ -4451,7 +4464,7 @@ app.get('/api/commute-status', authenticateUser, async (req, res) => {
             connected: true,
             roll,
             scans,
-            state: !last ? 'NOT_YET' : (last.direction === 'IN' ? 'IN' : 'OUT'),
+            state: !last ? 'NOT_YET' : 'OUT',
             since: last ? last.scanned_at : null,
             insToday,
             outsToday

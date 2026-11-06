@@ -23,7 +23,7 @@ const DOC_TYPES = [
 export default function DocRequestModal({ isOpen, onClose, onDocRequested }) {
   const [formData, setFormData] = useState({
     docType: 'Bonafide Certificate',
-    deliveryMode: 'Digital Verified PDF (Offline Signed)',
+    deliveryMode: 'Physical Signed Hardcopy',
     purpose: '',
     urgency: 'Standard (24h SLA)'
   });
@@ -68,7 +68,7 @@ export default function DocRequestModal({ isOpen, onClose, onDocRequested }) {
       onClose();
       setFormData({
         docType: 'Bonafide Certificate',
-        deliveryMode: 'Digital Verified PDF (Offline Signed)',
+        deliveryMode: 'Physical Signed Hardcopy',
         purpose: '',
         urgency: 'Standard (24h SLA)'
       });
@@ -125,19 +125,7 @@ export default function DocRequestModal({ isOpen, onClose, onDocRequested }) {
           </div>
 
           {/* Delivery Mode & SLA */}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-slate-700 font-semibold mb-1">Dispatch Format</label>
-              <select
-                value={formData.deliveryMode}
-                onChange={(e) => setFormData({ ...formData, deliveryMode: e.target.value })}
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-900 focus:outline-none focus:border-emerald-500 cursor-pointer font-medium"
-              >
-                <option value="Digital Verified PDF (Offline Signed)">Digital PDF (E-Signed)</option>
-                <option value="Physical Signed Hardcopy">Physical Hardcopy</option>
-              </select>
-            </div>
-
+          <div className="grid grid-cols-1 gap-3">
             <div>
               <label className="block text-slate-700 font-semibold mb-1">Processing Urgency</label>
               <select
@@ -168,7 +156,7 @@ export default function DocRequestModal({ isOpen, onClose, onDocRequested }) {
           <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-start space-x-2.5">
             <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
             <p className="text-[11px] text-emerald-800 leading-relaxed font-mono">
-              Direct Academic ERP Bridge: Upon registrar verification, digitally watermarked certificates with institutional QR seals become available for 1-tap download.
+              Once the registrar approves, collect your signed certificate from the college office. You will see the status here.
             </p>
           </div>
 
