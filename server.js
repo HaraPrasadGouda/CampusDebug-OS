@@ -7421,7 +7421,7 @@ app.post('/api/admin/campus-config', authenticateUser, requireRole('ADMIN'), asy
 // ============================================================
 // STEP 6 — ADMIN "AT-RISK" ROSTER. Students whose LIVE attendance
 // percentage (recomputed from every recorded section session on each
-// mark/unlock — see rollupSectionAttendance) has fallen below the
+// mark/edit — see rollupSectionAttendance) has fallen below the
 // threshold (default 50%). Worst first, with the section + resident
 // context the admin needs to act (mentor for day scholars, warden for
 // hostellers).
@@ -7854,8 +7854,9 @@ app.get('/api/attendance/gate-hints', authenticateUser, requireRole('TEACHER', '
 
 // Live attendance rollup — recomputes every roster student's REAL percentage
 // from all recorded sessions of the section and writes it back to the
-// profile. Used by BOTH the mark endpoint (after a save) and the admin
-// unlock endpoint (after a record is deleted). Detached: callers don't wait.
+// profile. Used by the mark endpoint after a fresh save AND after a same-day
+// teacher edit (the record is overwritten in place, so nothing double counts).
+// Detached: callers don't wait.
 async function rollupSectionAttendance(sectionKey) {
     try {
         const [course, department, section] = sectionKey.split('|');
@@ -7885,11 +7886,30 @@ async function rollupSectionAttendance(sectionKey) {
 // WHO took it — `takenByLogin` is the FAC id of the authenticated staff
 // member, `takenByName` their directory name.
 //
-// HARD LOCK (user policy): once a class is marked for the day it is FROZEN —
-// nobody but an ADMIN can overwrite it, and an admin can delete the lock via
-// /api/admin/attendance-unlock to let the teacher redo it. The Mark card is
-// also TIME-GATED: it only opens 10 minutes before the period starts, so a
-// 11 o'clock class can't be marked at 9 in the morning.
+// EDIT RULE (owner, Nov 2026): there is no lock and no admin unlock. The
+// teacher who is allowed to mark the class (own timetable slot, or the cover
+// they took) can re-open and re-save it, but ONLY on the same day and only
+// during college hours (first period start -> last period end, read from
+// TT_GRID). Admin / dean cannot edit a saved class. The Mark card is also
+// TIME-GATED for a fresh mark: it only opens 10 minutes before the period
+// starts, so a 11 o'clock class can't be marked at 9 in the morning.
+// College hours for attendance EDITS: first period start -> last period end,
+// read live from the period grid (no new hard-coded numbers).
+function collegeHoursMin() {
+    const ps = TT_GRID.filter(g => /^P\d$/.test(g.label));
+    return { start: Math.min(...ps.map(g => g.startMin)), end: Math.max(...ps.map(g => g.endMin)) };
+}
+function collegeHoursOpen(now = new Date()) {
+    const { start, end } = collegeHoursMin();
+    const m = now.getHours() * 60 + now.getMinutes();
+    return m >= start && m < end;
+}
+const ATT_EDIT_ERROR = 'Attendance can be edited only on the same day during college hours.';
+// A saved record is editable right now: dated today AND inside college hours.
+function attendanceEditableNow(rec, now = new Date()) {
+    return !!rec && rec.date === localDayKey(now) && collegeHoursOpen(now);
+}
+
 app.post('/api/attendance/mark', authenticateUser, requireRole('TEACHER', 'ADMIN', 'DEAN'), async (req, res) => {
     const body = req.body || {};
     const sectionKey = String(body.sectionKey || '').trim();
@@ -7908,6 +7928,12 @@ app.post('/api/attendance/mark', authenticateUser, requireRole('TEACHER', 'ADMIN
     const today = localDayKey();
     const now = new Date();
     const nowMin = now.getHours() * 60 + now.getMinutes();
+
+    // A client that names the date it is editing (YYYY-MM-DD) must name today:
+    // yesterday's attendance is final.
+    if (body.date != null && String(body.date).trim() && String(body.date).trim() !== today) {
+        return res.status(403).json({ success: false, editClosed: true, error: ATT_EDIT_ERROR });
+    }
 
     // TIME GATE — opens 10 minutes before the period's start minute.
     const grid = TT_GRID.find(g => g.label === `P${period}`);
@@ -7960,14 +7986,16 @@ app.post('/api/attendance/mark', authenticateUser, requireRole('TEACHER', 'ADMIN
         }
     }
 
-    // HARD LOCK — a saved (date, sectionKey, period) is frozen. ADMIN may
-    // overwrite (and /api/admin/attendance-unlock deletes the lock entirely).
+    // EDIT of a saved class: same day + college hours + the teacher who may
+    // mark it (the check above). Admin / dean never edit.
     const existing = attendanceDB.find(a => a.date === today && a.sectionKey === sectionKey && a.period === period);
-    if (existing && role !== 'ADMIN') {
-        return res.status(409).json({
-            success: false, locked: true,
-            error: `Attendance for this class is LOCKED — ${existing.takenByName || 'a teacher'} already marked it (${(existing.present || []).length} present). Only an admin can unlock it.`
-        });
+    if (existing) {
+        if (role !== 'TEACHER') {
+            return res.status(403).json({ success: false, editClosed: true, error: 'Only the teacher who took this class can edit its attendance.' });
+        }
+        if (!attendanceEditableNow(existing, now)) {
+            return res.status(403).json({ success: false, editClosed: true, error: ATT_EDIT_ERROR });
+        }
     }
 
     const takenByLogin = String(req.user?.profile?.rollNumber || req.user?.rollNumber || '').trim();
@@ -7990,17 +8018,25 @@ app.post('/api/attendance/mark', authenticateUser, requireRole('TEACHER', 'ADMIN
         };
         attendanceDB.push(rec);
     }
-    // Re-marks by another teacher update the record — the LAST authority
-    // for the class wins, and both logins stay stamped on the record.
-    rec.day = day;
-    rec.subjectCode = subjectCode;
-    rec.subject = subject;
-    rec.kind = kind;
-    rec.present = present;
-    rec.takenByLogin = takenByLogin;
-    rec.takenByName = takenByName;
-    rec.takenAt = new Date().toISOString();
-    if (coveredFor) rec.coveredFor = coveredFor; else delete rec.coveredFor;
+    if (existing) {
+        // EDIT: overwrite the present list only. id, takenBy*, takenAt, subject
+        // and cover stamp stay as first saved; the edit is stamped separately.
+        rec.present = present;
+        rec.editedAt = new Date().toISOString();
+        rec.editedBy = takenByLogin;
+        rec.editedByName = takenByName;
+        rec.editCount = (rec.editCount || 0) + 1;
+    } else {
+        rec.day = day;
+        rec.subjectCode = subjectCode;
+        rec.subject = subject;
+        rec.kind = kind;
+        rec.present = present;
+        rec.takenByLogin = takenByLogin;
+        rec.takenByName = takenByName;
+        rec.takenAt = new Date().toISOString();
+        if (coveredFor) rec.coveredFor = coveredFor; else delete rec.coveredFor;
+    }
     persistAttendance(attendanceDB);
 
     // Live attendance rollup: this mark recomputes every roster student's
@@ -8010,32 +8046,9 @@ app.post('/api/attendance/mark', authenticateUser, requireRole('TEACHER', 'ADMIN
 
     return res.json({
         success: true,
+        edited: !!existing,
         record: rec,
-        statement: `${takenByName} (${takenByLogin}) marked ${subjectCode} ${sectionKey.split('|').pop()} of ${deptLabel} · P${period} · present ${present.length}`
-    });
-});
-
-// ADMIN unlock — hard-lock release valve. Deletes the saved (date,
-// sectionKey, period) record so the teacher can mark that class fresh; the
-// section's live percentages are recomputed afterwards. Deleting the ONLY
-// session of a section leaves the profiles at their last real value.
-app.post('/api/admin/attendance-unlock', authenticateUser, requireRole('ADMIN'), (req, res) => {
-    const body = req.body || {};
-    const sectionKey = String(body.sectionKey || '').trim();
-    const period = parseInt(body.period, 10);
-    const date = String(body.date || localDayKey()).trim();
-    if (!sectionKey || !TT_PERIOD_TIME[period]) {
-        return res.status(400).json({ success: false, error: 'sectionKey and a valid period are required' });
-    }
-    const idx = attendanceDB.findIndex(a => a.date === date && a.sectionKey === sectionKey && a.period === period);
-    if (idx < 0) return res.status(404).json({ success: false, error: 'no saved attendance for that class on that date' });
-    const removed = attendanceDB.splice(idx, 1)[0];
-    persistAttendance(attendanceDB);
-    rollupSectionAttendance(sectionKey);
-    return res.json({
-        success: true,
-        removed: { id: removed.id, present: (removed.present || []).length, takenByName: removed.takenByName },
-        statement: `Admin ${req.user?.profile?.name || req.user?.name || ''} unlocked ${sectionKey.split('|').pop()} of ${removed.department || sectionKey} · P${period} · ${date} — the class can be marked again`
+        statement: `${takenByName} (${takenByLogin}) ${existing ? 'edited' : 'marked'} ${subjectCode} ${sectionKey.split('|').pop()} of ${deptLabel} · P${period} · present ${present.length}`
     });
 });
 
@@ -8050,7 +8063,11 @@ app.get('/api/attendance/sessions', authenticateUser, requireRole('TEACHER', 'AD
     let rows = attendanceDB.filter(a => a.date === date);
     if (!wantAll && role === 'TEACHER') rows = rows.filter(a => String(a.takenByLogin || '').toUpperCase() === myLogin);
     rows = rows.slice().sort((a, b) => (a.period || 0) - (b.period || 0));
-    return res.json({ success: true, date, sessions: rows });
+    const nowD = new Date();
+    const editNow = collegeHoursOpen(nowD);
+    const out = rows.map(r => ({ ...r, editable: role === 'TEACHER' && attendanceEditableNow(r, nowD) }));
+    const ch = collegeHoursMin();
+    return res.json({ success: true, date, sessions: out, collegeHours: { open: editNow, startMin: ch.start, endMin: ch.end, start: ttFmtMin(ch.start), end: ttFmtMin(ch.end) }, editMessage: ATT_EDIT_ERROR });
 });
 
 // Student view: every marked session for MY SECTION (Step 4) that INCLUDED

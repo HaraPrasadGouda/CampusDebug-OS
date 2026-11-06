@@ -73,8 +73,10 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
   // Attendance marking (Phase 3): opened straight from today's timetable row.
   const [markSlot, setMarkSlot] = useState(null);
   // HARD LOCK state: `${sectionKey}|${period}` -> the saved record. A class
-  // that appears here shows a "Marked ✓ Locked" chip instead of a Mark button.
+  // that appears here shows a "Marked ✓" chip (+ Edit attendance in college hours) instead of a Mark button.
   const [ttMarked, setTtMarked] = useState({});
+  // College hours (first period start → last period end) from the server; a saved class can be edited today inside them.
+  const [collegeHrs, setCollegeHrs] = useState(null);
   // Substitute cover: the "who covers me" picker, and the separate Covering
   // view (the substitute's own home stays as it is).
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -116,6 +118,7 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
         const map = {};
         for (const s of (j.sessions || [])) if (s.sectionKey) map[`${s.sectionKey}|${s.period}`] = s;
         setTtMarked(map);
+        if (j.collegeHours) setCollegeHrs(j.collegeHours);
       }
     } catch { /* offline: locks re-sync on the next poll */ }
   };
@@ -312,6 +315,14 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
     return `${h > 12 ? h - 12 : h || 12}:${String(m).padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}`;
   };
   const markedRec = (s) => ttMarked[`${s.sectionKey}|${s.period}`];
+  // Same-day edit: the record is dated today and the clock is inside college hours (server enforces the same rule).
+  const canEdit = (rec) => {
+    if (!rec || !collegeHrs) return false;
+    const d = new Date();
+    if (rec.date && rec.date !== todayKey()) return false;
+    const m = d.getHours() * 60 + d.getMinutes();
+    return m >= collegeHrs.startMin && m < collegeHrs.endMin;
+  };
   const pendingLeaves = (queue?.leaves || []).filter(l => l.status === 'PENDING')
     .filter(l => !filterText || `${l.student_name} ${l.student_roll} ${l.reason}`.toLowerCase().includes(filterText));
   const decidedToday = (queue?.leaves || []).filter(l => l.status !== 'PENDING' && l.created_at && new Date(l.created_at).toDateString() === new Date().toDateString())
@@ -480,7 +491,7 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
 
   const nextMarkState = !nextRow ? null : markedRec(nextRow) ? 'done' : markOpen(nextRow) ? 'open' : 'later';
   const nextClassRow = nextRow ? { ...nextRow, openAt: openLabel(nextRow) } : null;
-  const coverBoardProps = { board, reload: () => { reloadBoard(); loadMarked(); }, onNotification, onMark: setMarkSlot, markOpen, openLabel, markedRec, onLeave, myCards };
+  const coverBoardProps = { board, reload: () => { reloadBoard(); loadMarked(); }, onNotification, onMark: setMarkSlot, markOpen, openLabel, markedRec, canEdit, onLeave, myCards };
   const declineBlock = (g) => !g.active ? null : (declineFor === g.mentorRoll ? (
     <div key={`d-${g.mentorRoll}`} className="rounded-2xl border border-indigo-100 bg-white px-4 py-3 space-y-2">
       <p className="text-xs text-slate-700 leading-snug">Hand {profName(g.mentorName)}'s work back? They get a notification to pick another teacher.</p>
@@ -589,7 +600,7 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
           {/* A light day (no cover cards, nobody being covered; at most my own mentees' requests): the next class and the quick actions stay under it */}
           {lightDay && (
             <>
-              <NextClassCard row={nextClassRow} minsLeft={nextRow ? nextRow.startMin - nowM : 0} markState={nextMarkState} onMark={() => nextRow && setMarkSlot(nextRow.slot)} />
+              <NextClassCard row={nextClassRow} minsLeft={nextRow ? nextRow.startMin - nowM : 0} markState={nextMarkState} canEdit={!!nextRow && canEdit(markedRec(nextRow))} onMark={() => nextRow && setMarkSlot(nextRow.slot)} />
               <QuickActions createOpen={createOpen} onCreateLeave={openCreateLeave} onGateLog={() => goTeacherTab('students', 'td-gatelog')} onLessonPlan={() => goTeacherTab('classes', 'insights:plan')} />
               <p data-testid="cover-quiet-line" className="px-1 text-[12px] font-semibold text-slate-500">Cover board: no open requests</p>
             </>
@@ -597,7 +608,7 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
         </div>
         <div className="xl:col-span-5 flex flex-col">
       {/* My day — today's classes as a period timeline (+ covers I took) */}
-      <PeriodTimeline rows={dayRows} loaded={!!ttMine} onMark={setMarkSlot} markOpen={markOpen} openLabel={openLabel} markedRec={markedRec} nowMin={nowM} />
+      <PeriodTimeline rows={dayRows} loaded={!!ttMine} onMark={setMarkSlot} markOpen={markOpen} openLabel={openLabel} markedRec={markedRec} canEdit={canEdit} nowMin={nowM} />
         </div>
       </div>
     </div>
@@ -949,7 +960,7 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
   const classesTab = (
     <div className="flex flex-col gap-4 xl:grid xl:grid-cols-12 xl:items-start" data-testid="tab-classes">
       <div className="order-1 xl:col-span-5">
-        <AttendanceList rows={dayRows} loaded={!!ttMine} markedRec={markedRec} markOpen={markOpen} openLabel={openLabel} onMark={setMarkSlot} nowMin={nowM} />
+        <AttendanceList rows={dayRows} loaded={!!ttMine} markedRec={markedRec} canEdit={canEdit} markOpen={markOpen} openLabel={openLabel} onMark={setMarkSlot} nowMin={nowM} />
       </div>
       <div className="order-2 xl:order-3 xl:col-span-12">
         <CoverBoardSection {...coverBoardProps} />

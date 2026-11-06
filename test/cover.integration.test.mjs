@@ -117,7 +117,9 @@ describe('attendance ownership for a cover taker', () => {
         const sessions = (await app.api('GET', '/api/attendance/me', STUDENT_B)).json.sessions;
         assert.equal(sessions[0].subjectCode, 'OS', 'recorded under the TAKER\'s subject');
         assert.match(sessions[0].takenByName, /Ananya Sharma \(covering/);
-        assert.equal((await mark(app, 'FAC001', {})).status, 409, 'locked once saved (existing rule)');
+        const again = await mark(app, 'FAC001', { present: [] });   // no lock any more: the taker may edit the same day in college hours
+        assert.equal(again.status, 200); assert.equal(again.json.edited, true);
+        assert.equal((await mark(app, 'FAC005', {})).status, 403, 'another teacher still cannot touch it');
     });
 });
 

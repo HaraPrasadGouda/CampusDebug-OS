@@ -83,42 +83,6 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
   const [csvPublishState, setCsvPublishState] = useState('idle'); // 'idle' | 'validated' | 'published'
   const [csvStatement, setCsvStatement] = useState(null);
 
-  // --- Attendance locks (hard-lock release valve): today's saved sessions;
-  //     an admin can delete one so the teacher can mark that class again.
-  const [attLocks, setAttLocks] = useState([]);
-  const [attUnlockBusy, setAttUnlockBusy] = useState(null);
-
-  const loadAttLocks = async () => {
-    try {
-      const tok = getAccessToken();
-      const r = await fetch('/api/attendance/sessions', tok ? { headers: { Authorization: `Bearer ${tok}` } } : undefined);
-      const j = await r.json();
-      if (j?.success) setAttLocks(j.sessions || []);
-    } catch { /* offline — keep the last shown list */ }
-  };
-
-  const handleAttUnlock = async (lock) => {
-    setAttUnlockBusy(lock.id);
-    try {
-      const tok = getAccessToken();
-      const r = await fetch('/api/admin/attendance-unlock', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(tok ? { Authorization: `Bearer ${tok}` } : {}) },
-        body: JSON.stringify({ sectionKey: lock.sectionKey, period: lock.period, date: lock.date })
-      });
-      const j = await r.json();
-      if (j?.success) {
-        if (onNotification) onNotification(j.statement || 'Attendance unlocked — the class can be marked again.', 'success');
-        loadAttLocks();
-      } else if (onNotification) {
-        onNotification(j?.error || 'Unlock failed.', 'error');
-      }
-    } catch {
-      if (onNotification) onNotification('Offline — unlocking needs connectivity.', 'error');
-    }
-    setAttUnlockBusy(null);
-  };
-
   // CSV upload helpers — the section pickers derive from ttInfo.sections.
   const csvSectionKey = (csvCourse && csvDept && csvSection) ? `${csvCourse}|${csvDept}|${csvSection}` : null;
   const csvCourseList = [...new Set((ttInfo?.sections || []).map(s => s.course))];
@@ -430,7 +394,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
   }, []);
 
   useEffect(() => {
-    if (activeTab === 'timetable') { loadTimetableInfo(); loadAttLocks(); loadCampusConfig(); loadAtRisk(); }
+    if (activeTab === 'timetable') { loadTimetableInfo(); loadCampusConfig(); loadAtRisk(); }
     if (activeTab === 'setup') { loadCampusConfig(); loadStaffDirectory(); }
     if (activeTab === 'dispatcher' || activeTab === 'home') { loadCampusConfig(); } // courses + live sections/years for the campus audience dropdowns
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1733,49 +1697,6 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
               {/* Today's teacher absences & substitute covers (read-only) */}
               <AdminCoversCard />
 
-              {/* Attendance locks — today's saved classes are FROZEN; only
-                  this panel can release one for re-marking. */}
-              <div className="rounded-xl border border-slate-200 p-3 space-y-2">
-                <div className="flex items-center justify-between">
-                  <p className="text-[11px] font-black text-slate-700 uppercase tracking-wider">
-                    🔒 Attendance locks today
-                  </p>
-                  <button
-                    onClick={loadAttLocks}
-                    className="text-[10px] font-bold text-slate-500 hover:text-slate-800 cursor-pointer"
-                  >
-                    refresh
-                  </button>
-                </div>
-                {attLocks.length === 0 ? (
-                  <p className="text-[11px] text-slate-500 font-medium">
-                    No classes marked yet today. Once a teacher saves attendance, it locks — it can only be released here.
-                  </p>
-                ) : (
-                  <div className="space-y-1.5">
-                    {attLocks.map(l => (
-                      <div key={l.id} className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 border border-slate-100 px-3 py-2">
-                        <div className="min-w-0">
-                          <p className="text-xs font-bold text-slate-800 truncate">
-                            {l.sectionLabel || l.department} · P{l.period} — {l.subjectCode}
-                          </p>
-                          <p className="text-[10px] text-slate-500 font-medium truncate">
-                            {(l.present || []).length} present · by {l.takenByName || l.takenByLogin} at {l.takenAt ? new Date(l.takenAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
-                          </p>
-                        </div>
-                        <button
-                          onClick={() => handleAttUnlock(l)}
-                          disabled={attUnlockBusy === l.id}
-                          className="shrink-0 text-[10px] font-black text-rose-700 bg-rose-50 border border-rose-200 hover:bg-rose-100 disabled:opacity-50 rounded-full px-2.5 py-1 transition-colors cursor-pointer"
-                          title="Delete this locked record so the teacher can mark the class again"
-                        >
-                          {attUnlockBusy === l.id ? 'unlocking…' : '🔓 Unlock'}
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
               {/* --- STEP 6: AT-RISK STUDENTS (<50% live attendance) --- */}
               <div className="rounded-xl border-2 border-dashed border-rose-200 bg-rose-50/40 p-4 space-y-3">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -1784,7 +1705,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
                       ⚠ At-Risk Students — below {atRiskThreshold}% attendance
                     </p>
                     <p className="text-[11px] text-slate-600 font-medium mt-1">
-                      Computed live from every recorded class: each mark and unlock recomputes each student's real
+                      Computed live from every recorded class: each mark and each same-day edit recomputes each student's real
                       percentage. Day scholars need their <b>mentor</b>, hostellers their <b>warden</b>.
                     </p>
                   </div>

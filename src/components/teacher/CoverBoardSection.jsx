@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { LifeBuoy, Clock, MapPin, Lock, UserCheck, Hand, Undo2, Users } from 'lucide-react';
+import { LifeBuoy, Clock, MapPin, Lock, UserCheck, Hand, Undo2, Users, Pencil } from 'lucide-react';
 import { tfetch, nowMin } from '../../utils/teacherApi';
 
 // COVER BOARD (request model — nothing is assigned). A card shows here only if
@@ -16,7 +16,7 @@ export const slotFromCard = (c) => ({
 
 const Pill = ({ children, cls }) => <span className={`inline-flex items-center gap-1 text-[10px] font-extrabold rounded-full px-2 py-0.5 border ${cls}`}>{children}</span>;
 
-export default function CoverBoardSection({ board, reload, onNotification, onMark, markOpen, openLabel, markedRec, onLeave = false, myCards = [], compact = false }) {
+export default function CoverBoardSection({ board, reload, onNotification, onMark, markOpen, openLabel, markedRec, canEdit, onLeave = false, myCards = [], compact = false }) {
   const [busy, setBusy] = useState(null);
   const [pick, setPick] = useState({});            // card id -> chosen subjectCode
   const open = board?.open || [], taken = compact ? [] : (board?.taken || []), mineAll = board?.mine || [];
@@ -89,9 +89,16 @@ export default function CoverBoardSection({ board, reload, onNotification, onMar
               </div>
               <div className="flex flex-col sm:flex-row gap-2 mt-3">
                 {rec ? (
-                  <span className="flex-1 min-h-[44px] rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-extrabold flex items-center justify-center gap-1.5">
-                    Marked {(rec.present || []).length} · Locked
-                  </span>
+                  <>
+                    <span className="flex-1 min-h-[44px] rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-extrabold flex items-center justify-center gap-1.5" title={canEdit?.(rec) ? 'Attendance saved. You can edit it today during college hours.' : 'Attendance can be edited only on the same day during college hours.'}>
+                      Marked {(rec.present || []).length}
+                    </span>
+                    {canEdit?.(rec) && (
+                      <button type="button" data-testid="att-edit" onClick={() => onMark?.(slotFromCard(c))} className="flex-1 min-h-[44px] rounded-xl bg-white border-2 border-indigo-200 hover:bg-indigo-50 text-indigo-700 text-xs font-extrabold flex items-center justify-center gap-1.5 cursor-pointer transition-colors">
+                        <Pencil className="w-3.5 h-3.5" aria-hidden="true" />Edit attendance
+                      </button>
+                    )}
+                  </>
                 ) : markOpen?.(c) ? (
                   <button type="button" onClick={() => onMark?.(slotFromCard(c))} className="flex-1 min-h-[48px] rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-extrabold flex items-center justify-center gap-1.5 cursor-pointer transition-colors">
                     <UserCheck className="w-4 h-4" /> Mark attendance
