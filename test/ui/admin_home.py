@@ -44,6 +44,18 @@ with sync_playwright() as p:
     out['greeting'] = bool(re.search(r'Good (morning|afternoon|evening)', pg.locator('[data-admin-home]').inner_text()))
     out['h1'] = pg.locator('[data-admin-home] h1').count()
     out['date'] = pg.locator('[data-home-date]').inner_text()
+    out['quiet'] = pg.evaluate("""()=>{const q=(s)=>document.querySelectorAll(s);const home=document.querySelector('[data-admin-home]');const txt=home.innerText;const hero=document.querySelector('[data-home-clear]');
+      if(!hero) return {lastNoticeCount:(txt.match(/Last notice sent/g)||[]).length};
+      const hr=hero.getBoundingClientRect();const icon=hero.querySelector('span');const ir=icon.getBoundingClientRect();
+      const tops=[...hero.querySelectorAll('[data-home-strip] [data-home-counter]')].map(e=>Math.round(e.getBoundingClientRect().top));
+      const side=document.querySelector('[data-home-side]');const left=home.querySelector('.col-span-7');
+      const ln=[...home.querySelectorAll('[data-home-last-notice], [data-home-last-notice-card]')];
+      return {allClear:[...hero.querySelectorAll('p')].filter(p=>p.innerText.trim()==='All clear').length, glance:/Today at a glance/i.test(hero.innerText)?1:0,
+        stats:hero.querySelectorAll('[data-home-strip] [data-home-counter]').length, stripCount:q('[data-admin-home] > [data-home-strip]').length,
+        iconBox:Math.round(Math.min(ir.width,ir.height)), lastNoticeCount:(txt.match(/Last notice sent/g)||[]).length, lastNoticeText:ln.map(e=>e.innerText).join(' | '),
+        lastNoticeInHero:!!hero.querySelector('[data-home-last-notice]'), lastNoticeInCard:!!document.querySelector('[data-home-notice-card] [data-home-last-notice-card]'),
+        mock:/mock|lorem|placeholder|sample|demo/i.test(txt), hero:{h:Math.round(hr.height),bottom:Math.round(hr.bottom)}, glanceRows:new Set(tops).size,
+        quickLg:side?side.querySelectorAll('[data-home-go]').length:0, sideBottom:side?Math.round(side.getBoundingClientRect().bottom):0, mainBottom:left?Math.round(left.getBoundingClientRect().bottom):0}}""")
     out['strip'] = pg.evaluate("()=>{const r=document.querySelector('[data-home-strip]').getBoundingClientRect();const g=document.querySelector('[data-home-strip] .grid').getBoundingClientRect();return {top:r.top,bottom:r.bottom,h:g.height,cells:[...document.querySelectorAll('[data-home-counter]')].map(e=>Math.round(e.getBoundingClientRect().height))}}")
     out['noticeCard'] = pg.locator('[data-home-notice-card]').locator('visible=true').count()
     out['noticeBtn'] = pg.locator('[data-home-notice-open]').locator('visible=true').count()

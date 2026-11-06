@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import {
   AlertTriangle, Ban, Undo2, FileText, Check, ChevronRight, Siren, Send, Receipt,
-  KeyRound, UserCheck, Utensils, CheckCircle2, Users, TrendingUp, GraduationCap
+  KeyRound, UserCheck, Utensils, CheckCircle2, Users, TrendingUp, GraduationCap, Calendar
 } from 'lucide-react';
 import AdminCoversCard from '../teacher/AdminCoversCard';
 import useCoverBoard from './useCoverBoard';
@@ -38,6 +38,20 @@ function Counter({ value, label, tone }) {
     <div className="min-w-0 px-2 py-2 text-center" data-home-counter={label}>
       <p className={`text-[19px] lg:text-xl font-extrabold font-mono leading-none ${num}`}>{value}</p>
       <p className="mt-1 text-[10.5px] lg:text-[11px] font-bold text-slate-500 leading-tight">{label}</p>
+    </div>
+  );
+}
+
+// Quiet-day status chip: same four numbers as the busy-day strip, shown as friendly tiles even at zero.
+function QuietStat({ Icon, value, label, tone }) {
+  const t = { indigo: 'bg-indigo-100 text-indigo-700', amber: 'bg-amber-100 text-amber-700', violet: 'bg-violet-100 text-violet-700', rose: 'bg-rose-100 text-rose-700' }[tone] || 'bg-emerald-100 text-emerald-700';
+  return (
+    <div data-home-counter={label} className="min-w-0 rounded-2xl bg-white border border-emerald-100 px-3 py-3 flex items-center gap-3 shadow-[0_1px_0_rgba(16,185,129,0.06)]">
+      <span className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${t}`}><Icon className="w-4 h-4" /></span>
+      <div className="min-w-0">
+        <p className="text-[20px] font-extrabold font-mono text-slate-900 leading-none">{value}</p>
+        <p className="mt-1 text-[11.5px] font-bold text-slate-500 leading-tight">{label}</p>
+      </div>
     </div>
   );
 }
@@ -113,20 +127,36 @@ export default function AdminHome({
   const saved = messForecast?.meals ? messForecast.meals.reduce((s, m) => s + (m.wasteKg || 0), 0) : null;
   const opted = messForecast?.meals ? messForecast.meals.reduce((s, m) => s + (m.optedOut || 0), 0) : null;
 
+  const heroCard = (
+    <div data-home-clear className="rounded-3xl border border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-emerald-100/60 p-4 lg:p-5 shadow-sm">
+      <div className="flex items-start gap-3.5">
+        <span className="w-12 h-12 rounded-2xl bg-emerald-500 text-white ring-4 ring-emerald-100 flex items-center justify-center shrink-0"><CheckCircle2 className="w-7 h-7" /></span>
+        <div className="min-w-0 flex-1">
+          <p className="text-[19px] lg:text-[21px] font-extrabold text-emerald-900 leading-tight">All clear</p>
+          <p className="mt-1 text-[12.5px] lg:text-[13px] font-medium text-slate-600 leading-snug">Every class is covered, no certificate requests are waiting and nothing is escalated to you.</p>
+          <p data-home-date className="mt-1.5 text-[11.5px] font-semibold text-slate-500">{dateLabel}</p>
+        </div>
+      </div>
+      <p className="mt-4 mb-2 px-0.5 text-[11px] font-extrabold uppercase tracking-wide text-slate-500">Today at a glance</p>
+      <div data-home-strip>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+          <QuietStat Icon={UserCheck} tone="indigo" value={leaveRows ? leaveRows.length : '—'} label="On leave" />
+          <QuietStat Icon={AlertTriangle} tone="amber" value={cover.banners ? needCover.length : '—'} label="No cover" />
+          <QuietStat Icon={FileText} tone="violet" value={docRequests ? pending.length : '—'} label="Requests" />
+          <QuietStat Icon={Siren} tone="rose" value={escalated.length} label="Escalated" />
+        </div>
+      </div>
+      {lastNotice && !isLg && (
+        <p data-home-last-notice className="mt-3 pt-3 border-t border-emerald-100 text-[12px] font-bold text-slate-600 inline-flex items-center gap-1.5 w-full"><Send className="w-3.5 h-3.5 text-emerald-700 shrink-0" /> Last notice sent {lastNotice}</p>
+      )}
+    </div>
+  );
+
   const needsColumn = (
     <div className="space-y-3">
       <SectionHead title="Needs you now" badge={clear ? null : groups} />
 
-      {clear && (
-        <div data-home-clear className="rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50 to-white p-5 shadow-sm flex items-start gap-3.5">
-          <span className="w-11 h-11 rounded-2xl bg-emerald-500 text-white flex items-center justify-center shrink-0"><CheckCircle2 className="w-6 h-6" /></span>
-          <div className="min-w-0">
-            <p className="text-[16px] font-extrabold text-emerald-900 leading-tight">All clear</p>
-            <p className="mt-1 text-[12.5px] font-medium text-slate-600 leading-snug">Every class is covered, no certificate requests are waiting and nothing is escalated to you.</p>
-            {lastNotice && <p data-home-last-notice className="mt-1.5 text-[11.5px] font-bold text-emerald-800">Last notice sent {lastNotice}</p>}
-          </div>
-        </div>
-      )}
+      {clear && heroCard}
 
       {needCover.map(b => <CoverNeedRow key={b.id} b={b} busy={cover.busy} onCancel={cover.cancel} />)}
 
@@ -217,6 +247,28 @@ export default function AdminHome({
     </div>
   );
 
+  const lgRow = (go, Icon, tint, label, hint) => (
+    <button key={go} type="button" data-home-go={go} onClick={() => onGo(go)} className="w-full text-left rounded-xl border border-slate-200 bg-white hover:bg-slate-50 p-2.5 min-h-[52px] flex items-center gap-3 cursor-pointer transition-colors">
+      <span className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${tint}`}><Icon className="w-4 h-4" /></span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-[13px] font-extrabold text-slate-900 leading-tight">{label}</span>
+        <span className="block text-[11.5px] font-medium text-slate-500 leading-tight mt-0.5">{hint}</span>
+      </span>
+      <ChevronRight className="w-4 h-4 text-slate-400 shrink-0" />
+    </button>
+  );
+  const quickActionsLg = (
+    <div className="rounded-2xl bg-white border border-slate-200 p-4 shadow-sm">
+      <h2 className="text-[15px] font-extrabold text-slate-900 mb-2.5">Quick actions</h2>
+      <div className="space-y-2">
+        {lgRow('fees', Receipt, 'bg-emerald-100 text-emerald-700', 'Fee payments', 'Dues and receipts')}
+        {lgRow('security', KeyRound, 'bg-violet-100 text-violet-700', 'Reset password', 'Password Reset Desk')}
+        {lgRow('docs', FileText, 'bg-violet-100 text-violet-700', 'Document Desk', 'Certificate requests')}
+        {lgRow('timetable', Calendar, 'bg-teal-100 text-teal-700', 'Timetable Engine', 'Plan and cover classes')}
+      </div>
+    </div>
+  );
+
   const noticeCard = noticeOpen ? (
     <div data-home-notice-form className="space-y-2">
       <div className="flex justify-end">
@@ -263,7 +315,7 @@ export default function AdminHome({
     </div>
   );
   const tiles = (
-    <div data-home-tiles className="grid grid-cols-2 gap-2.5">
+    <div data-home-tiles className={`grid grid-cols-2 gap-2.5 ${clear ? 'lg:grid-cols-4' : ''}`}>
       {tile(Utensils, 'bg-amber-100 text-amber-700', plates != null ? plates.toLocaleString() : '—', 'Plates today', plates != null && (saved > 0 || opted > 0) ? `${Math.round(saved * 10) / 10} kg saved · ${opted} opted out` : null, 'text-emerald-700')}
       {tile(Users, 'bg-purple-100 text-purple-700', stats.students, 'Enrolled students', stats.blocks != null ? `${stats.blocks} hostel block${Number(stats.blocks) === 1 ? '' : 's'}` : null)}
       {tile(TrendingUp, 'bg-emerald-100 text-emerald-700', stats.sla, 'Resolution SLA rate', 'Target: >90%')}
@@ -273,6 +325,7 @@ export default function AdminHome({
 
   return (
     <div data-admin-home className="space-y-3 lg:space-y-4">
+      {!clear && (
       <div data-home-strip>
         <p data-home-date className="px-1 pb-1.5 text-[11.5px] font-semibold text-slate-500">{dateLabel}</p>
         <div className="grid grid-cols-4 divide-x divide-slate-200 rounded-2xl bg-white border border-slate-200 shadow-sm">
@@ -282,6 +335,7 @@ export default function AdminHome({
           <Counter value={escalated.length} label="Escalated" tone={escalated.length ? 'rose' : null} />
         </div>
       </div>
+      )}
 
       {isLg ? (
         <div className="grid grid-cols-12 gap-4 items-start">
@@ -290,8 +344,9 @@ export default function AdminHome({
             {coversCard}
             {tiles}
           </div>
-          <div className="col-span-5" data-home-side>
+          <div className="col-span-5 space-y-4" data-home-side>
             {noticeCard}
+            {clear && !noticeOpen && quickActionsLg}
           </div>
         </div>
       ) : (

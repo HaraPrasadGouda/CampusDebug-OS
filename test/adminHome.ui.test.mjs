@@ -45,7 +45,7 @@ const run = (app, vp, who, scenario) => {
     assert.equal(r.status, 0, r.stderr.slice(-1800));
     return JSON.parse(r.stdout.trim().split('\n').pop());
 };
-async function boot(busy) {
+async function boot(busy, lastNotice = false) {
     const fx = fixtures(busy);
     const app = await startApp({ dist: true, profilesFile: path.join(fx, 'profiles.json'), mockEnv: { EXTRA_TABLES_FILE: path.join(fx, 'extra.json') } });
     const stop = app.stop; app.stop = async () => { await stop(); fs.rmSync(fx, { recursive: true, force: true }); };
@@ -53,6 +53,7 @@ async function boot(busy) {
         app.clock('09:30');
         assert.equal((await app.api('POST', '/api/leave-requests/teacher-absent', 'FAC003', { onLeave: true, substituteRoll: 'FAC019' })).status, 200);
     }
+    if (lastNotice) { app.clock('09:40'); assert.equal((await app.api('POST', '/api/notices', 'ADMIN01', { title: 'Water supply restored in Block B', content: 'Supply is back in all rooms.', target: 'All Students', category: 'General', urgency: 'Normal' })).status, 200); }
     app.clock('14:05');
     return app;
 }
@@ -71,8 +72,10 @@ const common = (o, vp) => {
     assert.equal(o.h1, 0);
     assert.match(o.date, /^Wednesday,? 4 November$/, 'date is a plain muted caption, no clock time');
     assert.deepEqual(Object.keys(o.counters), ['On leave', 'No cover', 'Requests', 'Escalated']);
-    assert.ok(o.strip.h < 90, `counter strip is slim (${o.strip.h}px)`);
-    assert.ok(o.strip.bottom < o.first.headTop, 'strip sits above "Needs you now"');
+    if (!o.clear) {   // busy day: slim counter strip above "Needs you now"; quiet day: the same four numbers are friendly tiles inside the All clear card
+        assert.ok(o.strip.h < 90, `counter strip is slim (${o.strip.h}px)`);
+        assert.ok(o.strip.bottom < o.first.headTop, 'strip sits above "Needs you now"');
+    }
     assert.ok(o.first.headBottom < o.first.navTop, `Needs-you heading must be inside the first viewport ${JSON.stringify(o.first)}`);
     if (!phone) assert.ok(o.first.firstBottom == null || o.first.firstBottom <= o.first.ih, `first action inside the first laptop viewport ${JSON.stringify(o.first)}`);
     assert.equal(o.tiles, 4);
@@ -108,17 +111,46 @@ describe('Admin / Dean Home — Needs you now (headless Chromium)', { skip: have
                 } finally { await app.stop(); }
             });
         }
-        for (const vp of [[390, 844, 1.3], [1440, 900, 1.0]]) {
-            test(`${who.role} ${vp[0]}px quiet day: "All clear" card, zero counters, tools still there`, async () => {
-                const app = await boot(false);
+        for (const vp of [[360, 740, 1.3], [390, 844, 1.3], [412, 915, 1.3], [1440, 900, 1.0]]) {
+            test(`${who.role} ${vp[0]}px quiet day: All clear hero, today at a glance (zeros as tiles), quick actions, Last notice shown once`, async () => {
+                const app = await boot(false, true);
                 try {
                     const o = run(app, vp, who, 'quiet'); common(o, vp);
+                    const phone = vp[0] < 800;
                     assert.deepEqual(o.counters, { 'On leave': '0', 'No cover': '0', Requests: '0', Escalated: '0' });
                     assert.equal(o.clear, 1);
                     assert.deepEqual(o.needs, { cover: 0, docs: 0, escalated: 0 });
+                    const q = o.quiet;
+                    assert.equal(q.allClear, 1, 'one "All clear" headline');
+                    assert.equal(q.glance, 1, '"Today at a glance" label');
+                    assert.equal(q.stats, 4, 'four friendly stat tiles, zeros included');
+                    assert.equal(q.stripCount, 0, 'no separate counter strip on a quiet day (the tiles are the counters)');
+                    assert.ok(q.iconBox >= 44, `hero icon is a clear 44px+ badge (${q.iconBox}px)`);
+                    assert.equal(q.lastNoticeCount, 1, '"Last notice sent" appears exactly once on Home');
+                    assert.match(q.lastNoticeText, /Last notice sent .*(09:40|9:40)/i);
+                    assert.equal(q.mock, false, 'no mock/placeholder labels');
+                    assert.ok(q.hero.h > 150, `hero is substantial (${q.hero.h}px)`);
+                    if (phone) {
+                        assert.ok(q.hero.bottom <= o.first.navTop, `hero fits above the bottom bar ${JSON.stringify([q.hero, o.first])}`);
+                        assert.ok(q.lastNoticeInHero, 'phone: last notice is the hero footer');
+                        assert.ok(q.glanceRows >= 2, 'phone: 2 x 2 tiles');
+                    } else {
+                        assert.ok(!q.lastNoticeInHero && q.lastNoticeInCard, 'laptop: last notice lives in the Send a Notice card only');
+                        assert.equal(q.glanceRows, 1, 'laptop: the four tiles sit in one row');
+                        assert.equal(q.quickLg, 4, 'laptop: four quick actions beside the notice card');
+                        assert.ok(Math.abs(q.sideBottom - q.mainBottom) < 330, `laptop columns are balanced (${q.sideBottom} vs ${q.mainBottom})`);
+                    }
                 } finally { await app.stop(); }
             });
         }
+        test(`${who.role} quiet day without any notice sent yet: no "Last notice" line, nothing broken`, async () => {
+            const app = await boot(false);
+            try {
+                const o = run(app, [390, 844, 1.3], who, 'quiet'); common(o, [390, 844, 1.3]);
+                assert.equal(o.quiet.lastNoticeCount, 0);
+                assert.equal(o.clear, 1);
+            } finally { await app.stop(); }
+        });
     }
     for (const vp of [[390, 844, 1.3], [1440, 900, 1.0]]) {
         test(`ADMIN ${vp[0]}px one-tap actions work as before (Ready for pickup, Reject, Mark class cancelled, Undo), every tool reachable`, async () => {
