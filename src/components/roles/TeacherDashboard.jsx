@@ -957,17 +957,10 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
     </div>
   );
 
+  // Covers and Mark attendance live on Today only (no repeat here); Classes keeps the lesson plan & analytics.
   const classesTab = (
-    <div className="flex flex-col gap-4 xl:grid xl:grid-cols-12 xl:items-start" data-testid="tab-classes">
-      <div className="order-1 xl:col-span-5">
-        <AttendanceList rows={dayRows} loaded={!!ttMine} markedRec={markedRec} canEdit={canEdit} markOpen={markOpen} openLabel={openLabel} onMark={setMarkSlot} nowMin={nowM} />
-      </div>
-      <div className="order-2 xl:order-3 xl:col-span-12">
-        <CoverBoardSection {...coverBoardProps} />
-      </div>
-      <div className="order-3 xl:order-2 xl:col-span-7">
-        <TeacherInsights only={['plan', 'analytics']} title="Lesson plan & analytics" request={insightsReq} />
-      </div>
+    <div className="flex flex-col gap-4" data-testid="tab-classes">
+      <TeacherInsights only={['plan', 'analytics']} title="Lesson plan & analytics" request={insightsReq} />
     </div>
   );
 

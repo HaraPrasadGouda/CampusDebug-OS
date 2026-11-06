@@ -42,9 +42,9 @@ export default function AdminCoversCard({ bare = false, onRows } = {}) {
               </span>
               <span className={`text-[11px] font-semibold ${r.coveredBy ? 'text-indigo-700' : 'text-rose-700'}`}>
                 {r.coveredBy
-                  ? `Leaves → ${profName(r.coveredBy.name)} · ${r.pending} pending`
+                  ? `Leave requests go to ${profName(r.coveredBy.name)} (${r.pending} pending)`
                   : r.declinedBy ? 'Leave substitute declined — not covered yet' : 'No leave substitute — leaves stay with them'}
-                {` · classes: ${r.cards?.taken || 0} taken, ${r.cards?.open || 0} open`}
+                {` · ${(r.cards?.open || 0) === 0 ? 'all classes covered' : `${r.cards.open} ${r.cards.open === 1 ? 'class' : 'classes'} still need a cover`}${(r.cards?.taken || 0) ? ` (${r.cards.taken} taken)` : ''}`}
               </span>
             </div>
           ))}

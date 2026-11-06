@@ -912,7 +912,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
     timetable: { label: 'Timetable Engine', Icon: Calendar, on: 'bg-teal-600 text-white', off: 'bg-teal-100 text-teal-600', sel: 'bg-teal-50 border-teal-400 text-teal-900', bar: 'bg-teal-500' },
     setup: { label: 'Campus Setup', Icon: Building2, on: 'bg-indigo-600 text-white', off: 'bg-indigo-100 text-indigo-600', sel: 'bg-indigo-50 border-indigo-400 text-indigo-900', bar: 'bg-indigo-500' },
     mess: { label: 'Mess Kitchen Forecast', Icon: Utensils, on: 'bg-amber-600 text-white', off: 'bg-amber-100 text-amber-600', sel: 'bg-amber-50 border-amber-400 text-amber-900', bar: 'bg-amber-500' },
-    csv: { label: `Import Students (CSV) (${importedUsers.length})`, Icon: FileSpreadsheet, on: 'bg-purple-600 text-white', off: 'bg-purple-100 text-purple-600', sel: 'bg-purple-50 border-purple-400 text-purple-900', bar: 'bg-purple-500' },
+    csv: { label: 'Import Students (CSV)', Icon: FileSpreadsheet, on: 'bg-purple-600 text-white', off: 'bg-purple-100 text-purple-600', sel: 'bg-purple-50 border-purple-400 text-purple-900', bar: 'bg-purple-500' },
     metrics: { label: 'System Health & Sync Engine', Icon: Database, on: 'bg-sky-600 text-white', off: 'bg-sky-100 text-sky-600', sel: 'bg-sky-50 border-sky-400 text-sky-900', bar: 'bg-sky-500' },
     fees: { label: 'Fee Payments', Icon: Receipt, on: 'bg-emerald-600 text-white', off: 'bg-emerald-100 text-emerald-600', sel: 'bg-emerald-50 border-emerald-400 text-emerald-900', bar: 'bg-emerald-500' },
     security: { label: 'Password Reset Desk', Icon: ShieldCheck, on: 'bg-rose-600 text-white', off: 'bg-rose-100 text-rose-600', sel: 'bg-rose-50 border-rose-400 text-rose-900', bar: 'bg-rose-500' },
@@ -1320,32 +1320,28 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
   return (
     <div className="admin-dash space-y-5 animate-in fade-in duration-200">
       {/* Cover board escalation: an absent teacher's class nobody took */}
-      {!isHome && <AdminCoverAlerts onNotification={onNotification} />}
+      {!isHome && <AdminCoverAlerts onNotification={onNotification} compact={!['dispatcher', 'timetable'].includes(activeTab)} onOpenHome={() => setActiveTab('home')} />}
       
       {/* Laptop: the tools live as a grouped sub-menu under "Home" in the app sidebar */}
       {toolNavSlot && createPortal(
-        <div className="mt-1 mb-2 ml-4 pl-2.5 border-l-2 border-slate-100 space-y-2">
+        <div className="mt-2 mb-3 mx-1 space-y-3">
           {adminGroups.map((g) => (
-            <div key={g.title}>
-              <p className="text-[9px] uppercase tracking-wider font-bold text-slate-400 px-2 pb-0.5">{g.title}</p>
+            <div key={g.title} className="rounded-2xl bg-slate-50 border border-slate-200 p-2">
+              <p className="text-[10px] uppercase tracking-wider font-extrabold text-slate-500 px-1.5 pb-1.5">{g.title}</p>
+              <div className="space-y-1">
               {g.ids.map((id) => {
                 const t = adminTabs[id];
                 const on = activeTab === id;
                 return (
-                  <button
-                    key={id}
-                    type="button"
-                    data-admin-tab={id}
-                    onClick={() => setActiveTab(id)}
-                    className={`w-full min-h-[44px] lg:min-h-[38px] flex items-center gap-2 rounded-lg border px-2 py-1 text-left transition-colors cursor-pointer ${on ? t.sel : 'border-transparent text-slate-600 hover:bg-slate-100/80 hover:text-slate-900'}`}
-                  >
-                    <span className={`w-6 h-6 rounded-md flex items-center justify-center shrink-0 ${on ? t.on : t.off}`}>
-                      <t.Icon className="w-3.5 h-3.5" />
-                    </span>
-                    <span className="text-[11px] font-bold leading-tight min-w-0">{t.label}</span>
+                  <button key={id} type="button" data-admin-tab={id} onClick={() => setActiveTab(id)}
+                    className={`w-full min-h-[44px] flex items-center gap-2.5 rounded-xl border px-2 py-1.5 text-left transition-colors cursor-pointer ${on ? t.sel + ' shadow-sm' : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300 hover:bg-white active:bg-slate-100'}`}>
+                    <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${on ? t.on : t.off}`}><t.Icon className="w-4 h-4" /></span>
+                    <span className="flex-1 text-[12.5px] font-bold leading-tight min-w-0">{t.label}</span>
+                    <span className={`text-base leading-none shrink-0 ${on ? 'opacity-70' : 'text-slate-300'}`}>›</span>
                   </button>
                 );
               })}
+              </div>
             </div>
           ))}
         </div>,
@@ -1353,7 +1349,6 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
       )}
 
 
-      {!isHome && kpiStrip}
 
       {/* Phone: the 5 groups as a bottom tab bar (portal to <body> so it stays fixed) */}
       {createPortal(
@@ -1395,7 +1390,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
                 type="button"
                 data-admin-tab={id}
                 onClick={() => setActiveTab(id)}
-                className={`${i === barGroup.ids.length - 1 && barGroup.ids.length % 2 === 1 ? 'col-span-2 ' : ''}min-h-[44px] flex items-center justify-center gap-1.5 rounded-xl border px-2 py-1 text-center transition-colors cursor-pointer ${on ? t.sel : 'border-transparent text-slate-600 hover:bg-slate-50'}`}
+                className={`${i === barGroup.ids.length - 1 && barGroup.ids.length % 2 === 1 ? 'col-span-2 ' : ''}min-h-[44px] flex items-center justify-center gap-1.5 rounded-xl border-2 px-2 py-1 text-center shadow-sm transition-colors cursor-pointer ${on ? t.sel : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50 active:bg-slate-100'}`}
               >
                 <t.Icon className="w-3.5 h-3.5 shrink-0" />
                 <span className="text-[11px] font-bold leading-tight">{t.label}</span>

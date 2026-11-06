@@ -292,7 +292,9 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
     }
   };
 
-  const handleRejectPass = async (pass) => {
+  const [rejectTarget, setRejectTarget] = useState(null); // pass awaiting the Reject confirm step
+  const handleRejectPass = (pass) => setRejectTarget(pass);
+  const doRejectPass = async (pass) => {
     const rejectedPass = {
       ...pass,
       status: 'REJECTED',
@@ -1061,7 +1063,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                         </button>
                       )}
 
-                      {!isResolved && (
+                      {!isResolved && cluster.assignedTo && (
                         <button
                           onClick={() => handleResolveCluster(cluster.masterId)}
                           className="flex-1 sm:flex-none xl:flex-1 min-h-[44px] justify-center px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold transition-all cursor-pointer text-xs flex items-center space-x-1 shadow-sm"
@@ -1454,6 +1456,20 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
           Day-scholar in/out history is a mentor-welfare concern — it shows in
           the Faculty Mentor Console (teacher dash), scoped server-side to each
           mentor's own mentees. The warden keeps the hosteller pass register. */}
+      {rejectTarget && (
+        <div className="fixed inset-0 z-[80] flex items-end sm:items-center justify-center bg-slate-900/50 p-4" role="dialog" aria-modal="true" data-testid="reject-confirm" onClick={() => setRejectTarget(null)}>
+          <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div>
+              <h3 className="font-display font-extrabold text-base text-slate-900">Reject this pass?</h3>
+              <p className="text-sm text-slate-600 mt-1">{rejectTarget.name ? `${rejectTarget.name}'s ` : 'This '}pass request will be rejected and the student will be told.</p>
+            </div>
+            <div className="flex gap-2">
+              <button type="button" onClick={() => setRejectTarget(null)} className="flex-1 min-h-[44px] rounded-xl border border-slate-200 bg-white text-slate-700 font-bold text-sm cursor-pointer">Keep it</button>
+              <button type="button" data-testid="reject-confirm-yes" onClick={() => { const p = rejectTarget; setRejectTarget(null); doRejectPass(p); }} className="flex-1 min-h-[44px] rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-sm cursor-pointer">Yes, reject</button>
+            </div>
+          </div>
+        </div>
+      )}
       <WardenCreatePassModal
         isOpen={showCreatePassModal}
         onClose={() => setShowCreatePassModal(false)}

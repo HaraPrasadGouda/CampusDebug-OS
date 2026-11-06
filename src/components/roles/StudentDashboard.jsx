@@ -51,6 +51,7 @@ export default function StudentDashboard({
   session,
   docStatusMap = {}
 }) {
+  const [feedExpanded, setFeedExpanded] = useState(false);
   const [activeFeedTab, setActiveFeedTab] = useState('all'); // 'all' | 'issues' | 'passes' | 'mess'
   const [ticketDetail, setTicketDetail] = useState(null); // read-only complaint detail card
 
@@ -220,6 +221,7 @@ export default function StudentDashboard({
 
   // Guarantee newest-first ordering in the feed regardless of merge order
   const sortedActivities = [...filteredActivities].sort((a, b) => activityTimeMs(b) - activityTimeMs(a));
+  const visibleActivities = feedExpanded ? sortedActivities : sortedActivities.slice(0, 8); // latest 8; "Show older" reveals the rest
 
   // Day scholars never use the hosteller gate-pass round trip (exit + return):
   // their card follows the mentor leave below (one exit scan, final), so a
@@ -996,7 +998,7 @@ export default function StudentDashboard({
               Nothing here yet — gate passes, complaints and feedback you submit will appear in this feed.
             </div>
           ) : (
-            sortedActivities.map((rawAct) => {
+            visibleActivities.map((rawAct) => {
               const act = withPatch(rawAct);
               const showLifecycle = act.type === 'ticket' && hasLifecycle(act);
               const isPass = act.type === 'gate_pass';
@@ -1156,6 +1158,11 @@ export default function StudentDashboard({
                     </div>
                   );
                 })
+              )}
+              {!feedExpanded && sortedActivities.length > 8 && (
+                <button type="button" data-testid="feed-show-older" onClick={() => setFeedExpanded(true)} className="w-full min-h-[44px] rounded-xl border-2 border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-bold text-sm cursor-pointer">
+                  Show older ({sortedActivities.length - 8})
+                </button>
               )}
             </div>
         </div>

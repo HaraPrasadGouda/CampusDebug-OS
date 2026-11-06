@@ -203,7 +203,6 @@ export default function FeeDuesModal({ isOpen, onClose, onFeePaid, session }) {
                 <div className="text-[11px] font-mono text-slate-500 leading-relaxed">
                   Covers all pending campus dues on your account (mess, exam, hostel, library)
                 </div>
-                <div className="text-[10px] font-semibold text-slate-400">Demo payment — no real money is charged</div>
               </div>
               <div className="flex items-center sm:justify-end gap-3 shrink-0">
                 <span className="text-sm font-bold font-mono text-slate-900">
@@ -225,7 +224,6 @@ export default function FeeDuesModal({ isOpen, onClose, onFeePaid, session }) {
                   <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
                   <span className="text-lg font-extrabold font-mono tracking-tight whitespace-nowrap">Paid {fmtMoney(latest.amount)}</span>
                 </div>
-                <span className="text-[10px] font-bold px-2 py-1 rounded-full bg-white border border-emerald-200 text-emerald-700 whitespace-nowrap shrink-0">Demo payment</span>
               </div>
               <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-[11px]">
                 <dt className="text-emerald-700/80">Receipt</dt>
