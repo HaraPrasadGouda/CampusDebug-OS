@@ -388,7 +388,7 @@ export default function LoginScreen({ onLogin }) {
           <div className="w-[84px] h-[84px] rounded-[22px] bg-[#f6fbf7] flex items-center justify-center overflow-hidden shadow-[0_12px_26px_-10px_rgba(2,40,28,0.45)]">
             <BrandIcon size="w-[56px] h-[56px]" />
           </div>
-          <h1 className="font-display mt-[26px] text-[31px] min-[380px]:text-[34px] font-extrabold text-white tracking-[-0.01em] leading-[1.1] whitespace-nowrap">
+          <h1 className="font-display mt-[26px] text-[clamp(22px,6.2vw,34px)] font-extrabold text-white tracking-[-0.01em] leading-[1.1]">
             CampusDebug <span className="text-[#a7f3d0]">OS</span>
           </h1>
           <p className="mt-2 text-[16px] min-[380px]:text-[17px] font-medium text-white/90">Your campus, in one app.</p>
@@ -543,7 +543,7 @@ export default function LoginScreen({ onLogin }) {
                 </div>
               </div>
 
-              {error && <p className="-mt-1 mb-2 text-xs text-rose-600 font-semibold">{error}</p>}
+              {error && verifyState !== 'notfound' && <p className="-mt-1 mb-2 text-xs text-rose-600 font-semibold">{error}</p>}
 
               <button
                 type="submit" disabled={authBusy}
