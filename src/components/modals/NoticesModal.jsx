@@ -145,7 +145,7 @@ export default function NoticesModal({ isOpen, onClose, onReadReceiptChanged }) 
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-base font-bold text-slate-900">
-                  Targeted Campus Noticeboard
+                  Notices
                 </h3>
                 {unreadCount > 0 && (
                   <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 font-bold border border-amber-200">
@@ -154,7 +154,7 @@ export default function NoticesModal({ isOpen, onClose, onReadReceiptChanged }) 
                 )}
               </div>
               <p className="text-xs text-slate-500">
-                Official Circulars • Department Notices • Hostel Announcements
+                Circulars, department and hostel notices
               </p>
             </div>
           </div>
@@ -215,8 +215,8 @@ export default function NoticesModal({ isOpen, onClose, onReadReceiptChanged }) 
           {filteredNotices.length === 0 ? (
             <div className="py-12 text-center text-slate-500 text-xs space-y-2">
               <Megaphone className="w-8 h-8 text-slate-300 mx-auto" />
-              <p className="font-semibold text-slate-700">No notices match your filter or search.</p>
-              <p className="text-[11px] text-slate-400">Try clearing the search query or selecting 'All Notices'.</p>
+              <p className="font-semibold text-slate-700">No notices to show.</p>
+              <p className="text-[11px] text-slate-400">Clear the search or pick All Notices.</p>
             </div>
           ) : (
             filteredNotices.map((notice) => {
@@ -313,7 +313,7 @@ export default function NoticesModal({ isOpen, onClose, onReadReceiptChanged }) 
         {/* Modal Footer */}
         <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-between text-xs">
           <span className="text-[11px] text-slate-500 font-mono">
-            Showing {filteredNotices.length} official notice(s)
+            {filteredNotices.length} {filteredNotices.length === 1 ? 'notice' : 'notices'}
           </span>
           <button
             type="button"

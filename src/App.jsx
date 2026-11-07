@@ -935,7 +935,7 @@ export default function App() {
 
         {/* Footer */}
         <footer className="border-t border-slate-200/50 py-3.5 px-4 text-center text-slate-400 text-[11px] font-medium bg-white/50 backdrop-blur-sm mt-auto">
-          CampusDebug OS • Unified Campus Operations & Offline Action Feed
+          CampusDebug OS
         </footer>
 
         {/* Teacher phone layout: room under the fixed bottom bar so nothing hides behind it */}

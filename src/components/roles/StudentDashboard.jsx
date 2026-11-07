@@ -584,7 +584,7 @@ export default function StudentDashboard({
 
         <div className="flex-1 flex flex-col justify-center mt-3 lg:mt-3.5">
           <div className="flex items-center gap-x-2 gap-y-1.5 flex-wrap">
-            <div className="text-[26px] min-[380px]:text-[30px] lg:text-[40px] leading-none font-extrabold text-slate-900 tracking-tight break-all">
+            <div className="text-[22px] min-[380px]:text-[26px] lg:text-[40px] leading-none font-extrabold text-slate-900 tracking-tight whitespace-nowrap">
               {myStats.feeDue != null ? `\u20B9${myStats.feeDue.toLocaleString('en-IN')}` : '—'}
             </div>
             {myStats.feeDue != null && myStats.feeDue > 0 ? (
@@ -677,7 +677,7 @@ export default function StudentDashboard({
         </div>
 
         <div className="[grid-area:main] min-w-0 mt-1.5 lg:mt-3 lg:flex lg:flex-col lg:justify-center">
-          <div className={`${leaveCard && !leaveNo ? 'text-[15px] lg:text-xl 2xl:text-2xl' : 'text-[15px] lg:text-[26px]'} leading-tight font-bold lg:font-extrabold text-slate-900 font-mono tracking-tight break-words group-hover:text-amber-900 transition-colors`}>
+          <div className={`${leaveCard && !leaveNo ? 'text-[15px] lg:text-xl 2xl:text-2xl' : 'text-[15px] lg:text-[26px]'} leading-tight font-bold lg:font-extrabold text-slate-900 ${(leaveCard || cardPass) ? 'font-mono' : ''} tracking-tight break-words group-hover:text-amber-900 transition-colors`}>
             {leaveCard ? (leaveNo || 'Day-Scholar Leave') : cardPass ? cardPass.id : (isDayScholar ? 'No active leave' : 'No Active Pass')}
           </div>
           <p className="text-[11px] lg:text-[12.5px] text-slate-600 font-medium mt-0.5 lg:mt-1 max-lg:line-clamp-2 max-lg:break-words lg:truncate">
