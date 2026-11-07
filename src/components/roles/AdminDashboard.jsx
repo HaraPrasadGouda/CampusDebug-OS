@@ -1136,16 +1136,16 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
               {/* Action Tag & Urgency */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-slate-700 font-medium mb-1">Interactive Action Tag</label>
+                  <label className="block text-slate-700 font-medium mb-1">What should students do?</label>
                   <select
                     value={noticeForm.actionTag}
                     onChange={(e) => setNoticeForm({ ...noticeForm, actionTag: e.target.value })}
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 focus:outline-none focus:border-emerald-600 cursor-pointer"
                   >
-                    <option value="Require 1-Tap Acknowledge">Require 1-Tap Read Receipt</option>
-                    <option value="Vote / Preference Poll">Attach 1-Tap Vote</option>
-                    <option value="Emergency Warning">Emergency Evacuation Tag</option>
-                    <option value="Informational">General Informational</option>
+                    <option value="Require 1-Tap Acknowledge">Tap to confirm they read it</option>
+                    <option value="Vote / Preference Poll">Ask for a vote</option>
+                    <option value="Emergency Warning">Emergency warning</option>
+                    <option value="Informational">Just for information</option>
                   </select>
                 </div>
 

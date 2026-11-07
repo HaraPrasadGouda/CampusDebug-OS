@@ -58,6 +58,18 @@ function CardEmptyState({ icon: Icon = CheckCircle2, tone = 'emerald', title, su
   );
 }
 
+// Student Issues card: the title drops its "Category:" prefix (the chip already says it);
+// the quote is hidden when it only repeats the title.
+const cardTitle = (t) => {
+  const tt = String(t.title || ''); const cat = String(t.category || '');
+  return cat && tt.toLowerCase().startsWith(cat.toLowerCase() + ':') ? tt.slice(cat.length + 1).trim() : tt;
+};
+const descRepeatsTitle = (t) => {
+  const norm = (x) => String(x || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const ti = norm(cardTitle(t)); const d = norm(t.description);
+  return !d || d === ti || (ti.length > 8 && d.startsWith(ti)) || (d.length > 8 && ti.startsWith(d));
+};
+
 export default function WardenDashboard({ onNotification, masterClusters = [], searchQuery = '', session = null }) {
   const [pendingPasses, setPendingPasses] = useState(INITIAL_PENDING_PASSES);
   const [clusters, setClusters] = useState(
@@ -698,10 +710,10 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                 <span className="w-9 h-9 rounded-xl bg-amber-100/70 text-amber-700 border border-amber-200 flex items-center justify-center shrink-0">
                   <Wrench className="w-4 h-4" />
                 </span>
-                <span>Student Maintenance Complaints Queue</span>
+                <span>Student Issues</span>
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                Real-time log of all individual issues submitted by students across hostel blocks.
+                Every issue students have reported, newest first.
               </p>
             </div>
             <span className="shrink-0 text-[11px] font-mono font-bold px-2.5 py-1 rounded-full border text-amber-800 bg-amber-50 border-amber-200">{allTickets.length}</span>
@@ -747,10 +759,10 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                     </div>
 
                     <div className="text-sm font-bold text-slate-900">
-                      {t.title}
+                      {cardTitle(t)}
                     </div>
 
-                    {t.description && (
+                    {t.description && !descRepeatsTitle(t) && (
                       <div className="text-xs text-slate-600 italic">
                         "{t.description}"
                       </div>
@@ -828,7 +840,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                 <span className="w-9 h-9 rounded-xl bg-emerald-100/70 text-emerald-700 border border-emerald-200 flex items-center justify-center shrink-0">
                   <ShieldCheck className="w-4 h-4" />
                 </span>
-                <span>Student Gate Pass Authorization Queue</span>
+                <span>Pending Passes</span>
                 <span className={`shrink-0 text-[11px] font-mono font-bold px-2.5 py-1 rounded-full border ${pendingPasses.length > 0 ? 'text-white bg-emerald-600 border-emerald-600' : 'text-slate-600 bg-slate-50 border-slate-200'}`}>{pendingPasses.length}</span>
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
@@ -936,7 +948,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                 <span className="w-9 h-9 rounded-xl bg-purple-100/70 text-purple-700 border border-purple-200 flex items-center justify-center shrink-0">
                   <Layers className="w-4 h-4" />
                 </span>
-                <span>Spatial Incident Deduplication & Clustering</span>
+                <span>Master Incidents</span>
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
                 Multiple individual tickets from the same block/floor are grouped into single Master Incidents to prevent redundant work.
@@ -1117,10 +1129,10 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                 <span className="w-9 h-9 rounded-xl bg-rose-100/70 text-rose-700 border border-rose-200 flex items-center justify-center shrink-0">
                   <Flame className="w-4 h-4" />
                 </span>
-                <span>SLA Aging Heatmap & Escalation Matrix</span>
+                <span>SLA Heatmap</span>
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                Live countdown from the single SLA engine — anything breached here auto-escalates to the Dean every 60s server tick.
+                Time left on each open complaint. Overdue ones go to the Dean automatically.
               </p>
             </div>
             <span className={`shrink-0 text-[11px] font-mono font-bold px-2.5 py-1 rounded-full border ${breached.length + breachedTickets.length > 0 ? 'text-white bg-rose-600 border-rose-600' : 'text-rose-800 bg-rose-50 border-rose-200'}`}>{openClusters.length}</span>
@@ -1140,7 +1152,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                   </span>
                 </div>
                 <p className="text-[11px] text-emerald-700 leading-relaxed">
-                  Incidents with healthy turnaround buffers. Maintenance crew dispatched.
+                  More than 2 hours left.
                 </p>
               </div>
 
@@ -1168,7 +1180,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                   </span>
                 </div>
                 <p className="text-[11px] text-amber-700 leading-relaxed">
-                  Nearing SLA threshold. High-priority SMS alert triggered to lead electrician.
+                  Close to the deadline.
                 </p>
               </div>
               <div className="space-y-1.5 pt-2 border-t border-amber-200 text-xs">
@@ -1188,14 +1200,14 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold text-rose-800 flex items-center gap-1.5">
                     <AlertTriangle className="w-4 h-4 text-rose-600 animate-bounce" />
-                    <span>Critical / Overdue (0h Left)</span>
+                    <span>Overdue</span>
                   </span>
                   <span className="text-xs font-mono font-bold text-rose-800 bg-rose-100 border border-rose-200 px-2 py-0.5 rounded">
                     {breached.length + breachedTickets.length} Critical
                   </span>
                 </div>
                 <p className="text-[11px] text-rose-700 leading-relaxed">
-                  SLA breached! High impact incident requires immediate Dean intervention.
+                  Deadline missed. The Dean has been alerted.
                 </p>
               </div>
 
@@ -1214,7 +1226,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                   </div>
                 ))}
                 {breached.length + breachedTickets.length === 0 && (
-                  <p className="text-[11px] text-rose-700 italic">No SLA breaches. Clean board.</p>
+                  <p className="text-[11px] text-rose-700 italic">Nothing is overdue.</p>
                 )}
               </div>
             </div>
@@ -1324,10 +1336,10 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                 <span className="w-9 h-9 rounded-xl bg-slate-100 text-slate-800 border border-slate-300 flex items-center justify-center shrink-0">
                   <ClipboardList className="w-4 h-4" />
                 </span>
-                <span>Main Gate Security Register</span>
+                <span>Gate Register</span>
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                Append-only log of every EXIT and RETURN scan — nothing here is editable, this replaces the paper register.
+                Every gate exit and return, newest first. Nothing here can be edited.
               </p>
             </div>
             {(() => {
