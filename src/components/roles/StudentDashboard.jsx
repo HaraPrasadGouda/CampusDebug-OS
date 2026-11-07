@@ -1181,8 +1181,8 @@ export default function StudentDashboard({
           >
             <div className="flex items-start justify-between p-5 border-b border-slate-100">
               <div className="min-w-0 pr-3">
-                <h3 className="text-lg font-extrabold text-slate-900 truncate">{ticketDetail.title}</h3>
-                <p className="text-[10px] font-mono text-slate-400 truncate">{hasLifecycle(ticketDetail) ? `${ticketCode(ticketDetail)} · ${ticketDetail.id}` : ticketDetail.id}</p>
+                <h3 className="text-lg font-extrabold text-slate-900 leading-snug break-words line-clamp-2">{ticketDetail.title}</h3>
+                <p className="text-[10px] font-mono text-slate-400 truncate">{hasLifecycle(ticketDetail) ? ticketCode(ticketDetail) : (String(ticketDetail.id).length > 12 ? '' : ticketDetail.id)}</p>
               </div>
               <button
                 type="button"

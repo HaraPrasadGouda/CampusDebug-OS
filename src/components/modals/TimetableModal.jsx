@@ -136,7 +136,7 @@ export default function TimetableModal({ isOpen, onClose, department = '', cours
             <div>
               <h3 className="font-bold text-slate-900 tracking-tight text-lg leading-tight">Class Timetable</h3>
               <p className="text-xs text-slate-500 font-medium">
-                {data ? myTitle : (department || 'your department')} • Auto-generated, clash-free
+                {data ? myTitle : (department || 'your department')} • Your weekly timetable
               </p>
             </div>
           </div>
@@ -268,12 +268,8 @@ export default function TimetableModal({ isOpen, onClose, department = '', cours
 
             {/* Footer */}
             <div className="px-6 py-3.5 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
-              <p className="text-[10px] text-slate-400 font-medium flex items-center gap-1.5">
-                <BookOpen className="w-3 h-3" />
-                Solver-verified: no teacher double-booked · offline ready
-              </p>
-              <button onClick={onClose} className="text-xs font-bold text-emerald-700 hover:text-emerald-900 transition-colors cursor-pointer">
-                Close Timetable
+              <button onClick={onClose} className="w-full min-h-[44px] rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold transition-colors cursor-pointer">
+                Close
               </button>
             </div>
           </>

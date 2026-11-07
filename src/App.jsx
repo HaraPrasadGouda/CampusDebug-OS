@@ -751,7 +751,7 @@ export default function App() {
       const list = [activityItem, ...prev.filter(i => i.id !== activityItem.id)];
       return list.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
     });
-    showToast(`Gate Pass #${newPass.id} submitted for Warden sign-off! (State: PENDING)`, 'offline');
+    showToast('Gate pass sent to the warden.', 'offline');
   };
 
   const handleTicketCreated = (newTicket, isOnline) => {
@@ -761,9 +761,9 @@ export default function App() {
     };
     setRecentActivities(prev => [ticketWithDate, ...prev.filter(i => i.id !== ticketWithDate.id)].sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()));
     if (!isOnline) {
-      showToast(`Network Offline: Ticket #${newTicket.id} saved to IndexedDB & queued for automatic sync.`, 'offline');
+      showToast('You are offline. Your issue is saved and will be sent when you are back online.', 'offline');
     } else {
-      showToast(`Ticket #${newTicket.id} logged successfully and routed for clustering & SLA assignment.`, 'success');
+      showToast('Issue reported. The warden team will assign a technician.', 'success');
     }
   };
 
@@ -1008,7 +1008,7 @@ export default function App() {
       <NoticesModal
         isOpen={activeModal === 'notices'}
         onClose={() => setActiveModal(null)}
-        onReadReceiptChanged={() => showToast('Notice acknowledgement saved to IndexedDB & sync queue.', 'success')}
+        onReadReceiptChanged={() => showToast('Marked as read.', 'success')}
       />
 
       <ProfileModal

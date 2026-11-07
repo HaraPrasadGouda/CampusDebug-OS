@@ -64,6 +64,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
     masterClusters.length > 0 ? masterClusters : INITIAL_CLUSTERS
   );
   const [allTickets, setAllTickets] = useState([]);
+  useEffect(() => { const go = () => { setActiveTab('home'); try { document.getElementById('app-scroll')?.scrollTo({ top: 0 }); } catch { /* no scroller */ } }; window.addEventListener('warden-go-home', go); return () => window.removeEventListener('warden-go-home', go); }, []);
   const [activeTab, setActiveTab] = useState('home'); // 'home' | 'tickets' | 'clusters' | 'passes' | 'sla' | 'register' | ...
   const [homePassesOpen, setHomePassesOpen] = useState(false);   // Home: show every pending pass instead of the first few
   const [cleaningFirst, setCleaningFirst] = useState(null);      // first red cleaning alert (Home row sub-line)
@@ -624,7 +625,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
 
       {/* Warden overview — slim KPI strip (same four numbers, compact so the queues start higher) */}
       {!isHome && (
-      <section className="grid grid-cols-2 xl:grid-cols-4 gap-2 sm:gap-3 w-full">
+      <section className="hidden xl:grid grid-cols-2 xl:grid-cols-4 gap-2 sm:gap-3 w-full">
         <div className="bg-gradient-to-br from-[#edf9f5] to-[#e0f5ed] border border-[#bbf7d0] rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 flex items-center justify-between gap-2 min-w-0">
           <div className="min-w-0">
             <span className="block text-[11px] sm:text-xs font-extrabold text-emerald-950 leading-snug">Pending Gate Passes</span>
@@ -974,7 +975,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                       </span>
                       <div>
                         <div className="flex items-center flex-wrap gap-x-2 gap-y-1">
-                          <span className="font-mono text-xs font-bold text-purple-700">{masterId}</span>
+                          <span className="font-mono text-xs font-bold text-purple-700">{String(masterId).length > 12 ? `#${String(masterId).slice(0, 8).toUpperCase()}` : masterId}</span>
                           <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-200 text-slate-700 font-medium">
                             {cluster.category}
                           </span>

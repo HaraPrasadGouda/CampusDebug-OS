@@ -249,7 +249,7 @@ export default function Header({
           <button
             type="button"
             onClick={onToggleSidebar}
-            className="p-2 rounded-xl text-slate-500 hover:text-slate-900 hover:bg-slate-100/80 transition-all duration-200 cursor-pointer shrink-0 active:scale-95"
+            className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl text-slate-500 hover:text-slate-900 hover:bg-slate-100/80 transition-all duration-200 cursor-pointer shrink-0 active:scale-95"
             title={isSidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
             aria-label="Toggle Navigation Sidebar"
           >
@@ -327,7 +327,7 @@ export default function Header({
                   fetchBellNotices();
                 }
               }}
-              className="relative p-2 rounded-xl text-slate-500 hover:text-slate-900 hover:bg-slate-100/80 transition-all duration-200 cursor-pointer active:scale-95"
+              className="relative min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl text-slate-500 hover:text-slate-900 hover:bg-slate-100/80 transition-all duration-200 cursor-pointer active:scale-95"
               title="Notifications"
             >
               <Bell className="w-5 h-5" />
