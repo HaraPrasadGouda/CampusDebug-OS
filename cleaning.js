@@ -66,7 +66,9 @@ export function normalizeSettings(row = {}, block = '') {
     block: String(row.block || block || ''),
     weekdays: days.length ? days : [...DEFAULT_SETTINGS.weekdays],
     startTime: String(row.start_time || row.startTime || DEFAULT_SETTINGS.startTime).slice(0, 5),
-    endTime: String(row.end_time || row.endTime || DEFAULT_SETTINGS.endTime).slice(0, 5)
+    endTime: String(row.end_time || row.endTime || DEFAULT_SETTINGS.endTime).slice(0, 5),
+    // How many of the block's cleaners the morning SMS goes to: 0 = automatic, 1 or 2 = the warden's choice.
+    cleanerCount: [1, 2].includes(Number(row.cleaner_count ?? row.cleanerCount)) ? Number(row.cleaner_count ?? row.cleanerCount) : 0
   };
 }
 
@@ -226,7 +228,8 @@ export async function morningSms(deps, { block, date, settings, now }) {
   const ordered = [...pending].sort((a, b) => (repeats[b.room] || 0) - (repeats[a.room] || 0) || Number(a.room) - Number(b.room));
   const text = pendingSmsText({ block, rooms: ordered, endTime: settings.endTime });
   const results = [];
-  const recipients = ordered.length <= SMS_ONE_CLEANER_MAX_ROOMS ? cleaners.slice(0, 1) : cleaners;
+  const want = Number(settings.cleanerCount) || (ordered.length <= SMS_ONE_CLEANER_MAX_ROOMS ? 1 : 2);
+  const recipients = cleaners.slice(0, want);
   for (const c of recipients) results.push(await deps.sendSms(c, text));
   for (const row of pending) await deps.store.upsertCheck({ ...row, sms_sent_at: now.toISOString() });
   return { sent: true, text, to: recipients.map((c) => c.id), results, ticketIds: pending.map((c) => c.ticket_id).filter(Boolean) };

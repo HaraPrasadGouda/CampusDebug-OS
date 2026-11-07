@@ -39,10 +39,10 @@ export function CleaningPanelView({ data, onSave = async () => ({ ok: true }), c
   const [msg, setMsg] = useState(null);
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => { setDraft(b ? { weekdays: b.settings.weekdays, startTime: b.settings.startTime, endTime: b.settings.endTime } : null); setMsg(null); setShowAll(false); }, [b?.block, b?.settings?.weekdays?.join(','), b?.settings?.startTime, b?.settings?.endTime]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setDraft(b ? { weekdays: b.settings.weekdays, startTime: b.settings.startTime, endTime: b.settings.endTime, cleanerCount: b.settings.cleanerCount || 0 } : null); setMsg(null); setShowAll(false); }, [b?.block, b?.settings?.weekdays?.join(','), b?.settings?.startTime, b?.settings?.endTime, b?.settings?.cleanerCount]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const alerts = data?.alerts || [];
-  const dirty = useMemo(() => !!(b && draft) && (draft.weekdays.join(',') !== b.settings.weekdays.join(',') || draft.startTime !== b.settings.startTime || draft.endTime !== b.settings.endTime), [b, draft]);
+  const dirty = useMemo(() => !!(b && draft) && (draft.weekdays.join(',') !== b.settings.weekdays.join(',') || draft.startTime !== b.settings.startTime || draft.endTime !== b.settings.endTime || (draft.cleanerCount || 0) !== (b.settings.cleanerCount || 0)), [b, draft]);
 
   const save = async () => {
     setSaving(true); setMsg(null);
@@ -170,6 +170,17 @@ export function CleaningPanelView({ data, onSave = async () => ({ ok: true }), c
                         </label>
                       </div>
                       <p className="text-[11px] text-slate-500 font-medium leading-snug">Students are asked from the end time for 8 hours (default 1 PM to 9 PM).</p>
+                      <div>
+                        <p className="text-[11px] font-bold text-slate-500 mb-1">Cleaners to call each morning</p>
+                        <div className="grid grid-cols-3 gap-1.5" data-testid="cleaner-count">
+                          {[[0, 'Auto'], [1, '1 cleaner'], [2, '2 cleaners']].map(([n, label]) => (
+                            <button key={n} type="button" disabled={!canEdit} aria-pressed={(draft.cleanerCount || 0) === n}
+                              onClick={() => setDraft((v) => ({ ...v, cleanerCount: n }))}
+                              className={`min-h-[44px] rounded-lg text-[12px] font-extrabold border cursor-pointer ${(draft.cleanerCount || 0) === n ? 'bg-cyan-600 text-white border-cyan-600' : 'bg-white text-slate-600 border-slate-200'}`}>{label}</button>
+                          ))}
+                        </div>
+                        <p className="text-[11px] text-slate-500 font-medium leading-snug mt-1">Auto: 1 cleaner for up to 5 rooms, 2 for more.</p>
+                      </div>
                       {canEdit && (
                         <button type="button" disabled={!dirty || saving} onClick={save}
                           className="w-full min-h-[44px] rounded-xl bg-cyan-600 hover:bg-cyan-700 disabled:opacity-40 text-white text-[13px] font-extrabold flex items-center justify-center gap-2 cursor-pointer">
@@ -242,7 +253,7 @@ export default function CleaningPanel({ role = 'WARDEN', onAlertCount = () => {}
 
   const save = async (block, s) => {
     try {
-      const r = await fetch('/api/cleaning/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ block, weekdays: s.weekdays, startTime: s.startTime, endTime: s.endTime }) });
+      const r = await fetch('/api/cleaning/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ block, weekdays: s.weekdays, startTime: s.startTime, endTime: s.endTime, cleanerCount: s.cleanerCount || 0 }) });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || !j.success) return { ok: false, error: j.error };
       await load();

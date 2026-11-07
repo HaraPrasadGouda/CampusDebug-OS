@@ -268,3 +268,17 @@ test('pending SMS: up to 5 rooms only the first cleaner is texted, more rooms bo
   assert.equal(sent.length, 1, 'few rooms: one cleaner');
   assert.deepEqual(r.to, ['TECH-B1']);
 });
+
+test('warden choice of cleaners overrides the automatic rule, and normalizeSettings reads it', async () => {
+  assert.equal(normalizeSettings({ cleaner_count: 2 }, 'Block B').cleanerCount, 2);
+  assert.equal(normalizeSettings({ cleaner_count: 9 }, 'Block B').cleanerCount, 0);
+  assert.equal(normalizeSettings({}, 'Block B').cleanerCount, 0);
+  const st = memStore(); const d = deps(st);
+  await answerRoom(d, { block: 'Block B', room: '101', roll: 'R1', answer: 'no', now: SUN_13, settings: S });
+  await closeWindow(d, { block: 'Block B', date: '2026-11-08' });
+  const sent = [];
+  d.sendSms = async (c, text) => { sent.push(c.id); return { mode: 'dry-run' }; };
+  const r = await morningSms(d, { block: 'Block B', date: '2026-11-08', settings: { ...S, cleanerCount: 2 }, now: MON_0730_REAL });
+  assert.equal(sent.length, 2, 'warden chose both even for one room');
+  assert.deepEqual(r.to, ['TECH-B1', 'TECH-B2']);
+});
