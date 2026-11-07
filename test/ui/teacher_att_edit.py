@@ -51,7 +51,8 @@ with sync_playwright() as p:
     shot('classes')
     out['side_classes'] = side()
     if sc == 'inhours':
-        pg.locator('[data-testid=classes-edit]').first.click(); time.sleep(1.5); scale()
+        go('today'); time.sleep(.5)
+        pg.locator('[data-testid=att-edit]').first.click(); time.sleep(1.5); scale()
         out['modal'] = {'title': pg.locator('div.fixed.inset-0.z-50 h3').first.inner_text(), 'ticked': pg.locator('button.text-left.bg-emerald-600').count(), 'save': pg.locator('button:has-text("Save")').last.inner_text()}
         shot('edit_modal')
         out['modal']['side'] = side()

@@ -33,7 +33,7 @@ with sync_playwright() as p:
     pg.reload(wait_until='networkidle'); time.sleep(3)
     pg.locator('#td-timetable button:has-text("Mark attendance")').first.click(); time.sleep(2); scale(pg); time.sleep(.4)   # Today tab = My day
     out['att'] = pg.evaluate("""()=>{const bs=[...document.querySelectorAll('button')];const s=bs.find(x=>/^\\s*Save/.test(x.innerText));const c=bs.find(x=>x.innerText.trim()==='Cancel');const r=s.getBoundingClientRect(), rc=c.getBoundingClientRect();
-      const hint=[...document.querySelectorAll('span')].find(x=>/Gate hints live|gate suggestion chips hidden/.test(x.innerText));const hr=hint.getBoundingClientRect();const lh=parseFloat(getComputedStyle(hint).lineHeight)||12;
+      const hint=[...document.querySelectorAll('span')].find(x=>/Gate suggestions are on|gate suggestions hidden/.test(x.innerText));const hr=hint.getBoundingClientRect();const lh=parseFloat(getComputedStyle(hint).lineHeight)||12;
       return {saveL:r.left,saveR:r.right,saveH:r.height,cancelH:rc.height,cancelL:rc.left,iw:window.innerWidth,hintW:hr.width,hintLines:Math.round(hr.height/lh),docScroll:document.documentElement.scrollWidth}}""")
     out['att_search'] = pg.evaluate(FIT, 'input[placeholder^="Search roll"]')
     shot(pg, 'attendance')

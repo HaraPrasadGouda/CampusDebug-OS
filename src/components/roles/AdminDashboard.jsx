@@ -214,7 +214,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
 
   const handleRoomOverride = async () => {
     if (!ovRoll.trim() || !ovBlock || !ovRoom.trim()) {
-      setRoomMsg({ ok: false, text: 'Roll number, block aur room — teeno chahiye.' });
+      setRoomMsg({ ok: false, text: 'Roll number, block and room are all required.' });
       return;
     }
     setRoomBusy(true);
@@ -545,6 +545,8 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
   // students submit from their dashboard). Actions PATCH the DB row and the
   // student's own feed is overlaid from /mine within seconds.
   const [docRequests, setDocRequests] = useState(null);
+  const [docTab, setDocTab] = useState('pending'); // Document Desk: 'pending' | 'done'
+  const [docShowAll, setDocShowAll] = useState(false);
   const [docBusyId, setDocBusyId] = useState(null);
   useEffect(() => {
     if (activeTab !== 'docs' && activeTab !== 'home') return;
@@ -912,8 +914,8 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
     timetable: { label: 'Timetable Engine', Icon: Calendar, on: 'bg-teal-600 text-white', off: 'bg-teal-100 text-teal-600', sel: 'bg-teal-50 border-teal-400 text-teal-900', bar: 'bg-teal-500' },
     setup: { label: 'Campus Setup', Icon: Building2, on: 'bg-indigo-600 text-white', off: 'bg-indigo-100 text-indigo-600', sel: 'bg-indigo-50 border-indigo-400 text-indigo-900', bar: 'bg-indigo-500' },
     mess: { label: 'Mess Kitchen Forecast', Icon: Utensils, on: 'bg-amber-600 text-white', off: 'bg-amber-100 text-amber-600', sel: 'bg-amber-50 border-amber-400 text-amber-900', bar: 'bg-amber-500' },
-    csv: { label: `Import Students (CSV) (${importedUsers.length})`, Icon: FileSpreadsheet, on: 'bg-purple-600 text-white', off: 'bg-purple-100 text-purple-600', sel: 'bg-purple-50 border-purple-400 text-purple-900', bar: 'bg-purple-500' },
-    metrics: { label: 'System Health & Sync Engine', Icon: Database, on: 'bg-sky-600 text-white', off: 'bg-sky-100 text-sky-600', sel: 'bg-sky-50 border-sky-400 text-sky-900', bar: 'bg-sky-500' },
+    csv: { label: 'Import Students & Staff', Icon: FileSpreadsheet, on: 'bg-purple-600 text-white', off: 'bg-purple-100 text-purple-600', sel: 'bg-purple-50 border-purple-400 text-purple-900', bar: 'bg-purple-500' },
+    metrics: { label: 'System Health', Icon: Database, on: 'bg-sky-600 text-white', off: 'bg-sky-100 text-sky-600', sel: 'bg-sky-50 border-sky-400 text-sky-900', bar: 'bg-sky-500' },
     fees: { label: 'Fee Payments', Icon: Receipt, on: 'bg-emerald-600 text-white', off: 'bg-emerald-100 text-emerald-600', sel: 'bg-emerald-50 border-emerald-400 text-emerald-900', bar: 'bg-emerald-500' },
     security: { label: 'Password Reset Desk', Icon: ShieldCheck, on: 'bg-rose-600 text-white', off: 'bg-rose-100 text-rose-600', sel: 'bg-rose-50 border-rose-400 text-rose-900', bar: 'bg-rose-500' },
   };
@@ -1134,16 +1136,16 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
               {/* Action Tag & Urgency */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-slate-700 font-medium mb-1">Interactive Action Tag</label>
+                  <label className="block text-slate-700 font-medium mb-1">What should students do?</label>
                   <select
                     value={noticeForm.actionTag}
                     onChange={(e) => setNoticeForm({ ...noticeForm, actionTag: e.target.value })}
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-800 focus:outline-none focus:border-emerald-600 cursor-pointer"
                   >
-                    <option value="Require 1-Tap Acknowledge">Require 1-Tap Read Receipt</option>
-                    <option value="Vote / Preference Poll">Attach 1-Tap Vote</option>
-                    <option value="Emergency Warning">Emergency Evacuation Tag</option>
-                    <option value="Informational">General Informational</option>
+                    <option value="Require 1-Tap Acknowledge">Tap to confirm they read it</option>
+                    <option value="Vote / Preference Poll">Ask for a vote</option>
+                    <option value="Emergency Warning">Emergency warning</option>
+                    <option value="Informational">Just for information</option>
                   </select>
                 </div>
 
@@ -1320,32 +1322,28 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
   return (
     <div className="admin-dash space-y-5 animate-in fade-in duration-200">
       {/* Cover board escalation: an absent teacher's class nobody took */}
-      {!isHome && <AdminCoverAlerts onNotification={onNotification} />}
+      {!isHome && <AdminCoverAlerts onNotification={onNotification} compact={!['dispatcher', 'timetable'].includes(activeTab)} onOpenHome={() => setActiveTab('home')} />}
       
       {/* Laptop: the tools live as a grouped sub-menu under "Home" in the app sidebar */}
       {toolNavSlot && createPortal(
-        <div className="mt-1 mb-2 ml-4 pl-2.5 border-l-2 border-slate-100 space-y-2">
+        <div className="mt-2 mb-3 mx-1 space-y-3">
           {adminGroups.map((g) => (
-            <div key={g.title}>
-              <p className="text-[9px] uppercase tracking-wider font-bold text-slate-400 px-2 pb-0.5">{g.title}</p>
+            <div key={g.title} className="rounded-2xl bg-slate-50 border border-slate-200 p-2">
+              <p className="text-[10px] uppercase tracking-wider font-extrabold text-slate-500 px-1.5 pb-1.5">{g.title}</p>
+              <div className="space-y-1">
               {g.ids.map((id) => {
                 const t = adminTabs[id];
                 const on = activeTab === id;
                 return (
-                  <button
-                    key={id}
-                    type="button"
-                    data-admin-tab={id}
-                    onClick={() => setActiveTab(id)}
-                    className={`w-full min-h-[44px] lg:min-h-[38px] flex items-center gap-2 rounded-lg border px-2 py-1 text-left transition-colors cursor-pointer ${on ? t.sel : 'border-transparent text-slate-600 hover:bg-slate-100/80 hover:text-slate-900'}`}
-                  >
-                    <span className={`w-6 h-6 rounded-md flex items-center justify-center shrink-0 ${on ? t.on : t.off}`}>
-                      <t.Icon className="w-3.5 h-3.5" />
-                    </span>
-                    <span className="text-[11px] font-bold leading-tight min-w-0">{t.label}</span>
+                  <button key={id} type="button" data-admin-tab={id} onClick={() => setActiveTab(id)}
+                    className={`w-full min-h-[44px] flex items-center gap-2.5 rounded-xl border px-2 py-1.5 text-left transition-colors cursor-pointer ${on ? t.sel + ' shadow-sm' : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300 hover:bg-white active:bg-slate-100'}`}>
+                    <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${on ? t.on : t.off}`}><t.Icon className="w-4 h-4" /></span>
+                    <span className="flex-1 text-[12.5px] font-bold leading-tight min-w-0">{t.label}</span>
+                    <span className={`text-base leading-none shrink-0 ${on ? 'opacity-70' : 'text-slate-300'}`}>›</span>
                   </button>
                 );
               })}
+              </div>
             </div>
           ))}
         </div>,
@@ -1353,7 +1351,6 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
       )}
 
 
-      {!isHome && kpiStrip}
 
       {/* Phone: the 5 groups as a bottom tab bar (portal to <body> so it stays fixed) */}
       {createPortal(
@@ -1395,7 +1392,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
                 type="button"
                 data-admin-tab={id}
                 onClick={() => setActiveTab(id)}
-                className={`${i === barGroup.ids.length - 1 && barGroup.ids.length % 2 === 1 ? 'col-span-2 ' : ''}min-h-[44px] flex items-center justify-center gap-1.5 rounded-xl border px-2 py-1 text-center transition-colors cursor-pointer ${on ? t.sel : 'border-transparent text-slate-600 hover:bg-slate-50'}`}
+                className={`${i === barGroup.ids.length - 1 && barGroup.ids.length % 2 === 1 ? 'col-span-2 ' : ''}min-h-[44px] flex items-center justify-center gap-1.5 rounded-xl border-2 px-2 py-1 text-center shadow-sm transition-colors cursor-pointer ${on ? t.sel : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50 active:bg-slate-100'}`}
               >
                 <t.Icon className="w-3.5 h-3.5 shrink-0" />
                 <span className="text-[11px] font-bold leading-tight">{t.label}</span>
@@ -1474,7 +1471,28 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
             </div>
           ) : (
             <div className="space-y-2.5">
-              {docRequests.map((r) => {
+              {(() => {
+                const isDone = (r) => r.status === 'READY_FOR_PICKUP' || r.status === 'REJECTED';
+                const nP = docRequests.filter(r => !isDone(r)).length, nD = docRequests.length - nP;
+                return (
+                  <div className="flex gap-2" role="tablist" data-testid="doc-tabs">
+                    {[['pending', `Pending (${nP})`], ['done', `Done (${nD})`]].map(([id, label]) => (
+                      <button key={id} type="button" role="tab" aria-selected={docTab === id} onClick={() => { setDocTab(id); setDocShowAll(false); }}
+                        className={`min-h-[44px] px-4 rounded-xl border-2 text-[12.5px] font-bold cursor-pointer transition-colors ${docTab === id ? 'bg-violet-50 border-violet-400 text-violet-900' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>{label}</button>
+                    ))}
+                  </div>
+                );
+              })()}
+              {(() => {
+                const isDone = (r) => r.status === 'READY_FOR_PICKUP' || r.status === 'REJECTED';
+                const list = docRequests.filter(r => docTab === 'done' ? isDone(r) : !isDone(r));
+                return list.length === 0 ? <p className="py-6 text-center text-xs text-slate-400">{docTab === 'done' ? 'Nothing finished yet.' : 'No pending requests. All caught up.'}</p> : null;
+              })()}
+              {(() => {
+                const isDone = (r) => r.status === 'READY_FOR_PICKUP' || r.status === 'REJECTED';
+                const list = docRequests.filter(r => docTab === 'done' ? isDone(r) : !isDone(r));
+                return docShowAll ? list : list.slice(0, 20);
+              })().map((r) => {
                 const student = r.student;
                 const statusChip = {
                   PENDING: 'text-amber-800 bg-amber-50 border-amber-200',
@@ -1486,9 +1504,11 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
                   <div key={r.id} className="bg-slate-50/60 border border-slate-200 rounded-xl px-3.5 py-3 space-y-2">
                     {/* Row 1: ref + verdict pills, date/time stacked at the right */}
                     <div className="flex items-start gap-2">
-                      <span className="shrink-0 text-[10px] font-mono font-extrabold px-2.5 py-1 rounded-full bg-violet-100 border border-violet-200 text-violet-800">
-                        {r.ref || String(r.id).slice(0, 8).toUpperCase()}
-                      </span>
+                      {r.ref && (
+                        <span className="shrink-0 text-[10px] font-mono font-extrabold px-2.5 py-1 rounded-full bg-violet-100 border border-violet-200 text-violet-800">
+                          {r.ref}
+                        </span>
+                      )}
                       <span className={`shrink-0 text-[10px] font-mono font-extrabold px-2 py-1 rounded-full border ${statusChip}`}>
                         {String(r.status).replace(/_/g, ' ')}
                       </span>
@@ -1517,14 +1537,14 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
                         <button
                           onClick={() => setDocStatus(r.id, 'READY_FOR_PICKUP')}
                           disabled={docBusyId === r.id}
-                          className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-[10px] font-bold cursor-pointer transition-all"
+                          className="px-4 min-h-[44px] rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-[11px] font-bold cursor-pointer transition-all"
                         >
                           {docBusyId === r.id ? 'Saving…' : '✓ Ready for Pickup'}
                         </button>
                         <button
                           onClick={() => setDocStatus(r.id, 'REJECTED')}
                           disabled={docBusyId === r.id}
-                          className="px-3 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 border border-rose-200 disabled:opacity-50 text-rose-700 text-[10px] font-bold cursor-pointer transition-all"
+                          className="px-4 min-h-[44px] rounded-lg bg-rose-50 hover:bg-rose-100 border border-rose-200 disabled:opacity-50 text-rose-700 text-[11px] font-bold cursor-pointer transition-all"
                         >
                           ✕ Reject
                         </button>
@@ -1533,6 +1553,9 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
                   </div>
                 );
               })}
+              {!docShowAll && (docRequests.filter(r => (docTab === 'done') === (r.status === 'READY_FOR_PICKUP' || r.status === 'REJECTED')).length > 20) && (
+                <button type="button" onClick={() => setDocShowAll(true)} className="w-full min-h-[44px] rounded-xl border-2 border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-bold text-sm cursor-pointer">Show all</button>
+              )}
             </div>
           )}
         </section>
@@ -1548,9 +1571,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
                 <span>Academic Timetable Engine</span>
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                Generates one clash-free weekly schedule per SECTION (40 sections × 50 students) — specialist pools
-                mean no teacher is ever double-booked anywhere on campus, labs land on consecutive-period pairs in the
-                branch lab (one section at a time), and every section gets its own room pool.
+                Generates one clash-free weekly schedule for every section. No teacher is ever double-booked, labs land on consecutive periods in the branch lab, and every section gets its own rooms.
               </p>
             </div>
             <button
@@ -1623,7 +1644,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <p className="text-sm font-black text-slate-900">Preview — {ttSecPreview.label}</p>
-                        <p className="text-[10px] font-bold text-amber-600 uppercase tracking-wider">Draft · live hone ke liye Confirm dabayein</p>
+                        <p className="text-[10px] font-bold text-amber-600 uppercase tracking-wider">Draft — press Confirm to make it live</p>
                       </div>
                       <button onClick={() => setTtSecPreview(null)} className="text-slate-400 hover:text-slate-700 text-lg leading-none cursor-pointer">✕</button>
                     </div>
@@ -2110,7 +2131,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <p className="text-sm font-black text-slate-900">Room allocation — preview</p>
-                        <p className="text-[10px] font-bold text-amber-600 uppercase tracking-wider">Draft · profiles change hone ke liye Confirm dabayein</p>
+                        <p className="text-[10px] font-bold text-amber-600 uppercase tracking-wider">Draft — press Confirm to update student profiles</p>
                       </div>
                       <button onClick={() => setRoomPlan(null)} className="text-slate-400 hover:text-slate-700 text-lg leading-none cursor-pointer">✕</button>
                     </div>
@@ -2187,7 +2208,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
             <div>
               <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
                 <Utensils className="w-5 h-5 text-amber-600" />
-                <span>Zero-Waste Mess Kitchen Forecast</span>
+                <span>Mess Kitchen Forecast</span>
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
                 Live kitchen headcounts from real student RSVPs. At each meal's cutoff the final count is
@@ -2291,10 +2312,10 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
             <div>
               <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
                 <Database className="w-5 h-5 text-emerald-600" />
-                <span>Operational Metrics & System Health</span>
+                <span>System Health</span>
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                Real-time latency, node status, and offline PWA synchronization queue depth.
+                Is the server up, is the complaint helper running, and what is waiting to sync.
               </p>
             </div>
 
@@ -2304,14 +2325,14 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
               className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center space-x-1.5 transition-all cursor-pointer shadow-sm shrink-0"
             >
               <TrendingUp className="w-4 h-4" />
-              <span>{isSyncing ? 'Flushing Queue...' : 'Trigger Emergency Sync'}</span>
+              <span>{isSyncing ? 'Syncing…' : 'Sync now'}</span>
             </button>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {/* Metric 1 */}
             <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2">
-              <span className="text-[11px] font-mono text-slate-500 block uppercase">1) Server Node Status</span>
+              <span className="text-[11px] font-mono text-slate-500 block uppercase">Server</span>
               <div className="flex items-center justify-between gap-2">
                 <span className="text-sm font-bold text-slate-900 font-mono">API server</span>
                 <span className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold border ${
@@ -2328,7 +2349,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
 
             {/* Metric 2 */}
             <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2">
-              <span className="text-[11px] font-mono text-slate-500 block uppercase">2) Ollama Model Latency</span>
+              <span className="text-[11px] font-mono text-slate-500 block uppercase">Complaint helper (AI)</span>
               <div className="flex items-center justify-between gap-2">
                 <span className="text-sm font-bold text-purple-700 font-mono">campusdebug-ai</span>
                 <span className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold border ${
@@ -2343,14 +2364,14 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
               <p className="text-[11px] text-slate-500 font-mono">
                 {!health ? 'Probing the local AI server…'
                   : !health.ai?.reachable ? 'Complaints use the keyword fallback'
-                  : health.ai.modelLoaded ? 'Model loaded on Ollama'
-                  : 'Ollama is up, model not installed'}
+                  : health.ai.modelLoaded ? 'AI model is running'
+                  : 'AI engine is up, model not installed'}
               </p>
             </div>
 
             {/* Metric 3 */}
             <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2">
-              <span className="text-[11px] font-mono text-slate-500 block uppercase">3) Offline Queue</span>
+              <span className="text-[11px] font-mono text-slate-500 block uppercase">Waiting to sync</span>
               <div className="flex items-center justify-between">
                 <span className="text-xl font-bold text-emerald-600 font-mono">{queueDepth}</span>
                 <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-slate-200 text-slate-700">
@@ -2362,7 +2383,7 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
 
             {/* Metric 4 */}
             <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2">
-              <span className="text-[11px] font-mono text-slate-500 block uppercase">4) Clustered vs Resolved</span>
+              <span className="text-[11px] font-mono text-slate-500 block uppercase">Complaints grouped vs resolved</span>
               <div className="flex items-center justify-between">
                 <span className="text-sm font-bold text-sky-700 font-mono">{campusStats.clusterCount ?? '—'} Clusters</span>
                 <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">

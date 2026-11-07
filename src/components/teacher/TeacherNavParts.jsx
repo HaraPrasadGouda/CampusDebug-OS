@@ -17,7 +17,7 @@ export function AlertsBanner({ onTurnOn, onDismiss, busy, msg }) {
           <span>Turn on alerts so you never miss a cover request or leave approval</span>
         </p>
         <button type="button" onClick={onTurnOn} disabled={busy} className="min-h-[44px] px-3 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:opacity-60 text-white text-xs font-extrabold shrink-0 cursor-pointer">{busy ? 'Working…' : 'Turn on'}</button>
-        <button type="button" aria-label="Dismiss" onClick={onDismiss} className="w-10 min-h-[44px] rounded-xl flex items-center justify-center text-slate-400 hover:text-slate-600 shrink-0 cursor-pointer"><X className="w-4 h-4" /></button>
+        <button type="button" aria-label="Dismiss" onClick={onDismiss} className="min-w-[44px] min-h-[44px] rounded-xl flex items-center justify-center text-slate-400 hover:text-slate-600 shrink-0 cursor-pointer"><X className="w-4 h-4" /></button>
       </div>
       {msg && <p className="text-[11px] font-semibold text-rose-700 pb-2 pr-3">{msg}</p>}
     </div>

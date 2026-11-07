@@ -638,16 +638,16 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
           {coverGroups.map(declineBlock)}
         </div>
       )}
-      {coverGroups.length > 0 && <GroupDivider>Your own mentees</GroupDivider>}
+      {coverGroups.length > 0 && <GroupDivider>Your mentees</GroupDivider>}
       {/* Header */}
       <div className="bg-white/90 backdrop-blur-sm border border-slate-200/50 rounded-2xl p-4 sm:p-5 shadow-sm flex flex-row flex-wrap sm:flex-nowrap items-start sm:items-center justify-between gap-3">
         <div className="min-w-0 basis-full sm:basis-auto sm:flex-1">
           <h2 className="text-lg font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
             <GraduationCap className="w-5 h-5 text-cyan-700" />
-            Faculty Mentor Console
+            Your mentees
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            Day-scholar leave approvals are YOURS to make — every decision is explicit, nothing auto-approves.
+            You decide every day-scholar leave. Nothing is approved automatically.
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto">
@@ -957,17 +957,10 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
     </div>
   );
 
+  // Covers and Mark attendance live on Today only (no repeat here); Classes keeps the lesson plan & analytics.
   const classesTab = (
-    <div className="flex flex-col gap-4 xl:grid xl:grid-cols-12 xl:items-start" data-testid="tab-classes">
-      <div className="order-1 xl:col-span-5">
-        <AttendanceList rows={dayRows} loaded={!!ttMine} markedRec={markedRec} canEdit={canEdit} markOpen={markOpen} openLabel={openLabel} onMark={setMarkSlot} nowMin={nowM} />
-      </div>
-      <div className="order-2 xl:order-3 xl:col-span-12">
-        <CoverBoardSection {...coverBoardProps} />
-      </div>
-      <div className="order-3 xl:order-2 xl:col-span-7">
-        <TeacherInsights only={['plan', 'analytics']} title="Lesson plan & analytics" request={insightsReq} />
-      </div>
+    <div className="flex flex-col gap-4" data-testid="tab-classes">
+      <TeacherInsights only={['plan', 'analytics']} title="Lesson plan & analytics" request={insightsReq} />
     </div>
   );
 

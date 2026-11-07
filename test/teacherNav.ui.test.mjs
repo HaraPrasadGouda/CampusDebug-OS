@@ -56,7 +56,7 @@ function commonChecks(o, vp) {
     assert.equal(o.notices_open, true, 'Notices opens the existing notice board');
     // Students / Classes content is the old components, nothing removed
     assert.ok(o.students.approvals && o.students.gatelog && o.students.create && o.students.mentees && o.students.search, JSON.stringify(o.students));
-    assert.ok(o.classes.attendance && o.classes.cover && o.classes.insights, JSON.stringify(o.classes));
+    assert.ok(!o.classes.attendance && !o.classes.cover && o.classes.insights, JSON.stringify(o.classes)); // covers + attendance live on Today only
     assert.deepEqual(o.classes.tabs.map(s => s.trim().toLowerCase()), ['lesson plan', 'analytics']);
     // alerts banner: shown while push is off, dismissible, stays dismissed after reload
     assert.equal(o.alerts.banner, true); assert.equal(o.alerts.after_dismiss, false); assert.equal(o.alerts.after_reload, false);

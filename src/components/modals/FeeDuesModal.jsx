@@ -170,7 +170,7 @@ export default function FeeDuesModal({ isOpen, onClose, onFeePaid, session }) {
               </div>
             </div>
             <div>
-              <span className={`inline-block text-[10px] font-mono px-2.5 py-1 rounded-full font-bold border whitespace-nowrap ${
+              <span className={`inline-block text-[10px] px-2.5 py-1 rounded-full font-bold border whitespace-nowrap ${
                 pendingAmount === 0
                   ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                   : pendingAmount == null
@@ -198,21 +198,17 @@ export default function FeeDuesModal({ isOpen, onClose, onFeePaid, session }) {
             <div className="bg-white border border-slate-200 rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
               <div className="space-y-1">
                 <div className="flex items-center space-x-2">
-                  <span className="font-mono text-xs font-bold text-slate-900">Campus Dues Settlement</span>
+                  <span className="text-sm font-bold text-slate-900">Campus Dues</span>
                 </div>
-                <div className="text-[11px] font-mono text-slate-500 leading-relaxed">
-                  Covers all pending campus dues on your account (mess, exam, hostel, library)
+                <div className="text-[11px] text-slate-500 leading-relaxed">
+                  Mess, exam, hostel and library
                 </div>
-                <div className="text-[10px] font-semibold text-slate-400">Demo payment — no real money is charged</div>
               </div>
-              <div className="flex items-center sm:justify-end gap-3 shrink-0">
-                <span className="text-sm font-bold font-mono text-slate-900">
-                  ₹{pendingAmount.toLocaleString('en-IN')}
-                </span>
+              <div className="flex items-center sm:justify-end gap-3 w-full sm:w-auto shrink-0">
                 <button
                   type="button"
                   onClick={() => setConfirming(true)}
-                  className="px-4 min-h-[44px] rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition-all cursor-pointer shadow-sm shrink-0"
+                  className="w-full sm:w-auto px-5 min-h-[48px] rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm transition-all cursor-pointer shadow-sm shrink-0"
                 >
                   Settle Dues
                 </button>
@@ -225,7 +221,6 @@ export default function FeeDuesModal({ isOpen, onClose, onFeePaid, session }) {
                   <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
                   <span className="text-lg font-extrabold font-mono tracking-tight whitespace-nowrap">Paid {fmtMoney(latest.amount)}</span>
                 </div>
-                <span className="text-[10px] font-bold px-2 py-1 rounded-full bg-white border border-emerald-200 text-emerald-700 whitespace-nowrap shrink-0">Demo payment</span>
               </div>
               <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-[11px]">
                 <dt className="text-emerald-700/80">Receipt</dt>

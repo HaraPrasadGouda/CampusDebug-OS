@@ -55,8 +55,8 @@ export default function SettingsModal({ isOpen, onClose }) {
               ⚙️
             </div>
             <div>
-              <h2 className="text-base font-bold text-slate-900">App Preferences</h2>
-              <p className="text-xs text-slate-600">Sync & display settings</p>
+              <h2 className="text-base font-bold text-slate-900">Settings</h2>
+              <p className="text-xs text-slate-600">Updates and display</p>
             </div>
           </div>
           <button 

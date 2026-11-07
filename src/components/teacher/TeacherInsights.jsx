@@ -128,9 +128,9 @@ function LessonPlan() {
           {topics.map(t => (
             <li key={t.id} className="flex items-center gap-2 py-1">
               <button type="button" aria-label={t.done ? 'Mark not done' : 'Mark done'} onClick={() => post({ sectionKey: c.sectionKey, subjectCode: c.subjectCode, action: 'toggle', id: t.id })}
-                className={`w-11 h-11 shrink-0 rounded-xl border-2 flex items-center justify-center cursor-pointer transition-colors ${t.done ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-white border-slate-300 text-transparent hover:border-indigo-400'}`}><Check className="w-5 h-5" /></button>
+                className={`min-w-[44px] min-h-[44px] w-11 h-11 shrink-0 rounded-xl border-2 flex items-center justify-center cursor-pointer transition-colors ${t.done ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-white border-slate-300 text-transparent hover:border-indigo-400'}`}><Check className="w-5 h-5" /></button>
               <span className={`flex-1 min-w-0 text-[13px] font-semibold break-words ${t.done ? 'text-slate-400 line-through' : 'text-slate-800'}`}>{t.title}</span>
-              <button type="button" aria-label="Remove topic" onClick={() => post({ sectionKey: c.sectionKey, subjectCode: c.subjectCode, action: 'remove', id: t.id })} className="w-11 h-11 shrink-0 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 flex items-center justify-center cursor-pointer"><Trash2 className="w-4 h-4" /></button>
+              <button type="button" aria-label="Remove topic" onClick={() => post({ sectionKey: c.sectionKey, subjectCode: c.subjectCode, action: 'remove', id: t.id })} className="min-w-[44px] min-h-[44px] w-11 h-11 shrink-0 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 flex items-center justify-center cursor-pointer"><Trash2 className="w-4 h-4" /></button>
             </li>
           ))}
         </ul>
@@ -156,7 +156,7 @@ function MyLeaves() {
         <div className="rounded-2xl bg-slate-50 border border-slate-200 p-3.5"><p className="text-3xl font-extrabold leading-none text-slate-900">{d.yearDays}</p><p className="text-[11px] font-bold text-slate-500 mt-1.5 leading-tight">leave {d.yearDays === 1 ? 'day' : 'days'} this year</p></div>
       </div>
       {d.leaves.length === 0 ? (
-        <div className="mt-3"><Empty icon={CalendarOff} title="No leave recorded" text='Every time you tap "On Leave Today" the day is counted here. Nothing recorded yet — a clean attendance record.' /></div>
+        <div className="mt-3"><Empty icon={CalendarOff} title="No leave days recorded" text='Days you mark yourself on leave are counted here.' /></div>
       ) : (
         <ul className="mt-3 rounded-2xl border border-slate-200 divide-y divide-slate-100">
           {d.leaves.map(l => (

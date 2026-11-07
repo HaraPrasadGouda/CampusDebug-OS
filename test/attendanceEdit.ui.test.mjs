@@ -42,7 +42,7 @@ describe('teacher Edit attendance button (UI)', { skip: have ? false : 'needs py
                 assert.ok(o.today.edit_btns >= 1, 'Edit on My day: ' + JSON.stringify(o.today).slice(0, 300));
                 assert.ok(/Marked 3/.test(o.today.timeline), 'chip says Marked 3');
                 assert.equal(o.today.has_locked_word, false, 'the word Locked is gone');
-                assert.ok(o.classes.edit_btns >= 1, 'Edit on Classes');
+                assert.equal(o.classes.edit_btns, 0, 'Classes no longer repeats Mark/Edit (Today only)');
                 assert.equal(o.modal.title, 'Edit Attendance');
                 assert.equal(o.modal.ticked, 3, 'modal prefilled with the saved present list');
                 assert.match(o.modal.save, /Save changes — present 3\//, 'button reads Save changes: ' + o.modal.save);

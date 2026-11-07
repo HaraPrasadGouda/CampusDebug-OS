@@ -246,7 +246,7 @@ export default function AttendanceMarkModal({ isOpen, onClose, slot, onMarked })
         <div className="px-4 sm:px-5 py-3 bg-slate-50 border-t border-slate-100 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between shrink-0">
           <span className={`flex items-center gap-1.5 text-[10px] font-bold ${online ? 'text-slate-500' : 'text-amber-700'}`}>
             {online ? <Wifi className="w-3 h-3 text-emerald-600" /> : <WifiOff className="w-3 h-3" />}
-            {online ? 'Gate hints live (online-only feature)' : 'Offline — gate suggestion chips hidden'}
+            {online ? 'Gate suggestions are on' : 'Offline — gate suggestions hidden'}
           </span>
           <div className="flex items-stretch gap-2 sm:items-center">
             <button onClick={onClose} className="text-xs font-bold text-slate-600 hover:text-slate-900 transition-colors cursor-pointer shrink-0 px-4 min-h-[44px] sm:min-h-0 sm:px-2">Cancel</button>

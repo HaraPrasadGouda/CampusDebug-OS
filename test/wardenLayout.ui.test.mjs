@@ -67,7 +67,8 @@ describe('Warden + guard phone layout (headless Chromium)', { skip: have ? false
                 assert.ok(o.hdr.titleLines <= 3, `title lines ${o.hdr.titleLines}`);
                 assert.ok(o.hdr.btnH >= 43.5 && o.hdr.btnL >= 0 && o.hdr.btnR <= o.hdr.iw, `create button ${JSON.stringify(o.hdr)}`);
                 // KPI sub-labels never break mid-word
-                assert.ok(o.kpi.length >= 3 && o.kpi.every(x => x.lines <= 1), `kpi labels ${JSON.stringify(o.kpi)}`);
+                // the four-tile strip is laptop-only now (phone chips already carry the counts)
+                assert.ok(vp[0] < 1280 ? o.kpi.length === 0 : (o.kpi.length >= 3 && o.kpi.every(x => x.lines <= 1)), `kpi labels ${JSON.stringify(o.kpi)}`);
                 // incident without mapped rooms: a dash, never an empty box
                 assert.ok(o.rooms_empty && /Impacted Rooms:\s*—/.test(o.rooms_empty), `rooms box: ${o.rooms_empty}`);
                 // register: pass ref on one line

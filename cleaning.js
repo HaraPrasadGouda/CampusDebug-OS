@@ -66,7 +66,9 @@ export function normalizeSettings(row = {}, block = '') {
     block: String(row.block || block || ''),
     weekdays: days.length ? days : [...DEFAULT_SETTINGS.weekdays],
     startTime: String(row.start_time || row.startTime || DEFAULT_SETTINGS.startTime).slice(0, 5),
-    endTime: String(row.end_time || row.endTime || DEFAULT_SETTINGS.endTime).slice(0, 5)
+    endTime: String(row.end_time || row.endTime || DEFAULT_SETTINGS.endTime).slice(0, 5),
+    // How many of the block's cleaners the morning SMS goes to: 0 = automatic, 1 or 2 = the warden's choice.
+    cleanerCount: [1, 2].includes(Number(row.cleaner_count ?? row.cleanerCount)) ? Number(row.cleaner_count ?? row.cleanerCount) : 0
   };
 }
 
@@ -122,24 +124,12 @@ export function studentView({ settings, now, roll, away = new Set(), check = nul
   return { ...base, state: 'open', answererName };
 }
 
-// "Block B pending: 204, 210, 305. Please clean today by 1 PM" — ASCII, <= 160.
-// rooms: [{ room }] already in priority order.
+// One generic ASCII line, no room list (the cleaner checks with the warden): "Block B: 7 rooms need cleaning today. Check with the warden. Clean by 1 PM".
+// rooms: [{ room }] - only the count is used.
+export const SMS_ONE_CLEANER_MAX_ROOMS = 5; // up to this many rooms only the block's first cleaner is texted; more -> both
 export function pendingSmsText({ block, rooms, endTime }) {
-  const head = `${block} pending: `;
-  const tail = `. Please clean today by ${fmtClock(hmToMin(endTime))}`;
-  const list = rooms.map((r) => String(r.room));
-  const used = [];
-  for (let i = 0; i < list.length; i++) {
-    const left = list.length - (i + 1);
-    const more = left > 0 ? `, +${left} more` : '';
-    const candidate = [...used, list[i]].join(', ');
-    if ((head + candidate + more + tail).length <= SMS_LIMIT) used.push(list[i]);
-    else break;
-  }
-  if (used.length === 0) return `${head}${list.length} rooms${tail}`.slice(0, SMS_LIMIT);
-  const rest = list.length - used.length;
-  const more = rest > 0 ? `, +${rest} more` : '';
-  return `${head}${used.join(', ')}${more}${tail}`;
+  const n = rooms.length;
+  return `${block}: ${n} ${n === 1 ? 'room needs' : 'rooms need'} cleaning today. Check with the warden. Clean by ${fmtClock(hmToMin(endTime))}`.slice(0, SMS_LIMIT);
 }
 
 // Lock-free helper: one async chain per key (single server process).
@@ -238,9 +228,11 @@ export async function morningSms(deps, { block, date, settings, now }) {
   const ordered = [...pending].sort((a, b) => (repeats[b.room] || 0) - (repeats[a.room] || 0) || Number(a.room) - Number(b.room));
   const text = pendingSmsText({ block, rooms: ordered, endTime: settings.endTime });
   const results = [];
-  for (const c of cleaners) results.push(await deps.sendSms(c, text));
+  const want = Number(settings.cleanerCount) || (ordered.length <= SMS_ONE_CLEANER_MAX_ROOMS ? 1 : 2);
+  const recipients = cleaners.slice(0, want);
+  for (const c of recipients) results.push(await deps.sendSms(c, text));
   for (const row of pending) await deps.store.upsertCheck({ ...row, sms_sent_at: now.toISOString() });
-  return { sent: true, text, to: cleaners.map((c) => c.id), results, ticketIds: pending.map((c) => c.ticket_id).filter(Boolean) };
+  return { sent: true, text, to: recipients.map((c) => c.id), results, ticketIds: pending.map((c) => c.ticket_id).filter(Boolean) };
 }
 
 // The warden's block view for one date (pure, from already-read rows).

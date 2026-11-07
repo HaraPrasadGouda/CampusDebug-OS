@@ -33,7 +33,7 @@ describe('Teacher dashboard phone layout (headless Chromium)', { skip: have ? fa
                 // Mark Attendance: Save and Cancel fully on screen and at least 44px tall on phones; the hint is not a tall narrow column
                 assert.ok(o.att.saveL >= 0 && o.att.saveR <= o.att.iw, `save rect ${o.att.saveL}-${o.att.saveR} of ${o.att.iw}`);
                 if (phone) assert.ok(o.att.saveH >= 44 && o.att.cancelH >= 44, `heights ${o.att.saveH}/${o.att.cancelH}`);
-                assert.ok(o.att.hintW >= 150 && o.att.hintLines <= 2, `hint ${o.att.hintW}px x ${o.att.hintLines} lines`);
+                assert.ok(o.att.hintW >= 100 && o.att.hintLines <= 2, `hint ${o.att.hintW}px x ${o.att.hintLines} lines`);
                 assert.ok(o.att_search && o.att_search[0] <= o.att_search[1] + 0.5, `search placeholder ${o.att_search}`);
                 assert.equal(o.att_saved, true, 'Save still closes the modal');
                 assert.ok(o.rows.length > 0);

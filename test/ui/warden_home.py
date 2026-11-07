@@ -68,7 +68,7 @@ with sync_playwright() as p:
         pg.locator('[data-testid=home-pass-card]').nth(0).get_by_role('button', name='Approve and sign').click(); time.sleep(1.5)
         out['after_approve'] = pg.locator('[data-testid=home-pass-card]').count()
         out['needs_after_approve'] = pg.evaluate("()=>{const h=[...document.querySelectorAll('h2')].find(x=>/Needs you now/.test(x.innerText));return h?h.innerText.replace(/\\s+/g,' ').trim():null}")
-        pg.locator('[data-testid=home-pass-card]').nth(0).get_by_role('button', name='Reject').click(); time.sleep(1.5)
+        pg.locator('[data-testid=home-pass-card]').nth(0).get_by_role('button', name='Reject').click(); time.sleep(0.5); pg.locator('[data-testid=reject-confirm-yes]').click(); time.sleep(1.5)
         pg.reload(wait_until='networkidle'); time.sleep(3); scale(pg)
         pg.get_by_role('button', name='View all').first.click(); time.sleep(.6)
         out['cards_after_reload'] = pg.locator('[data-testid=home-pass-card]').count()

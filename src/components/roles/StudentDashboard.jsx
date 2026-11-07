@@ -51,6 +51,7 @@ export default function StudentDashboard({
   session,
   docStatusMap = {}
 }) {
+  const [feedExpanded, setFeedExpanded] = useState(false);
   const [activeFeedTab, setActiveFeedTab] = useState('all'); // 'all' | 'issues' | 'passes' | 'mess'
   const [ticketDetail, setTicketDetail] = useState(null); // read-only complaint detail card
 
@@ -220,6 +221,7 @@ export default function StudentDashboard({
 
   // Guarantee newest-first ordering in the feed regardless of merge order
   const sortedActivities = [...filteredActivities].sort((a, b) => activityTimeMs(b) - activityTimeMs(a));
+  const visibleActivities = feedExpanded ? sortedActivities : sortedActivities.slice(0, 8); // latest 8; "Show older" reveals the rest
 
   // Day scholars never use the hosteller gate-pass round trip (exit + return):
   // their card follows the mentor leave below (one exit scan, final), so a
@@ -296,11 +298,11 @@ export default function StudentDashboard({
 
   // Quick Action tile classes — presentation only (phone: round icon +
   // label in a swipe row; desktop: compact tile with icon left).
-  const QA_TILE = 'group relative flex-none snap-start min-w-[74px] px-1 flex flex-col items-center text-center cursor-pointer transition-all duration-200 lg:min-w-0 lg:flex-row lg:items-center lg:text-left lg:gap-2.5 lg:px-2.5 lg:py-2.5 lg:rounded-xl lg:border lg:border-slate-200 lg:bg-white lg:hover:shadow-md lg:hover:-translate-y-0.5';
+  const QA_TILE = 'group relative flex-none min-w-0 px-1 flex flex-col items-center text-center cursor-pointer transition-all duration-200 lg:min-w-0 lg:flex-row lg:items-center lg:text-left lg:gap-2.5 lg:px-2.5 lg:py-2.5 lg:rounded-xl lg:border lg:border-slate-200 lg:bg-white lg:hover:shadow-md lg:hover:-translate-y-0.5';
   const QA_ICON = 'w-[58px] h-[58px] rounded-full lg:w-[30px] lg:h-[30px] lg:rounded-[9px] flex items-center justify-center shrink-0 border border-slate-900/5 lg:border-0 shadow-[0_2px_6px_rgba(15,23,42,0.06)] lg:shadow-none group-hover:scale-105 transition-transform';
   const QA_TEXT = 'min-w-0 lg:flex-1';
-  const QA_TITLE = 'text-xs lg:text-[13.5px] font-bold text-slate-900 mt-1.5 lg:mt-0 leading-tight whitespace-nowrap lg:whitespace-normal';
-  const QA_SUB = 'text-[10.5px] lg:text-xs text-slate-500 font-medium mt-0.5 leading-tight whitespace-nowrap lg:whitespace-normal';
+  const QA_TITLE = 'text-xs lg:text-[13.5px] font-bold text-slate-900 mt-1.5 lg:mt-0 leading-tight break-words lg:whitespace-normal';
+  const QA_SUB = 'text-[10.5px] lg:text-xs text-slate-500 font-medium mt-0.5 leading-tight break-words lg:whitespace-normal';
 
   return (
     <div className="animate-in fade-in duration-300">
@@ -376,7 +378,7 @@ export default function StudentDashboard({
         </div>
 
         {/* 6 actions: horizontal swipe on phones, 3 / 6 columns on desktop */}
-        <div className="mt-3 min-[1440px]:mt-0 min-[1440px]:flex-1 min-w-0 flex gap-1.5 overflow-x-auto snap-x scroll-px-3 sm:scroll-px-5 scrollbar-none -mx-3 px-3 sm:-mx-5 sm:px-5 pt-1.5 pb-1 lg:mx-0 lg:px-0 lg:pt-0 lg:pb-0 lg:grid lg:grid-cols-3 xl:grid-cols-6 lg:gap-2.5 lg:overflow-visible">
+        <div className="mt-3 min-[1440px]:mt-0 min-[1440px]:flex-1 min-w-0 grid grid-cols-3 gap-x-1.5 gap-y-3 pt-1.5 pb-1 lg:pt-0 lg:pb-0 lg:grid lg:grid-cols-3 xl:grid-cols-6 lg:gap-2.5 lg:overflow-visible">
 
           {/* 1. Gate Pass (hostellers) / Day-Scholar Leave: the leave needs
               a MENTOR'S approval (never automatic) and is a ONE-WAY exit —
@@ -582,7 +584,7 @@ export default function StudentDashboard({
 
         <div className="flex-1 flex flex-col justify-center mt-3 lg:mt-3.5">
           <div className="flex items-center gap-x-2 gap-y-1.5 flex-wrap">
-            <div className="text-[30px] min-[380px]:text-[34px] lg:text-[40px] leading-none font-extrabold text-slate-900 tracking-tight">
+            <div className="text-[22px] min-[380px]:text-[26px] lg:text-[40px] leading-none font-extrabold text-slate-900 tracking-tight whitespace-nowrap">
               {myStats.feeDue != null ? `\u20B9${myStats.feeDue.toLocaleString('en-IN')}` : '—'}
             </div>
             {myStats.feeDue != null && myStats.feeDue > 0 ? (
@@ -596,17 +598,13 @@ export default function StudentDashboard({
             )}
           </div>
           <p className="text-xs lg:text-[12.5px] text-slate-600 font-medium mt-1.5">Total Outstanding</p>
-          {myStats.feeDue != null && myStats.feeDue > 0 && (
-            <span className="lg:hidden text-[11px] font-bold text-rose-700 flex items-center gap-1 mt-1">
-              <AlertTriangle className="w-3 h-3 shrink-0" /> Dues Pending
-            </span>
-          )}
         </div>
 
         {/* Phone footer: small text link (the tile itself is the tap target) */}
+        {!(myStats.feeDue != null && myStats.feeDue > 0) && (
         <span className="lg:hidden mt-auto pt-3 inline-flex items-center gap-0.5 text-xs font-semibold text-rose-700 whitespace-nowrap">
           View Statement <ChevronRight className="w-3.5 h-3.5" />
-        </span>
+        </span>)}
 
         <div className="hidden lg:flex flex-wrap items-center gap-2 mt-3 pt-3 border-t border-slate-900/[0.08]">
           <button
@@ -635,7 +633,7 @@ export default function StudentDashboard({
         <div className="[grid-area:hicon] self-start lg:self-auto w-[30px] h-[30px] lg:w-[34px] lg:h-[34px] rounded-[9px] lg:rounded-[10px] bg-[#fef3c7] text-[#d97706] flex items-center justify-center">
           <QrCode className="w-4 h-4" />
         </div>
-        <span className="[grid-area:htitle] self-end lg:self-center lg:ml-2.5 text-[11.5px] lg:text-[15px] font-semibold lg:font-bold text-slate-500 lg:text-slate-900 tracking-tight whitespace-nowrap">Active Gate Pass</span>
+        <span className="[grid-area:htitle] self-end lg:self-center lg:ml-2.5 text-[11.5px] lg:text-[15px] font-semibold lg:font-bold text-slate-500 lg:text-slate-900 tracking-tight whitespace-nowrap">{isDayScholar ? 'Leave' : 'Active Gate Pass'}</span>
         <div className="[grid-area:badge] justify-self-start self-start mt-1.5 lg:mt-2.5 flex items-center gap-1.5 min-w-0 max-w-full">
           {leaveCard ? (
           <span data-testid="pass-card-badge" className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1.5 border leading-tight ${leaveCard.badgeCls}`}>
@@ -656,7 +654,7 @@ export default function StudentDashboard({
             {!cardPass ? (
               <>
                 <span className="w-1.5 h-1.5 rounded-full bg-slate-400 shrink-0"></span>
-                <span>No Pass</span>
+                <span>{isDayScholar ? 'None active' : 'No Pass'}</span>
               </>
             ) : isPassReturned ? (
               <>
@@ -679,13 +677,13 @@ export default function StudentDashboard({
         </div>
 
         <div className="[grid-area:main] min-w-0 mt-1.5 lg:mt-3 lg:flex lg:flex-col lg:justify-center">
-          <div className={`${leaveCard && !leaveNo ? 'text-[15px] lg:text-xl 2xl:text-2xl' : 'text-[15px] lg:text-[26px]'} leading-tight font-bold lg:font-extrabold text-slate-900 font-mono tracking-tight break-words group-hover:text-amber-900 transition-colors`}>
-            {leaveCard ? (leaveNo || 'Day-Scholar Leave') : cardPass ? cardPass.id : 'No Active Pass'}
+          <div className={`${leaveCard && !leaveNo ? 'text-[15px] lg:text-xl 2xl:text-2xl' : 'text-[15px] lg:text-[26px]'} leading-tight font-bold lg:font-extrabold text-slate-900 ${(leaveCard || cardPass) ? 'font-mono' : ''} tracking-tight break-words group-hover:text-amber-900 transition-colors`}>
+            {leaveCard ? (leaveNo || 'Day-Scholar Leave') : cardPass ? cardPass.id : (isDayScholar ? 'No active leave' : 'No Active Pass')}
           </div>
           <p className="text-[11px] lg:text-[12.5px] text-slate-600 font-medium mt-0.5 lg:mt-1 max-lg:line-clamp-2 max-lg:break-words lg:truncate">
             {leaveCard
               ? `${dayLeave.reason || 'Leave'} • One-way exit`
-              : cardPass ? `${cardPass.destination || 'Campus'} • ${cardPass.passType || 'Day Pass'}` : 'No pass is currently active for your account'}
+              : cardPass ? `${cardPass.destination || 'Campus'} • ${cardPass.passType || 'Day Pass'}` : (isDayScholar ? 'No leave is active today' : 'No pass is currently active for your account')}
           </p>
         </div>
 
@@ -996,7 +994,7 @@ export default function StudentDashboard({
               Nothing here yet — gate passes, complaints and feedback you submit will appear in this feed.
             </div>
           ) : (
-            sortedActivities.map((rawAct) => {
+            visibleActivities.map((rawAct) => {
               const act = withPatch(rawAct);
               const showLifecycle = act.type === 'ticket' && hasLifecycle(act);
               const isPass = act.type === 'gate_pass';
@@ -1157,6 +1155,11 @@ export default function StudentDashboard({
                   );
                 })
               )}
+              {!feedExpanded && sortedActivities.length > 8 && (
+                <button type="button" data-testid="feed-show-older" onClick={() => setFeedExpanded(true)} className="w-full min-h-[44px] rounded-xl border-2 border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-bold text-sm cursor-pointer">
+                  Show older ({sortedActivities.length - 8})
+                </button>
+              )}
             </div>
         </div>
 
@@ -1174,8 +1177,8 @@ export default function StudentDashboard({
           >
             <div className="flex items-start justify-between p-5 border-b border-slate-100">
               <div className="min-w-0 pr-3">
-                <h3 className="text-lg font-extrabold text-slate-900 truncate">{ticketDetail.title}</h3>
-                <p className="text-[10px] font-mono text-slate-400 truncate">{hasLifecycle(ticketDetail) ? `${ticketCode(ticketDetail)} · ${ticketDetail.id}` : ticketDetail.id}</p>
+                <h3 className="text-lg font-extrabold text-slate-900 leading-snug break-words line-clamp-2">{ticketDetail.title}</h3>
+                <p className="text-[10px] font-mono text-slate-400 truncate">{hasLifecycle(ticketDetail) ? ticketCode(ticketDetail) : (String(ticketDetail.id).length > 12 ? '' : ticketDetail.id)}</p>
               </div>
               <button
                 type="button"

@@ -172,9 +172,8 @@ test('pending SMS: one message per block to both cleaners, ASCII, within 160 cha
   assert.deepEqual(sent.map((s) => s.to), ['TECH-B1', 'TECH-B2']);
   assert.equal(sent[0].text, sent[1].text);
   assert.ok(sent[0].text.length <= 160, `length ${sent[0].text.length}`);
-  assert.match(sent[0].text, /^Block B pending: /);
-  assert.match(sent[0].text, /\+\d+ more\. Please/);
-  assert.match(sent[0].text, /Please clean today by 1 PM$/);
+  assert.match(sent[0].text, /^Block B: \d+ rooms need cleaning today\. Check with the warden\. Clean by 1 PM$/);
+  assert.ok(!/\d{3}, /.test(sent[0].text), 'no room list in the SMS');
   assert.ok(/^[\x20-\x7e]*$/.test(sent[0].text), 'plain ASCII');
   const second = await morningSms(d, { block: 'Block B', date: '2026-11-08', settings: S, now: MON_0730_REAL });
   assert.equal(second.sent, false);
@@ -189,9 +188,10 @@ test('pending SMS: outside the 07:30-13:00 morning slot nothing is sent', async 
   assert.equal(early.sent, false);
 });
 
-test('pendingSmsText: short list fits, long list gets "+N more"', () => {
+test('pendingSmsText: one generic line with the room count', () => {
   const short = pendingSmsText({ block: 'Block B', rooms: [{ room: '204' }, { room: '210' }], endTime: '13:00' });
-  assert.equal(short, 'Block B pending: 204, 210. Please clean today by 1 PM');
+  assert.equal(short, 'Block B: 2 rooms need cleaning today. Check with the warden. Clean by 1 PM');
+  assert.equal(pendingSmsText({ block: 'Block B', rooms: [{ room: '204' }], endTime: '13:00' }), 'Block B: 1 room needs cleaning today. Check with the warden. Clean by 1 PM');
   assert.equal(fmtClock(13 * 60 + 30), '1:30 PM');
 });
 
@@ -254,5 +254,31 @@ test('warden view reports Not fixed counts for the red alert', async () => {
 test('SMS text never exceeds 160 chars, even with 300 rooms', () => {
   const rooms = Array.from({ length: 300 }, (_, i) => ({ room: String(1000 + i) }));
   const t = pendingSmsText({ block: 'Block D', rooms, endTime: '13:00' });
-  assert.ok(t.length <= 160 && /\+\d+ more\. Please clean today by 1 PM$/.test(t), t);
+  assert.ok(t.length <= 160 && /^Block D: 300 rooms need cleaning today/.test(t), t);
+});
+
+test('pending SMS: up to 5 rooms only the first cleaner is texted, more rooms both', async () => {
+  const st = memStore(); const d = deps(st);
+  await answerRoom(d, { block: 'Block B', room: '101', roll: 'R1', answer: 'no', now: SUN_13, settings: S });
+  await closeWindow(d, { block: 'Block B', date: '2026-11-08' });
+  const sent = [];
+  d.sendSms = async (c, text) => { sent.push({ to: c.id, text }); return { mode: 'dry-run' }; };
+  const r = await morningSms(d, { block: 'Block B', date: '2026-11-08', settings: S, now: MON_0730_REAL });
+  assert.equal(r.sent, true);
+  assert.equal(sent.length, 1, 'few rooms: one cleaner');
+  assert.deepEqual(r.to, ['TECH-B1']);
+});
+
+test('warden choice of cleaners overrides the automatic rule, and normalizeSettings reads it', async () => {
+  assert.equal(normalizeSettings({ cleaner_count: 2 }, 'Block B').cleanerCount, 2);
+  assert.equal(normalizeSettings({ cleaner_count: 9 }, 'Block B').cleanerCount, 0);
+  assert.equal(normalizeSettings({}, 'Block B').cleanerCount, 0);
+  const st = memStore(); const d = deps(st);
+  await answerRoom(d, { block: 'Block B', room: '101', roll: 'R1', answer: 'no', now: SUN_13, settings: S });
+  await closeWindow(d, { block: 'Block B', date: '2026-11-08' });
+  const sent = [];
+  d.sendSms = async (c, text) => { sent.push(c.id); return { mode: 'dry-run' }; };
+  const r = await morningSms(d, { block: 'Block B', date: '2026-11-08', settings: { ...S, cleanerCount: 2 }, now: MON_0730_REAL });
+  assert.equal(sent.length, 2, 'warden chose both even for one room');
+  assert.deepEqual(r.to, ['TECH-B1', 'TECH-B2']);
 });

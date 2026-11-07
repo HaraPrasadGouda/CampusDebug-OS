@@ -58,12 +58,25 @@ function CardEmptyState({ icon: Icon = CheckCircle2, tone = 'emerald', title, su
   );
 }
 
+// Student Issues card: the title drops its "Category:" prefix (the chip already says it);
+// the quote is hidden when it only repeats the title.
+const cardTitle = (t) => {
+  const tt = String(t.title || ''); const cat = String(t.category || '');
+  return cat && tt.toLowerCase().startsWith(cat.toLowerCase() + ':') ? tt.slice(cat.length + 1).trim() : tt;
+};
+const descRepeatsTitle = (t) => {
+  const norm = (x) => String(x || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const ti = norm(cardTitle(t)); const d = norm(t.description);
+  return !d || d === ti || (ti.length > 8 && d.startsWith(ti)) || (d.length > 8 && ti.startsWith(d));
+};
+
 export default function WardenDashboard({ onNotification, masterClusters = [], searchQuery = '', session = null }) {
   const [pendingPasses, setPendingPasses] = useState(INITIAL_PENDING_PASSES);
   const [clusters, setClusters] = useState(
     masterClusters.length > 0 ? masterClusters : INITIAL_CLUSTERS
   );
   const [allTickets, setAllTickets] = useState([]);
+  useEffect(() => { const go = () => { setActiveTab('home'); try { document.getElementById('app-scroll')?.scrollTo({ top: 0 }); } catch { /* no scroller */ } }; window.addEventListener('warden-go-home', go); return () => window.removeEventListener('warden-go-home', go); }, []);
   const [activeTab, setActiveTab] = useState('home'); // 'home' | 'tickets' | 'clusters' | 'passes' | 'sla' | 'register' | ...
   const [homePassesOpen, setHomePassesOpen] = useState(false);   // Home: show every pending pass instead of the first few
   const [cleaningFirst, setCleaningFirst] = useState(null);      // first red cleaning alert (Home row sub-line)
@@ -292,7 +305,9 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
     }
   };
 
-  const handleRejectPass = async (pass) => {
+  const [rejectTarget, setRejectTarget] = useState(null); // pass awaiting the Reject confirm step
+  const handleRejectPass = (pass) => setRejectTarget(pass);
+  const doRejectPass = async (pass) => {
     const rejectedPass = {
       ...pass,
       status: 'REJECTED',
@@ -622,7 +637,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
 
       {/* Warden overview — slim KPI strip (same four numbers, compact so the queues start higher) */}
       {!isHome && (
-      <section className="grid grid-cols-2 xl:grid-cols-4 gap-2 sm:gap-3 w-full">
+      <section className="hidden xl:grid grid-cols-2 xl:grid-cols-4 gap-2 sm:gap-3 w-full">
         <div className="bg-gradient-to-br from-[#edf9f5] to-[#e0f5ed] border border-[#bbf7d0] rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 flex items-center justify-between gap-2 min-w-0">
           <div className="min-w-0">
             <span className="block text-[11px] sm:text-xs font-extrabold text-emerald-950 leading-snug">Pending Gate Passes</span>
@@ -695,10 +710,10 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                 <span className="w-9 h-9 rounded-xl bg-amber-100/70 text-amber-700 border border-amber-200 flex items-center justify-center shrink-0">
                   <Wrench className="w-4 h-4" />
                 </span>
-                <span>Student Maintenance Complaints Queue</span>
+                <span>Student Issues</span>
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                Real-time log of all individual issues submitted by students across hostel blocks.
+                Every issue students have reported, newest first.
               </p>
             </div>
             <span className="shrink-0 text-[11px] font-mono font-bold px-2.5 py-1 rounded-full border text-amber-800 bg-amber-50 border-amber-200">{allTickets.length}</span>
@@ -744,10 +759,10 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                     </div>
 
                     <div className="text-sm font-bold text-slate-900">
-                      {t.title}
+                      {cardTitle(t)}
                     </div>
 
-                    {t.description && (
+                    {t.description && !descRepeatsTitle(t) && (
                       <div className="text-xs text-slate-600 italic">
                         "{t.description}"
                       </div>
@@ -825,7 +840,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                 <span className="w-9 h-9 rounded-xl bg-emerald-100/70 text-emerald-700 border border-emerald-200 flex items-center justify-center shrink-0">
                   <ShieldCheck className="w-4 h-4" />
                 </span>
-                <span>Student Gate Pass Authorization Queue</span>
+                <span>Pending Passes</span>
                 <span className={`shrink-0 text-[11px] font-mono font-bold px-2.5 py-1 rounded-full border ${pendingPasses.length > 0 ? 'text-white bg-emerald-600 border-emerald-600' : 'text-slate-600 bg-slate-50 border-slate-200'}`}>{pendingPasses.length}</span>
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
@@ -933,7 +948,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                 <span className="w-9 h-9 rounded-xl bg-purple-100/70 text-purple-700 border border-purple-200 flex items-center justify-center shrink-0">
                   <Layers className="w-4 h-4" />
                 </span>
-                <span>Spatial Incident Deduplication & Clustering</span>
+                <span>Master Incidents</span>
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
                 Multiple individual tickets from the same block/floor are grouped into single Master Incidents to prevent redundant work.
@@ -972,7 +987,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                       </span>
                       <div>
                         <div className="flex items-center flex-wrap gap-x-2 gap-y-1">
-                          <span className="font-mono text-xs font-bold text-purple-700">{masterId}</span>
+                          <span className="font-mono text-xs font-bold text-purple-700">{String(masterId).length > 12 ? `#${String(masterId).slice(0, 8).toUpperCase()}` : masterId}</span>
                           <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-200 text-slate-700 font-medium">
                             {cluster.category}
                           </span>
@@ -1061,7 +1076,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                         </button>
                       )}
 
-                      {!isResolved && (
+                      {!isResolved && cluster.assignedTo && (
                         <button
                           onClick={() => handleResolveCluster(cluster.masterId)}
                           className="flex-1 sm:flex-none xl:flex-1 min-h-[44px] justify-center px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold transition-all cursor-pointer text-xs flex items-center space-x-1 shadow-sm"
@@ -1079,7 +1094,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                           className="w-full sm:w-auto xl:w-full min-h-[44px] text-xs px-2 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-700 cursor-pointer"
                         >
                           <option value="">Assign to…</option>
-                          {technicianRoster.map(r => (
+                          {technicianRoster.filter(r => (String(r.category || '') === 'Cleanliness') === (String(cluster.category || '') === 'Cleanliness')).map(r => (
                             <option key={r.id} value={r.id}>{r.name} ({r.role})</option>
                           ))}
                         </select>
@@ -1114,10 +1129,10 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                 <span className="w-9 h-9 rounded-xl bg-rose-100/70 text-rose-700 border border-rose-200 flex items-center justify-center shrink-0">
                   <Flame className="w-4 h-4" />
                 </span>
-                <span>SLA Aging Heatmap & Escalation Matrix</span>
+                <span>SLA Heatmap</span>
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                Live countdown from the single SLA engine — anything breached here auto-escalates to the Dean every 60s server tick.
+                Time left on each open complaint. Overdue ones go to the Dean automatically.
               </p>
             </div>
             <span className={`shrink-0 text-[11px] font-mono font-bold px-2.5 py-1 rounded-full border ${breached.length + breachedTickets.length > 0 ? 'text-white bg-rose-600 border-rose-600' : 'text-rose-800 bg-rose-50 border-rose-200'}`}>{openClusters.length}</span>
@@ -1137,7 +1152,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                   </span>
                 </div>
                 <p className="text-[11px] text-emerald-700 leading-relaxed">
-                  Incidents with healthy turnaround buffers. Maintenance crew dispatched.
+                  More than 2 hours left.
                 </p>
               </div>
 
@@ -1165,7 +1180,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                   </span>
                 </div>
                 <p className="text-[11px] text-amber-700 leading-relaxed">
-                  Nearing SLA threshold. High-priority SMS alert triggered to lead electrician.
+                  Close to the deadline.
                 </p>
               </div>
               <div className="space-y-1.5 pt-2 border-t border-amber-200 text-xs">
@@ -1185,14 +1200,14 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold text-rose-800 flex items-center gap-1.5">
                     <AlertTriangle className="w-4 h-4 text-rose-600 animate-bounce" />
-                    <span>Critical / Overdue (0h Left)</span>
+                    <span>Overdue</span>
                   </span>
                   <span className="text-xs font-mono font-bold text-rose-800 bg-rose-100 border border-rose-200 px-2 py-0.5 rounded">
                     {breached.length + breachedTickets.length} Critical
                   </span>
                 </div>
                 <p className="text-[11px] text-rose-700 leading-relaxed">
-                  SLA breached! High impact incident requires immediate Dean intervention.
+                  Deadline missed. The Dean has been alerted.
                 </p>
               </div>
 
@@ -1211,7 +1226,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                   </div>
                 ))}
                 {breached.length + breachedTickets.length === 0 && (
-                  <p className="text-[11px] text-rose-700 italic">No SLA breaches. Clean board.</p>
+                  <p className="text-[11px] text-rose-700 italic">Nothing is overdue.</p>
                 )}
               </div>
             </div>
@@ -1232,7 +1247,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                 <span>Technicians</span>
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                One per category. New complaints go to them automatically by SMS; a complaint closes only after the student marks it Resolved.
+                Plumbing, electrical, Wi-Fi and furniture have one technician each; cleaning staff are listed below, two per block. New complaints go to them automatically by SMS; a complaint closes only after the student marks it Resolved.
               </p>
             </div>
             <span className="shrink-0 text-[11px] font-mono font-bold px-2.5 py-1 rounded-full border text-sky-800 bg-sky-50 border-sky-200">{technicians.filter(t => t.active).length}</span>
@@ -1254,7 +1269,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
             <CardEmptyState icon={UserCheck} title="No technicians in the database yet." sub="Add one technician per category in the technicians table." />
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-3">
-              {technicians.map((tech) => {
+              {[...technicians.filter(t => t.active && t.category !== 'Cleanliness'), ...technicians.filter(t => t.active && t.category === 'Cleanliness')].map((tech) => {
                 const s = tech.stats || {};
                 const wardens = Object.entries(s.wardens || {});
                 return (
@@ -1321,10 +1336,10 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                 <span className="w-9 h-9 rounded-xl bg-slate-100 text-slate-800 border border-slate-300 flex items-center justify-center shrink-0">
                   <ClipboardList className="w-4 h-4" />
                 </span>
-                <span>Main Gate Security Register</span>
+                <span>Gate Register</span>
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                Append-only log of every EXIT and RETURN scan — nothing here is editable, this replaces the paper register.
+                Every gate exit and return, newest first. Nothing here can be edited.
               </p>
             </div>
             {(() => {
@@ -1454,6 +1469,20 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
           Day-scholar in/out history is a mentor-welfare concern — it shows in
           the Faculty Mentor Console (teacher dash), scoped server-side to each
           mentor's own mentees. The warden keeps the hosteller pass register. */}
+      {rejectTarget && (
+        <div className="fixed inset-0 z-[80] flex items-end sm:items-center justify-center bg-slate-900/50 p-4" role="dialog" aria-modal="true" data-testid="reject-confirm" onClick={() => setRejectTarget(null)}>
+          <div className="w-full max-w-sm bg-white rounded-2xl shadow-xl p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div>
+              <h3 className="font-display font-extrabold text-base text-slate-900">Reject this pass?</h3>
+              <p className="text-sm text-slate-600 mt-1">{rejectTarget.name ? `${rejectTarget.name}'s ` : 'This '}pass request will be rejected and the student will be told.</p>
+            </div>
+            <div className="flex gap-2">
+              <button type="button" onClick={() => setRejectTarget(null)} className="flex-1 min-h-[44px] rounded-xl border border-slate-200 bg-white text-slate-700 font-bold text-sm cursor-pointer">Keep it</button>
+              <button type="button" data-testid="reject-confirm-yes" onClick={() => { const p = rejectTarget; setRejectTarget(null); doRejectPass(p); }} className="flex-1 min-h-[44px] rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-sm cursor-pointer">Yes, reject</button>
+            </div>
+          </div>
+        </div>
+      )}
       <WardenCreatePassModal
         isOpen={showCreatePassModal}
         onClose={() => setShowCreatePassModal(false)}

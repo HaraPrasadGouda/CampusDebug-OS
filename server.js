@@ -9661,7 +9661,20 @@ app.post('/api/cleaning/settings', authenticateUser, requireRole('WARDEN'), asyn
         if (e <= s) return res.status(400).json({ success: false, error: 'The cleaning window must end after it starts.' });
         if (e + ANSWER_HOURS * 60 > 23 * 60 + 59) return res.status(400).json({ success: false, error: 'The answer window (8 hours) must end the same day.' });
         const norm = normalizeSettings({ weekdays, start_time: startTime, end_time: endTime }, block);
-        const saved = await cleaningStore.saveSettings(block, { weekdays: norm.weekdays, start_time: startTime, end_time: endTime, active: true });
+        const patch = { weekdays: norm.weekdays, start_time: startTime, end_time: endTime, active: true };
+        const cc = Number(req.body?.cleanerCount);
+        if (req.body?.cleanerCount !== undefined) {
+            if (![0, 1, 2].includes(cc)) return res.status(400).json({ success: false, error: 'Cleaners to call: Auto, 1 or 2.' });
+            patch.cleaner_count = cc;
+        }
+        let saved;
+        try { saved = await cleaningStore.saveSettings(block, patch); }
+        catch (e) {
+            // The cleaner_count column is added by migration; until then save everything else.
+            if (!/cleaner_count/i.test(e.message || '') || !('cleaner_count' in patch)) throw e;
+            delete patch.cleaner_count;
+            saved = await cleaningStore.saveSettings(block, patch);
+        }
         return res.json({ success: true, settings: normalizeSettings(saved || {}, block), setupPending: !!cleaningStore.state.setupPending });
     } catch (err) {
         return res.status(500).json({ success: false, error: err.message });

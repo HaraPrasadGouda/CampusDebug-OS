@@ -5,7 +5,7 @@ import { tfetch } from '../../utils/teacherApi';
 // Admin / dean banner: a class of an absent teacher that nobody took.
 // Shows 30 min before the period (amber) and at its start (rose: students now
 // see "Class cancelled"). Renders nothing when everything is covered.
-export default function AdminCoverAlerts({ onNotification }) {
+export default function AdminCoverAlerts({ onNotification, compact = false, onOpenHome = null }) {
   const [banners, setBanners] = useState([]);
   const [busy, setBusy] = useState(null);
   const load = useCallback(async () => {
@@ -14,6 +14,21 @@ export default function AdminCoverAlerts({ onNotification }) {
   }, []);
   useEffect(() => { load(); const t = setInterval(load, 30000); return () => clearInterval(t); }, [load]);
   if (!banners.length) return null;
+  // Tool pages show one slim line; the full cards live on Home, Send Notice and Timetable.
+  if (compact) {
+    const n = banners.length;
+    const final = banners.some(b => b.level === 'final');
+    return (
+      <button type="button" id="admin-cover-alerts" data-testid="cover-slim" role="alert" onClick={() => onOpenHome?.()}
+        className={`w-full min-h-[44px] rounded-xl border px-3 py-2 flex items-center gap-2.5 text-left cursor-pointer transition-colors ${final ? 'bg-rose-50 border-rose-300 hover:bg-rose-100' : 'bg-amber-50 border-amber-300 hover:bg-amber-100'}`}>
+        <span className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 text-white ${final ? 'bg-rose-600' : 'bg-amber-500'}`}>
+          {final ? <Ban className="w-4 h-4" /> : <AlertTriangle className="w-4 h-4" />}
+        </span>
+        <span className={`flex-1 min-w-0 text-[13px] font-extrabold ${final ? 'text-rose-900' : 'text-amber-900'}`}>{n} {n === 1 ? 'class needs' : 'classes need'} a cover</span>
+        <span className="text-[12px] font-bold text-slate-700 shrink-0">Open on Home</span>
+      </button>
+    );
+  }
   const cancel = async (b) => {
     setBusy(b.id);
     const r = await tfetch(`/api/admin/cover-board/${encodeURIComponent(b.id)}/cancel`, 'POST', {});
