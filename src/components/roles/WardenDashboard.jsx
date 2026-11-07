@@ -1094,7 +1094,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                           className="w-full sm:w-auto xl:w-full min-h-[44px] text-xs px-2 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-700 cursor-pointer"
                         >
                           <option value="">Assign to…</option>
-                          {technicianRoster.map(r => (
+                          {technicianRoster.filter(r => (String(r.category || '') === 'Cleanliness') === (String(cluster.category || '') === 'Cleanliness')).map(r => (
                             <option key={r.id} value={r.id}>{r.name} ({r.role})</option>
                           ))}
                         </select>
