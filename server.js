@@ -4327,6 +4327,8 @@ app.post('/api/create-pass', authenticateUser, async (req, res) => {
         passData.status = 'PENDING';
     }
 
+    const isNewStudentRequest = selfOnly && !gatePassesDB.some(p => p.id === passData.id);
+
     const existingIdx = gatePassesDB.findIndex(p => p.id === passData.id);
     if (existingIdx >= 0) {
         gatePassesDB[existingIdx] = { ...gatePassesDB[existingIdx], ...passData };
@@ -4334,6 +4336,26 @@ app.post('/api/create-pass', authenticateUser, async (req, res) => {
         gatePassesDB.unshift(passData);
     }
     persistGatePasses();
+
+    // Heads-up to the warden(s): a student just asked for a pass. Push only
+    // (the warden queue stays the always-works path); wardens without a
+    // registered device are skipped. Never blocks or fails the request.
+    if (isNewStudentRequest && supabase) {
+        (async () => {
+            try {
+                const { data: wardens } = await supabase.from('profiles')
+                    .select('roll_number').eq('role', 'WARDEN');
+                const rolls = (wardens || []).map(w => String(w.roll_number)).filter(r => hasPushSubscription(r));
+                console.log(`🔔 [PASS PUSH] new request ${passData.id} from ${passData.rollNo} -> ${rolls.length} warden device account(s)`);
+                if (rolls.length) {
+                    await pushToRolls(rolls, {
+                        title: '📝 New Pass Request',
+                        body: `${passData.name || passData.rollNo} (${passData.rollNo}) requested a pass to ${String(passData.destination || 'Campus').slice(0, 60)}.`
+                    }).catch(() => {});
+                }
+            } catch { /* non-blocking */ }
+        })();
+    }
 
     // Best-effort Supabase persistence (real ledger for the dashboard).
     // Falls back to the JSON file if the pass_ref column isn't added yet.
