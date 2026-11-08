@@ -323,6 +323,12 @@ const ticketLedgerDB = {}; // { ticketId: { sms: [...], notes, notFixedAt, inPro
 // ----------------------------------------------------
 const SMS_GATEWAY_URL = process.env.SMS_GATEWAY_URL || '';
 const SMS_GATEWAY_TOKEN = process.env.SMS_GATEWAY_TOKEN || '';
+// capcom6 Cloud/Local mode (Basic auth): when BOTH are set, SMS go to
+//   <SMS_GATEWAY_URL>/3rdparty/v1/messages  (Cloud: https://api.sms-gate.app)
+//   {textMessage:{text}, phoneNumbers:[+91...]}  with Authorization: Basic user:pass
+// If they are empty the old token-based call below is used unchanged.
+const SMS_GATEWAY_USER = process.env.SMS_GATEWAY_USER || '';
+const SMS_GATEWAY_PASS = process.env.SMS_GATEWAY_PASS || '';
 // SAFETY NET for live demos: when SMS_ALLOWLIST is non-empty, ONLY those
 // numbers receive real SMS through the gateway; every other number gets a
 // logged DRY-RUN dispatch instead. Leave empty for production (all numbers
@@ -504,14 +510,27 @@ async function dispatchSms(phone, message) {
     }
     if (SMS_GATEWAY_URL) {
         try {
-            await axios.post(
-                `${SMS_GATEWAY_URL.replace(/\/+$/, '')}/api/v1/messages`,
-                { message, receivers: [digits] },
-                {
-                    headers: { Authorization: `Bearer ${SMS_GATEWAY_TOKEN}` },
-                    timeout: 8000
-                }
-            );
+            if (SMS_GATEWAY_USER && SMS_GATEWAY_PASS) {
+                // capcom6 Cloud/Local (Basic auth, E.164 number)
+                const e164 = digits.length === 10 ? `+91${digits}` : `+${digits}`;
+                await axios.post(
+                    `${SMS_GATEWAY_URL.replace(/\/+$/, '')}/3rdparty/v1/messages`,
+                    { textMessage: { text: message }, phoneNumbers: [e164] },
+                    {
+                        auth: { username: SMS_GATEWAY_USER, password: SMS_GATEWAY_PASS },
+                        timeout: 8000
+                    }
+                );
+            } else {
+                await axios.post(
+                    `${SMS_GATEWAY_URL.replace(/\/+$/, '')}/api/v1/messages`,
+                    { message, receivers: [digits] },
+                    {
+                        headers: { Authorization: `Bearer ${SMS_GATEWAY_TOKEN}` },
+                        timeout: 8000
+                    }
+                );
+            }
             console.log(`📱 [SMS SENT via capcom6 gateway] -> ${digits} | "${message}"`);
             return { mode: 'gateway', status: 'sent' };
         } catch (gatewayErr) {
