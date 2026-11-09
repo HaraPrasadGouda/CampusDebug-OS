@@ -303,9 +303,11 @@ export default function TeacherDashboard({ onNotification, searchQuery = '', ses
     return h * 60 + parseInt(m[2], 10);
   };
   const markOpen = (s) => {
+    const nowMin = new Date().getHours() * 60 + new Date().getMinutes();
+    // Closed once college hours end (collegeHrs.endMin, from the server's period grid).
+    if (collegeHrs && nowMin >= collegeHrs.endMin) return false;
     const om = periodStartMin(s.time);
     if (om == null) return true;                     // unknown time → let the server decide
-    const nowMin = new Date().getHours() * 60 + new Date().getMinutes();
     return nowMin >= om - 10;
   };
   const openLabel = (s) => {
