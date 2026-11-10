@@ -206,7 +206,7 @@ export default function AdminHome({
             <span className="w-10 h-10 rounded-xl bg-rose-100 text-rose-700 flex items-center justify-center shrink-0"><Siren className="w-5 h-5" /></span>
             <div className="min-w-0 flex-1">
               <p className="text-[14px] font-extrabold text-slate-900 leading-tight">{escalated.length} complaint{escalated.length === 1 ? '' : 's'} escalated to you</p>
-              <p className="text-[11.5px] text-slate-500 font-medium leading-snug">Hostel SLA breached, auto-escalated</p>
+              <p className="text-[11.5px] text-slate-500 font-medium leading-snug">SLA breached, or not resolved 48 h after filing</p>
             </div>
           </div>
           <div className="space-y-2.5">
@@ -217,6 +217,7 @@ export default function AdminHome({
                   <p className="text-[13px] font-extrabold text-slate-900 leading-snug break-words">{escalatedHeadline(t)}</p>
                   {(t.location || t.category) && <p className="text-[11.5px] text-slate-600 leading-snug break-words">{[t.location, t.category && !escalatedHeadline(t).toLowerCase().includes(String(t.category).toLowerCase()) ? t.category : null].filter(Boolean).join(' · ')}</p>}
                   {t.breachedHours != null && <p className="mt-1 text-[11px] font-mono font-extrabold text-rose-700">SLA breached {hoursText(t.breachedHours)} ago</p>}
+                  {t.reason === 'unresolved48h' && t.filedHours != null && <p className="mt-1 text-[11px] font-mono font-extrabold text-rose-700">Not resolved, filed {hoursText(t.filedHours)} ago</p>}
                 </div>
               </div>
             ))}

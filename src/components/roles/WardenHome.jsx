@@ -109,7 +109,10 @@ function SummaryRow({ icon: Icon, tone, title, sub, count, action, onOpen, testi
         </span>
         {!action && <ChevronRight className={`w-5 h-5 shrink-0 ${t[2]}`} />}
       </button>
-      {action && (
+      {action && action.href && (
+        <a href={action.href} aria-label={action.ariaLabel} className="my-2 mr-2.5 shrink-0 min-h-[44px] px-3.5 self-center rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-[12px] font-extrabold flex items-center gap-1.5">{action.label}</a>
+      )}
+      {action && !action.href && (
         <button type="button" onClick={action.onClick} className="my-2 mr-2.5 shrink-0 min-h-[44px] px-3.5 self-center rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-[12px] font-extrabold flex items-center cursor-pointer">{action.label}</button>
       )}
     </div>
@@ -237,7 +240,7 @@ export default function WardenHome({
   );
 
   const rows = [];
-  if (overdue.count > 0) rows.push(<SummaryRow key="od" testid="home-row-overdue" icon={Wrench} tone="rose" count={overdue.count} title={`${overdue.count} ${overdue.count === 1 ? 'complaint' : 'complaints'} past deadline`} sub={overdue.sub} onOpen={jump('tickets')} />);
+  if (overdue.count > 0) rows.push(<SummaryRow key="od" testid="home-row-overdue" icon={Wrench} tone="rose" count={overdue.count} title={`${overdue.count} ${overdue.count === 1 ? 'complaint' : 'complaints'} needing you`} sub={overdue.sub} onOpen={jump('tickets')} action={overdue.call ? { label: 'Call', href: `tel:${overdue.call.phone}`, ariaLabel: `Call ${overdue.call.name}` } : null} />);
   if (unassigned.count > 0) rows.push(<SummaryRow key="un" testid="home-row-incident" icon={Layers} tone="violet" count={unassigned.count} title={`${unassigned.count} ${unassigned.count === 1 ? 'incident has' : 'incidents have'} no technician`} sub={unassigned.sub} onOpen={jump('clusters')} action={unassigned.count === 1 && unassigned.first ? { label: 'Dispatch', onClick: () => onDispatch(unassigned.first) } : null} />);
   if (cleaning.count > 0) rows.push(<SummaryRow key="cl" testid="home-row-cleaning" icon={Sparkles} tone="cyan" count={cleaning.count} title={`${cleaning.count} ${cleaning.count === 1 ? 'room' : 'rooms'} not fixed after 2 tries`} sub={cleaning.sub} onOpen={jump('cleaning')} />);
   if (gate.late > 0) rows.push(<SummaryRow key="lt" testid="home-row-late" icon={DoorOpen} tone="slate" title={`${gate.late} late ${gate.late === 1 ? 'return' : 'returns'} today`} sub={gate.lateSub} onOpen={jump('register')} />);
