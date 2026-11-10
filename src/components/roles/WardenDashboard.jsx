@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import AiCategoryChip from '../AiCategoryChip';
 import { WardenTicketLifecycle, hasLifecycle, ticketCode } from '../TicketLifecycle';
+import { openComplaintClusters, OVERDUE_AFTER_HOURS } from '../../utils/complaintCard.js';
 import { generateSignedPassToken } from '../../utils/crypto';
 import { getAllLocal, saveLocal, queueOfflineAction } from '../../utils/db';
 import { getAccessToken } from '../../utils/authClient';
@@ -587,14 +588,22 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
       outRows,
     };
   })();
+  // Needs-you (12h rule): complaints with a technician whose student has not
+  // marked them Resolved OVERDUE_AFTER_HOURS after assignment. Shown with the
+  // SLA-breached ones, and the first one with a technician gets a call button.
+  const overdueTickets = allTickets.filter(t => t.overdue12h);
   const homeOverdue = (() => {
-    const list = breachedTicketsAll;
+    const list = [...new Map([...breachedTicketsAll, ...overdueTickets].map(t => [String(t.id), t])).values()];
     const t = list[0];
+    const callable = list.find(x => x.technician?.phone) || null;
     return {
       count: list.length,
-      sub: t ? [t.title || t.category, t.location, typeof t.slaHoursLeft === 'number' ? `${Math.abs(t.slaHoursLeft).toFixed(1)}h overdue` : null].filter(Boolean).join(' · ') : '',
+      sub: t ? [t.title || t.category, t.location, typeof t.slaHoursLeft === 'number' && t.slaState === 'breached' ? `${Math.abs(t.slaHoursLeft).toFixed(1)}h overdue` : `not resolved in ${OVERDUE_AFTER_HOURS}h`].filter(Boolean).join(' · ') : '',
+      call: callable ? { name: callable.technician.name || callable.assignedTo || 'technician', phone: callable.technician.phone } : null,
     };
   })();
+  // Minimal cluster view: open complaints of the same category in the same block.
+  const sameBlockClusters = openComplaintClusters(allTickets);
   const homeUnassigned = (() => {
     const list = openClustersAll.filter(c => !c.assignedTo && !c.technician);
     const c = list[0];
@@ -786,6 +795,11 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                       }`}>
                         {(t.statusLabel || t.status || 'REPORTED').replace(/_/g, ' ')}
                       </span>
+                      {t.overdue12h && (
+                        <span data-testid="ticket-overdue-flag" className="text-[10px] font-mono px-2 py-0.5 rounded border font-bold bg-rose-50 text-rose-700 border-rose-200">
+                          Not resolved in {OVERDUE_AFTER_HOURS}h
+                        </span>
+                      )}
                       {/* Real SLA countdown from the server (hidden once resolved/escalated) */}
                       {typeof t.slaHoursLeft === 'number' && !['RESOLVED', 'CLOSED', 'ESCALATED_TO_DEAN'].includes(statusU) && (
                         <span className={`text-[10px] font-mono px-2 py-0.5 rounded border font-bold ${
@@ -956,6 +970,18 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
             </div>
             <span className="shrink-0 text-[11px] font-mono font-bold px-2.5 py-1 rounded-full border text-purple-800 bg-purple-50 border-purple-200">{clusters.length}</span>
           </div>
+
+          {sameBlockClusters.length > 0 && (
+            <div data-testid="same-block-clusters" className="space-y-2">
+              <p className="text-[11px] font-bold uppercase tracking-wide text-purple-800">Same problem, same block</p>
+              {sameBlockClusters.map(g => (
+                <div key={g.key} className="flex items-center justify-between gap-3 min-h-[44px] rounded-xl border border-purple-200 bg-purple-50/50 px-3 py-2">
+                  <span className="min-w-0 text-[13px] font-bold text-slate-900 break-words">{g.category} · {g.block}</span>
+                  <span className="shrink-0 text-[12px] font-mono font-extrabold text-purple-800">{g.count} open</span>
+                </div>
+              ))}
+            </div>
+          )}
 
           {shownClusters.length === 0 ? (
             <CardEmptyState

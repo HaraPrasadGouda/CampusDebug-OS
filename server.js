@@ -14,6 +14,7 @@ process.env.TZ = process.env.TZ || 'Asia/Kolkata';
 import { MEAL_WINDOWS, MEAL_ORDER, RSVP_CUTOFF_MINUTES } from './src/data/messMenu.js';
 import { initPassSigning, passPublicKeyInfo, verifyPassQr, passQrFresh, signPassQrBatch, PASS_QR_ROTATE_MS, PASS_QR_MAX_AGE_MS } from './passSigning.js';
 import { leaveNumber, normalizePassNumber } from './src/utils/passNumber.js';
+import { overdueState, OVERDUE_AFTER_HOURS } from './src/utils/complaintCard.js';   // warden card: 12h not-resolved rule
 import { openingPush, istParts, normalizeSettings, answerWindow, lastClosedWindowDate, studentView, answerRoom, closeWindow, morningSms, wardenBlockView, hmToMin, fmtClock, ANSWER_HOURS, RED_ALERT_NOT_FIXED } from './cleaning.js';
 import { createCleaningStore } from './cleaning-store.js';
 import { createFeeStore, newReceiptId } from './fee-store.js';
@@ -8708,6 +8709,9 @@ function enrichTicketRow(row) {
         masterId: base.master_incident_id || base.masterId || (mem ? mem.masterId : null) || null,
         slaHoursLeft: sla.slaHoursLeft,
         slaState: sla.slaState,
+        // Needs-you rule (warden side only): assigned, not resolved within OVERDUE_AFTER_HOURS
+        overdue12h: overdueState({ assignedAt: row.assigned_at || null, studentResolvedAt, closedAt, status: effStatus }).overdue,
+        overdueAfterHours: OVERDUE_AFTER_HOURS,
         isCritical: String(base.urgency || '').toUpperCase() === 'CRITICAL' || status === 'ESCALATED_TO_DEAN',
         description: base.description || base.raw_text || base.complaintText || null
     };
