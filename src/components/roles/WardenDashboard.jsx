@@ -987,13 +987,28 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
                   </button>
                   {isOpen && (
                     <ul className="border-t border-purple-200 divide-y divide-purple-100 px-3">
-                      {clusterMemberRows(g).map(row => (
-                        <li key={row.id} className="py-2 min-w-0">
-                          <p className="text-[13px] font-bold text-slate-900 break-words">{[row.block, row.room ? `Room ${row.room}` : ''].filter(Boolean).join(', ') || 'Location not set'}</p>
-                          <p className="text-[12px] text-slate-700 break-words">{row.problem}</p>
-                          <p className="text-[11px] font-mono text-slate-500">{row.filedMs ? `Filed ${new Date(row.filedMs).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}` : 'Filing time not set'}</p>
+                      {clusterMemberRows(g).map(row => {
+                        const ticket = allTickets.find(t => String(t.id) === row.id);
+                        return (
+                        <li key={row.id} className="py-2 min-w-0 flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-[13px] font-bold text-slate-900 break-words">{[row.block, row.room ? `Room ${row.room}` : ''].filter(Boolean).join(', ') || 'Location not set'}</p>
+                            <p className="text-[12px] text-slate-700 break-words">{row.problem}</p>
+                            <p className="text-[11px] font-mono text-slate-500">{row.filedMs ? `Filed ${new Date(row.filedMs).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}` : 'Filing time not set'}</p>
+                            {row.studentResolved
+                              ? <p className="text-[11px] font-bold text-emerald-800">Student resolved, close it</p>
+                              : <p className="text-[11px] text-slate-500">Waiting for student to mark resolved</p>}
+                          </div>
+                          {row.studentResolved && ticket && (
+                            <button type="button" disabled={closingId === ticket.id}
+                              onClick={() => handleCloseTicket(ticket)}
+                              className="shrink-0 min-h-[44px] px-3 rounded-lg bg-emerald-600 text-white text-[12px] font-bold disabled:opacity-60">
+                              {closingId === ticket.id ? 'Closing…' : 'Close'}
+                            </button>
+                          )}
                         </li>
-                      ))}
+                        );
+                      })}
                     </ul>
                   )}
                 </div>

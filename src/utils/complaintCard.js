@@ -97,15 +97,22 @@ export function wardenCardFields(ticket, now = Date.now()) {
   };
 }
 
-// Cluster view: open complaints grouped by category + block (open = not yet
-// resolved by the student or closed; the existing rule). Only groups with at
-// least `min` open complaints are returned, biggest first. Each group keeps its
-// member complaints (separate records, never merged) and the earliest filing
-// time. Complaints with no readable block are not grouped.
+// Warden closed it for good (status CLOSED or a closed_at stamp).
+export function isComplaintClosed(ticket) {
+  const status = String(ticket?.status || '').toUpperCase();
+  return !!(ticket?.closedAt || ticket?.closed_at) || status === 'CLOSED';
+}
+
+// Cluster view: complaints grouped by category + block. A complaint the student
+// has marked Resolved stays in its group until the warden closes it, so the
+// warden closes it from the group. Only groups with at least `min` complaints
+// that are not closed are returned, biggest first. Each group keeps its member
+// complaints (separate records, never merged) and the earliest filing time.
+// Complaints with no readable block are not grouped.
 export function openComplaintClusters(tickets = [], { min = 2 } = {}) {
   const groups = new Map();
   for (const t of tickets || []) {
-    if (isComplaintDone(t)) continue;
+    if (isComplaintClosed(t)) continue;
     const { block } = complaintPlace(t.location);
     if (!block) continue;
     const category = String(t.category || 'Issue').trim();
@@ -121,8 +128,8 @@ export function openComplaintClusters(tickets = [], { min = 2 } = {}) {
   return [...groups.values()].filter(g => g.count >= min).sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
 }
 
-// Group detail rows (pure): room, block, problem and filed time for each member
-// complaint, oldest filing first. Members are open complaints only.
+// Group detail rows (pure): room, block, problem, filed time and whether the
+// student has marked it Resolved (the warden can close it then), oldest first.
 export function clusterMemberRows(group) {
   const rows = (group?.members || []).map(t => {
     const { room, block } = complaintPlace(t.location);
@@ -132,6 +139,7 @@ export function clusterMemberRows(group) {
       block: block || '',
       problem: String(t.description || t.title || t.category || 'Complaint').trim(),
       filedMs: filedAtMs(t),
+      studentResolved: !!(t.studentResolvedAt || t.student_resolved_at),
     };
   });
   return rows.sort((a, b) => (a.filedMs || 0) - (b.filedMs || 0));
