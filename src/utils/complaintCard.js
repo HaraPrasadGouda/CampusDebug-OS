@@ -8,9 +8,11 @@ export const OVERDUE_AFTER_MS = OVERDUE_AFTER_HOURS * 3600 * 1000;
 
 const CLOSED_STATUSES = ['RESOLVED', 'CLOSED'];
 
-// The moment a complaint was handed to its technician (ISO or ms), or null.
-export function assignedAtMs(ticket) {
-  const raw = ticket?.assignedAt ?? ticket?.assigned_at ?? null;
+// The moment a student filed the complaint (ISO or ms), or null. This is the
+// clock for the 12-hour rule: it starts at filing, not at assignment or at the
+// warden's call.
+export function filedAtMs(ticket) {
+  const raw = ticket?.created_at ?? ticket?.reportedAt ?? ticket?.createdAt ?? ticket?.createdAtMs ?? null;
   if (!raw) return null;
   const ms = typeof raw === 'number' ? raw : new Date(raw).getTime();
   return Number.isFinite(ms) && ms > 0 ? ms : null;
@@ -23,13 +25,45 @@ export function isComplaintDone(ticket) {
     || CLOSED_STATUSES.includes(status);
 }
 
-// Needs-you rule: assigned to a technician, not resolved within 12 hours of
-// assignment. Returns { overdue, hours } (hours = hours since assignment).
+// Needs-you rule: a complaint still open 12 hours after the student filed it.
+// Returns { overdue, hours } (hours = hours since filing). Resolved or closed
+// complaints never flag; a complaint with no readable filing time never flags.
 export function overdueState(ticket, now = Date.now()) {
-  const at = assignedAtMs(ticket);
+  const at = filedAtMs(ticket);
   if (!at || isComplaintDone(ticket)) return { overdue: false, hours: null };
   const elapsed = now - at;
   return { overdue: elapsed >= OVERDUE_AFTER_MS, hours: Math.max(0, elapsed / 3600000) };
+}
+
+// Admin rule: a complaint still open 48 hours after the student filed it is
+// escalated to the admin dashboard. Same filing clock as the 12-hour rule.
+// Returns { escalated, hours } (hours = hours since filing).
+export const ADMIN_ESCALATE_AFTER_HOURS = 48;
+export const ADMIN_ESCALATE_AFTER_MS = ADMIN_ESCALATE_AFTER_HOURS * 3600 * 1000;
+export function adminEscalationState(ticket, now = Date.now()) {
+  const at = filedAtMs(ticket);
+  if (!at || isComplaintDone(ticket)) return { escalated: false, hours: null };
+  const elapsed = now - at;
+  return { escalated: elapsed >= ADMIN_ESCALATE_AFTER_MS, hours: Math.max(0, elapsed / 3600000) };
+}
+
+// Once-only warden push decision (pure). True when the complaint has just
+// crossed the 12-hour line and no push has been recorded for it yet.
+// `pushedAt` is the ISO time a push was already sent (null/undefined if none).
+export function shouldSendOverduePush(ticket, pushedAt, now = Date.now()) {
+  if (pushedAt) return false;
+  return overdueState(ticket, now).overdue;
+}
+
+// Text of the warden push for one overdue complaint. No phone numbers here.
+export function overduePushPayload(ticket) {
+  const place = complaintPlace(ticket?.location);
+  const where = [place.block, place.room ? `Room ${place.room}` : ''].filter(Boolean).join(', ') || 'hostel';
+  const category = String(ticket?.category || 'Complaint');
+  return {
+    title: `${OVERDUE_AFTER_HOURS}h passed: ${category} not resolved`,
+    body: `${category} complaint from ${where} was filed ${OVERDUE_AFTER_HOURS} hours ago and is still open. Open the Needs-you list to call the technician.`,
+  };
 }
 
 // "Hostel Block B, Room 101" -> { block: "Block B", room: "101" }.
@@ -43,7 +77,7 @@ export function complaintPlace(location) {
 }
 
 // The warden card's fields, in one place: category, technician name + role,
-// block and room, problem text, assigned time, overdue flag. The phone is
+// block and room, problem text, filing time, overdue flag. The phone is
 // returned as-is from the technician object (warden payload only).
 export function wardenCardFields(ticket, now = Date.now()) {
   const place = complaintPlace(ticket?.location);
@@ -57,7 +91,7 @@ export function wardenCardFields(ticket, now = Date.now()) {
     block: place.block,
     room: place.room,
     problem: String(ticket?.description || ticket?.raw_text || ticket?.complaintText || '').trim(),
-    assignedAt: assignedAtMs(ticket),
+    filedAt: filedAtMs(ticket),
     overdue,
     overdueHours: hours,
   };

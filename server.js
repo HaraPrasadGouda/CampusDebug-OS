@@ -14,7 +14,7 @@ process.env.TZ = process.env.TZ || 'Asia/Kolkata';
 import { MEAL_WINDOWS, MEAL_ORDER, RSVP_CUTOFF_MINUTES } from './src/data/messMenu.js';
 import { initPassSigning, passPublicKeyInfo, verifyPassQr, passQrFresh, signPassQrBatch, PASS_QR_ROTATE_MS, PASS_QR_MAX_AGE_MS } from './passSigning.js';
 import { leaveNumber, normalizePassNumber } from './src/utils/passNumber.js';
-import { overdueState, OVERDUE_AFTER_HOURS } from './src/utils/complaintCard.js';   // warden card: 12h not-resolved rule
+import { overdueState, shouldSendOverduePush, overduePushPayload, complaintPlace, OVERDUE_AFTER_HOURS, OVERDUE_AFTER_MS } from './src/utils/complaintCard.js';   // warden card: 12h not-resolved rule (clock = filing time)
 import { openingPush, istParts, normalizeSettings, answerWindow, lastClosedWindowDate, studentView, answerRoom, closeWindow, morningSms, wardenBlockView, hmToMin, fmtClock, ANSWER_HOURS, RED_ALERT_NOT_FIXED } from './cleaning.js';
 import { createCleaningStore } from './cleaning-store.js';
 import { createFeeStore, newReceiptId } from './fee-store.js';
@@ -1175,6 +1175,60 @@ setInterval(async () => {
     } catch (loopErr) {
         console.warn('SLA loop check warning:', loopErr.message);
     }
+}, 60000);
+
+// ----------------------------------------------------
+// 3b. WARDEN PUSH: complaint still open 12h after the student filed it
+// ----------------------------------------------------
+// Once per complaint, the first time it crosses OVERDUE_AFTER_HOURS. The sent
+// time is kept on the ticket's ledger row (ticketLedgerDB[id].overduePushAt,
+// saved to disk), so a restart does not push it again. A complaint is marked
+// only when at least one warden device was reached; with no warden device
+// registered it is retried on the next pass, so a warden who subscribes later
+// still gets it.
+async function sweepOverdueComplaintPushes() {
+    const now = Date.now();
+    let rows = [];
+    if (supabase) {
+        const cutoffIso = new Date(now - OVERDUE_AFTER_MS).toISOString();
+        const { data, error } = await supabase.from('tickets')
+            .select('id, location, category, status, created_at, student_resolved_at, closed_at')
+            .in('status', ['PENDING', 'ASSIGNED', 'ESCALATED_TO_DEAN'])
+            .lt('created_at', cutoffIso);
+        if (error) { console.warn('[OVERDUE PUSH] ticket read failed:', error.message); return 0; }
+        rows = data || [];
+    } else {
+        rows = ticketsDB.map(t => ({
+            id: t.id, location: t.location, category: t.category, status: t.status,
+            created_at: t.createdAt || (t.createdAtMs ? new Date(t.createdAtMs).toISOString() : null),
+            student_resolved_at: t.studentResolvedAt || null, closed_at: t.closedAt || null,
+        }));
+    }
+    let wardenRolls = null;
+    let sent = 0;
+    for (const row of rows) {
+        const led = ticketLedgerDB[String(row.id)] || {};
+        if (!shouldSendOverduePush(row, led.overduePushAt || null, now)) continue;
+        if (wardenRolls === null) {
+            const { data: wardens } = supabase
+                ? await supabase.from('profiles').select('roll_number').eq('role', 'WARDEN')
+                : { data: [] };
+            wardenRolls = (wardens || []).map(w => String(w.roll_number)).filter(r => hasPushSubscription(r));
+        }
+        if (!wardenRolls.length) break;
+        const delivered = await pushToRolls(wardenRolls, overduePushPayload(row)).catch(() => 0);
+        if (delivered > 0) {
+            ticketLedgerDB[String(row.id)] = { ...led, overduePushAt: new Date(now).toISOString() };
+            saveLedger();
+            sent++;
+            const place = complaintPlace(row.location);
+            console.log(`🔔 [OVERDUE PUSH] #${shortTicketCode(row.id)} ${row.category || ''} ${place.block} ${place.room} -> ${delivered} warden device(s)`);
+        }
+    }
+    return sent;
+}
+setInterval(() => {
+    sweepOverdueComplaintPushes().catch(e => console.warn('overdue push sweep warning:', e.message));
 }, 60000);
 
 // ----------------------------------------------------
@@ -8709,8 +8763,8 @@ function enrichTicketRow(row) {
         masterId: base.master_incident_id || base.masterId || (mem ? mem.masterId : null) || null,
         slaHoursLeft: sla.slaHoursLeft,
         slaState: sla.slaState,
-        // Needs-you rule (warden side only): assigned, not resolved within OVERDUE_AFTER_HOURS
-        overdue12h: overdueState({ assignedAt: row.assigned_at || null, studentResolvedAt, closedAt, status: effStatus }).overdue,
+        // Needs-you rule (warden side only): filed, still not resolved OVERDUE_AFTER_HOURS later
+        overdue12h: overdueState({ createdAt: row.created_at || base.createdAt || null, studentResolvedAt, closedAt, status: effStatus }).overdue,
         overdueAfterHours: OVERDUE_AFTER_HOURS,
         isCritical: String(base.urgency || '').toUpperCase() === 'CRITICAL' || status === 'ESCALATED_TO_DEAN',
         description: base.description || base.raw_text || base.complaintText || null

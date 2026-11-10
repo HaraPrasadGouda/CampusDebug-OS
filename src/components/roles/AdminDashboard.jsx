@@ -57,6 +57,7 @@ import { initSyncEngine, flushOfflineQueue } from '../../utils/syncEngine';
 import AdminCoversCard from '../teacher/AdminCoversCard';
 import AdminCoverAlerts from '../teacher/AdminCoverAlerts';
 import AdminHome from '../admin/AdminHome';
+import { adminEscalationState } from '../../utils/complaintCard.js';
 
 export default function AdminDashboard({ onNotification, searchQuery: externalSearchQuery = '' }) {
   const [activeTab, setActiveTab] = useState('home'); // 'home' | 'dispatcher' | 'csv' | 'metrics' | …
@@ -478,10 +479,16 @@ export default function AdminDashboard({ onNotification, searchQuery: externalSe
             blocks: Array.isArray(data.blocks) ? data.blocks : [],
             clusterCount: Array.isArray(data.masterClusters) ? data.masterClusters.length : null,
             recentTickets: recent.length,
-            escalated: recent.filter(t => String(t.status || '').toUpperCase() === 'ESCALATED_TO_DEAN').map(t => ({
-              id: t.id, title: t.title || null, description: t.description || null, category: t.category || null, location: t.location || null,
-              breachedHours: typeof t.slaHoursLeft === 'number' && t.slaHoursLeft < 0 ? -t.slaHoursLeft : null
-            })),
+            // Escalated to you: SLA breached (status), or still open 48 h after the student filed it.
+            escalated: recent.filter(t => String(t.status || '').toUpperCase() === 'ESCALATED_TO_DEAN' || adminEscalationState(t).escalated).map(t => {
+              const bySla = String(t.status || '').toUpperCase() === 'ESCALATED_TO_DEAN';
+              return {
+                id: t.id, title: t.title || null, description: t.description || null, category: t.category || null, location: t.location || null,
+                breachedHours: typeof t.slaHoursLeft === 'number' && t.slaHoursLeft < 0 ? -t.slaHoursLeft : null,
+                reason: bySla ? 'sla' : 'unresolved48h',
+                filedHours: bySla ? null : adminEscalationState(t).hours,
+              };
+            }),
             recentResolved: recent.filter(t => ['RESOLVED', 'CLOSED'].includes(String(t.status || '').toUpperCase())).length
           });
         }
