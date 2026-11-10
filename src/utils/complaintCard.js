@@ -97,9 +97,11 @@ export function wardenCardFields(ticket, now = Date.now()) {
   };
 }
 
-// Cluster view (minimal): open complaints grouped by category + block.
-// Only groups with at least `min` open complaints are returned, biggest first.
-// Complaints with no readable block are not grouped.
+// Cluster view: open complaints grouped by category + block (open = not yet
+// resolved by the student or closed; the existing rule). Only groups with at
+// least `min` open complaints are returned, biggest first. Each group keeps its
+// member complaints (separate records, never merged) and the earliest filing
+// time. Complaints with no readable block are not grouped.
 export function openComplaintClusters(tickets = [], { min = 2 } = {}) {
   const groups = new Map();
   for (const t of tickets || []) {
@@ -108,10 +110,29 @@ export function openComplaintClusters(tickets = [], { min = 2 } = {}) {
     if (!block) continue;
     const category = String(t.category || 'Issue').trim();
     const key = `${category.toLowerCase()}|${block.toLowerCase()}`;
-    const g = groups.get(key) || { key, category, block, count: 0, ids: [] };
+    const g = groups.get(key) || { key, category, block, count: 0, ids: [], members: [], earliestMs: null };
     g.count += 1;
     g.ids.push(String(t.id ?? t.shortCode ?? g.count));
+    g.members.push(t);
+    const at = filedAtMs(t);
+    if (at && (g.earliestMs === null || at < g.earliestMs)) g.earliestMs = at;
     groups.set(key, g);
   }
   return [...groups.values()].filter(g => g.count >= min).sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
+}
+
+// Group detail rows (pure): room, block, problem and filed time for each member
+// complaint, oldest filing first. Members are open complaints only.
+export function clusterMemberRows(group) {
+  const rows = (group?.members || []).map(t => {
+    const { room, block } = complaintPlace(t.location);
+    return {
+      id: String(t.id ?? t.shortCode ?? ''),
+      room: room || '',
+      block: block || '',
+      problem: String(t.description || t.title || t.category || 'Complaint').trim(),
+      filedMs: filedAtMs(t),
+    };
+  });
+  return rows.sort((a, b) => (a.filedMs || 0) - (b.filedMs || 0));
 }
