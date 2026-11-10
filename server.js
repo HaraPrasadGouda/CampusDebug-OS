@@ -7989,6 +7989,11 @@ app.post('/api/attendance/mark', authenticateUser, requireRole('TEACHER', 'ADMIN
         return res.status(403).json({ success: false, editClosed: true, error: ATT_EDIT_ERROR });
     }
 
+    // CLOSE GATE — marking stays open only until college hours end (last period end).
+    if (nowMin >= collegeHoursMin().end) {
+        return res.status(403).json({ success: false, editClosed: true, markClosed: true, error: ATT_EDIT_ERROR });
+    }
+
     // TIME GATE — opens 10 minutes before the period's start minute.
     const grid = TT_GRID.find(g => g.label === `P${period}`);
     if (grid && nowMin < grid.startMin - 10) {
