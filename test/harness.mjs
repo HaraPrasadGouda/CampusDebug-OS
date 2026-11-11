@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..');
@@ -62,8 +62,8 @@ export async function startApp({ seed = true, dist = false, profilesFile = '', a
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cdb-teacher-'));
     for (const f of ['server.js', 'coverBoard.js', 'noticeAudience.js', 'passSigning.js', 'cleaning.js', 'cleaning-store.js', 'fee-store.js', 'package.json']) fs.copyFileSync(path.join(REPO, f), path.join(dir, f));
     fs.cpSync(path.join(REPO, 'src'), path.join(dir, 'src'), { recursive: true });
-    fs.symlinkSync(path.join(REPO, 'node_modules'), path.join(dir, 'node_modules'));
-    if (dist) for (const d of ['dist', 'public']) if (fs.existsSync(path.join(REPO, d))) fs.symlinkSync(path.join(REPO, d), path.join(dir, d));   // live: a rebuild shows at once
+    fs.symlinkSync(path.join(REPO, 'node_modules'), path.join(dir, 'node_modules'), 'junction');   // junction: works on Windows without admin/Developer Mode (plain symlinks throw EPERM)
+    if (dist) for (const d of ['dist', 'public']) if (fs.existsSync(path.join(REPO, d))) fs.symlinkSync(path.join(REPO, d), path.join(dir, d), 'junction');   // live: a rebuild shows at once
     fs.mkdirSync(path.join(dir, 'data'));
     fs.writeFileSync(path.join(dir, 'data', 'timetable.json'), JSON.stringify(buildTimetable()));
     if (timetableFile) fs.copyFileSync(timetableFile, path.join(dir, 'data', 'timetable.json'));   // e.g. the real 1,367-slot timetable (heavy-data shots)
@@ -77,7 +77,7 @@ export async function startApp({ seed = true, dist = false, profilesFile = '', a
         env: { ...process.env, PROFILES_FILE: profilesFile, MOCK_PORT: String(mockPort), SEED_FILE: seed ? path.join(REPO, 'test/support/seed.json') : '', ...mockEnv }, stdio: ['ignore', 'pipe', 'pipe']
     });
     mock.stdout.on('data', d => logs.mock += d);
-    const srv = spawn('node', ['--import', path.join(REPO, 'test/support/fakeclock.mjs'), 'server.js'], {
+    const srv = spawn('node', ['--import', pathToFileURL(path.join(REPO, 'test/support/fakeclock.mjs')).href, 'server.js'], {
         cwd: dir, stdio: ['ignore', 'pipe', 'pipe'],
         env: {
             PATH: process.env.PATH, HOME: process.env.HOME, TZ: 'Asia/Kolkata', PORT: String(port), FAKE_NOW_FILE: nowFile,
@@ -93,6 +93,12 @@ export async function startApp({ seed = true, dist = false, profilesFile = '', a
         let json = null; try { json = await r.json(); } catch { /* empty */ }
         return { status: r.status, json };
     };
-    const stop = () => { srv.kill('SIGKILL'); mock.kill('SIGKILL'); fs.rmSync(dir, { recursive: true, force: true }); };
+    const stop = () => { srv.kill('SIGKILL'); mock.kill('SIGKILL');
+        // Delete the junction link first (rmdir removes ONLY the link, never the
+        // real node_modules), then the scratch dir. Best-effort: a leftover temp
+        // folder must never fail a test on Windows (EPERM on in-use reparse points).
+        try { fs.rmdirSync(path.join(dir, 'node_modules')); } catch { /* link already gone */ }
+        try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* OS cleans %TEMP% */ }
+    };
     return { api, clock, stop, logs, dir, base, port, mockPort };
 }
