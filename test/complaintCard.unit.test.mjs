@@ -4,6 +4,7 @@ import {
   OVERDUE_AFTER_HOURS, overdueState, isComplaintDone, complaintPlace, filedAtMs,
   shouldSendOverduePush, overduePushPayload, wardenCardFields, openComplaintClusters,
   ADMIN_ESCALATE_AFTER_HOURS, adminEscalationState,
+  clusterMemberRows, isComplaintClosed,
 } from '../src/utils/complaintCard.js';
 
 const H = 3600 * 1000;
@@ -130,12 +131,37 @@ test('cluster view: open complaints grouped by category + block, count, biggest 
   ];
   const groups = openComplaintClusters(tickets);
   assert.deepEqual(groups.map(g => [g.category.toLowerCase(), g.block, g.count]), [
+    ['electrical', 'Block B', 3],
     ['plumbing', 'Block A', 3],
-    ['electrical', 'Block B', 2],
   ]);
-  assert.deepEqual(groups[1].ids, ['1', '2']);
+  assert.deepEqual(groups[0].ids, ['1', '2', '3']);
 });
 
 test('cluster view: a single open complaint is not a cluster', () => {
   assert.deepEqual(openComplaintClusters([{ id: 1, category: 'Electrical', location: 'Hostel Block B, Room 1' }]), []);
+});
+
+test('cluster detail: group keeps all not-closed complaints, earliest filing time, rows', () => {
+  const tickets = [
+    { id: 'a1', category: 'Plumbing', location: 'Hostel Block A, Room 101', description: 'Tap leaking', created_at: new Date(T0 - 3 * H).toISOString() },
+    { id: 'a2', category: 'Plumbing', location: 'Hostel Block A, Room 205', description: 'No water', created_at: new Date(T0 - 1 * H).toISOString() },
+    { id: 'a4', category: 'Plumbing', location: 'Hostel Block A, Room 220', description: 'Fixed', created_at: new Date(T0 - 2 * H).toISOString(), studentResolvedAt: new Date(T0).toISOString() },
+    { id: 'a3', category: 'Plumbing', location: 'Hostel Block A, Room 150', description: 'Old', created_at: new Date(T0 - 5 * H).toISOString(), status: 'CLOSED' },
+  ];
+  const [g] = openComplaintClusters(tickets);
+  assert.equal(g.count, 3, 'student-resolved stays in the group; closed one does not');
+  assert.equal(g.earliestMs, Date.parse(tickets[0].created_at));
+  const rows = clusterMemberRows(g);
+  assert.deepEqual(rows.map(r => r.id), ['a1', 'a4', 'a2']);
+  assert.deepEqual(rows.map(r => r.studentResolved), [false, true, false]);
+  assert.equal(rows[0].room, '101');
+  assert.equal(rows[0].block, 'Block A');
+  assert.equal(rows[0].problem, 'Tap leaking');
+});
+
+
+test('isComplaintClosed: CLOSED status or closed stamp only', () => {
+  assert.equal(isComplaintClosed({ status: 'CLOSED' }), true);
+  assert.equal(isComplaintClosed({ closed_at: '2026-11-10T00:00:00Z' }), true);
+  assert.equal(isComplaintClosed({ status: 'RESOLVED' }), false);
 });

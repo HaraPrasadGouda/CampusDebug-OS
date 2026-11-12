@@ -26,7 +26,7 @@ import {
 } from 'lucide-react';
 import AiCategoryChip from '../AiCategoryChip';
 import { WardenTicketLifecycle, hasLifecycle, ticketCode } from '../TicketLifecycle';
-import { openComplaintClusters, OVERDUE_AFTER_HOURS } from '../../utils/complaintCard.js';
+import { openComplaintClusters, clusterMemberRows, OVERDUE_AFTER_HOURS } from '../../utils/complaintCard.js';
 import { generateSignedPassToken } from '../../utils/crypto';
 import { getAllLocal, saveLocal, queueOfflineAction } from '../../utils/db';
 import { getAccessToken } from '../../utils/authClient';
@@ -77,6 +77,7 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
     masterClusters.length > 0 ? masterClusters : INITIAL_CLUSTERS
   );
   const [allTickets, setAllTickets] = useState([]);
+  const [openSameBlockKey, setOpenSameBlockKey] = useState(null);
   useEffect(() => { const go = () => { setActiveTab('home'); try { document.getElementById('app-scroll')?.scrollTo({ top: 0 }); } catch { /* no scroller */ } }; window.addEventListener('warden-go-home', go); return () => window.removeEventListener('warden-go-home', go); }, []);
   const [activeTab, setActiveTab] = useState('home'); // 'home' | 'tickets' | 'clusters' | 'passes' | 'sla' | 'register' | ...
   const [homePassesOpen, setHomePassesOpen] = useState(false);   // Home: show every pending pass instead of the first few
@@ -974,12 +975,45 @@ export default function WardenDashboard({ onNotification, masterClusters = [], s
           {sameBlockClusters.length > 0 && (
             <div data-testid="same-block-clusters" className="space-y-2">
               <p className="text-[11px] font-bold uppercase tracking-wide text-purple-800">Same problem, same block</p>
-              {sameBlockClusters.map(g => (
-                <div key={g.key} className="flex items-center justify-between gap-3 min-h-[44px] rounded-xl border border-purple-200 bg-purple-50/50 px-3 py-2">
-                  <span className="min-w-0 text-[13px] font-bold text-slate-900 break-words">{g.category} · {g.block}</span>
-                  <span className="shrink-0 text-[12px] font-mono font-extrabold text-purple-800">{g.count} open</span>
+              {sameBlockClusters.map(g => {
+                const isOpen = openSameBlockKey === g.key;
+                return (
+                <div key={g.key} className="rounded-xl border border-purple-200 bg-purple-50/50">
+                  <button type="button" aria-expanded={isOpen}
+                    onClick={() => setOpenSameBlockKey(isOpen ? null : g.key)}
+                    className="w-full flex items-center justify-between gap-3 min-h-[44px] px-3 py-2 text-left">
+                    <span className="min-w-0 text-[13px] font-bold text-slate-900 break-words">{g.category} · {g.block}</span>
+                    <span className="shrink-0 text-[12px] font-mono font-extrabold text-purple-800">{g.count} open</span>
+                  </button>
+                  {isOpen && (
+                    <ul className="border-t border-purple-200 divide-y divide-purple-100 px-3">
+                      {clusterMemberRows(g).map(row => {
+                        const ticket = allTickets.find(t => String(t.id) === row.id);
+                        return (
+                        <li key={row.id} className="py-2 min-w-0 flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-[13px] font-bold text-slate-900 break-words">{[row.block, row.room ? `Room ${row.room}` : ''].filter(Boolean).join(', ') || 'Location not set'}</p>
+                            <p className="text-[12px] text-slate-700 break-words">{row.problem}</p>
+                            <p className="text-[11px] font-mono text-slate-500">{row.filedMs ? `Filed ${new Date(row.filedMs).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}` : 'Filing time not set'}</p>
+                            {row.studentResolved
+                              ? <p className="text-[11px] font-bold text-emerald-800">Student resolved, close it</p>
+                              : <p className="text-[11px] text-slate-500">Waiting for student to mark resolved</p>}
+                          </div>
+                          {row.studentResolved && ticket && (
+                            <button type="button" disabled={closingId === ticket.id}
+                              onClick={() => handleCloseTicket(ticket)}
+                              className="shrink-0 min-h-[44px] px-3 rounded-lg bg-emerald-600 text-white text-[12px] font-bold disabled:opacity-60">
+                              {closingId === ticket.id ? 'Closing…' : 'Close'}
+                            </button>
+                          )}
+                        </li>
+                        );
+                      })}
+                    </ul>
+                  )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
 

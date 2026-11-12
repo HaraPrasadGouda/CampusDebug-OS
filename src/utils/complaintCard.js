@@ -97,21 +97,50 @@ export function wardenCardFields(ticket, now = Date.now()) {
   };
 }
 
-// Cluster view (minimal): open complaints grouped by category + block.
-// Only groups with at least `min` open complaints are returned, biggest first.
+// Warden closed it for good (status CLOSED or a closed_at stamp).
+export function isComplaintClosed(ticket) {
+  const status = String(ticket?.status || '').toUpperCase();
+  return !!(ticket?.closedAt || ticket?.closed_at) || status === 'CLOSED';
+}
+
+// Cluster view: complaints grouped by category + block. A complaint the student
+// has marked Resolved stays in its group until the warden closes it, so the
+// warden closes it from the group. Only groups with at least `min` complaints
+// that are not closed are returned, biggest first. Each group keeps its member
+// complaints (separate records, never merged) and the earliest filing time.
 // Complaints with no readable block are not grouped.
 export function openComplaintClusters(tickets = [], { min = 2 } = {}) {
   const groups = new Map();
   for (const t of tickets || []) {
-    if (isComplaintDone(t)) continue;
+    if (isComplaintClosed(t)) continue;
     const { block } = complaintPlace(t.location);
     if (!block) continue;
     const category = String(t.category || 'Issue').trim();
     const key = `${category.toLowerCase()}|${block.toLowerCase()}`;
-    const g = groups.get(key) || { key, category, block, count: 0, ids: [] };
+    const g = groups.get(key) || { key, category, block, count: 0, ids: [], members: [], earliestMs: null };
     g.count += 1;
     g.ids.push(String(t.id ?? t.shortCode ?? g.count));
+    g.members.push(t);
+    const at = filedAtMs(t);
+    if (at && (g.earliestMs === null || at < g.earliestMs)) g.earliestMs = at;
     groups.set(key, g);
   }
   return [...groups.values()].filter(g => g.count >= min).sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
+}
+
+// Group detail rows (pure): room, block, problem, filed time and whether the
+// student has marked it Resolved (the warden can close it then), oldest first.
+export function clusterMemberRows(group) {
+  const rows = (group?.members || []).map(t => {
+    const { room, block } = complaintPlace(t.location);
+    return {
+      id: String(t.id ?? t.shortCode ?? ''),
+      room: room || '',
+      block: block || '',
+      problem: String(t.description || t.title || t.category || 'Complaint').trim(),
+      filedMs: filedAtMs(t),
+      studentResolved: !!(t.studentResolvedAt || t.student_resolved_at),
+    };
+  });
+  return rows.sort((a, b) => (a.filedMs || 0) - (b.filedMs || 0));
 }
